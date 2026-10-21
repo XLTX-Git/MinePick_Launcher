@@ -372,6 +372,126 @@ def _announcement_event(obj, text: str):
     return event
 
 
+def _send_a11y_channels(source, text: str) -> dict[str, str]:
+    """Hand one message to every carrier that can reach assistive technology; report each verdict.
+
+    Three carriers, none of them the alert the first implementation sent - that one is gone on
+    purpose and must not come back, for two reasons that both come from Qt's Windows backend
+    (``QWindowsUiaAccessibility::notifyAccessibilityUpdate``):
+
+    * it is the only accessibility event that backend turns into a sound. ``PlaySound`` runs for
+      ``PopupMenuStart``, ``MenuCommand`` and ``QAccessible::Alert``, and an alert on a widget that
+      is not a QMessageBox plays the "SystemAsterisk" sound - so with a reader attached every
+      distinct status message chimed;
+    * it reaches no reader on Windows: an alert is not one of the events that backend forwards for
+      a static text widget, while the name change is forwarded only for combo boxes and focused
+      elements. It made the noise and carried nothing.
+
+    The broadcast - WCAG 4.1.3 wants the message available to assistive technology - is carried by
+    ``QAccessibleAnnouncementEvent`` instead, which Windows maps to a UI Automation notification
+    (the channel Narrator reads out) and which Qt never maps to a sound. The message travels as:
+
+    * ``label_name`` - a QLabel's accessible name *is* its text, so NameChanged is the event that
+      says "the thing this object stands for changed". Qt itself sends this one from
+      ``QLabel::setText``, which is the strongest argument that it is the semantically right
+      event; sending it here does not depend on that internal behaviour staying.
+    * ``bar_name`` - the status bar receives the same sentence as its accessible name, plus
+      NameChanged for it. This is what turns the message into *the status bar's message*: a
+      reader that lands on the container reads the sentence instead of an unnamed structure.
+    * ``label_announcement`` - ``QAccessibleAnnouncementEvent``, the one event Qt documents as a
+      request to announce this message. On Windows Qt forwards it as a UI Automation
+      notification, which is the carrier Narrator consumes for spoken status text; it is the only
+      carrier here that a reader is asked to *speak* rather than to re-read.
+
+    Ordered, and always all three keys: the log then reads the same for every message. Each carrier
+    is attempted on its own, so an unsupported or failing one is recorded rather than allowed to
+    stop the others. None of the three is an event Qt plays a sound for, so an announcement can
+    never make Windows chime.
+
+    ``source`` is the QWidget the message belongs to. It was a ``StatusLabel`` method before the
+    accessibility consent dialog needed the exact same carriers without being a status line; both
+    callers now share this one implementation.
+    """
+    try:
+        from PySide6.QtGui import QAccessible, QAccessibleEvent
+    except Exception as exc:  # noqa: BLE001 - no Qt accessibility at all: every carrier fails alike
+        return {channel: _channel_failed(exc) for channel in A11Y_CHANNELS}
+
+    record: dict[str, str] = {}
+
+    def update(event) -> None:
+        QAccessible.updateAccessibility(event)
+
+    _attempt(
+        record,
+        A11Y_CHANNEL_LABEL_NAME,
+        lambda: update(QAccessibleEvent(source, QAccessible.Event.NameChanged)),
+    )
+
+    bar = _status_bar_host(source)
+    if bar is None:
+        record[A11Y_CHANNEL_BAR_NAME] = A11Y_SKIPPED_NO_BAR
+    else:
+
+        def name_the_status_bar() -> None:
+            # Name first, event second: a reader that reacts to the event reads the name, not what
+            # it was a moment ago.
+            bar.setAccessibleName(text)
+            update(QAccessibleEvent(bar, QAccessible.Event.NameChanged))
+
+        _attempt(record, A11Y_CHANNEL_BAR_NAME, name_the_status_bar)
+
+    try:
+        announcement = _announcement_event(source, text)
+    except Exception as exc:  # noqa: BLE001 - a Qt type that will not build is a missing carrier
+        record[A11Y_CHANNEL_LABEL_ANNOUNCEMENT] = _channel_failed(exc)
+    else:
+        if announcement is None:
+            record[A11Y_CHANNEL_LABEL_ANNOUNCEMENT] = A11Y_SKIPPED_OLD_QT
+        else:
+            _attempt(record, A11Y_CHANNEL_LABEL_ANNOUNCEMENT, lambda: update(announcement))
+    return record
+
+
+def announce_to_assistive_tech(source, text: str) -> bool:
+    """Announce one message from a widget that is not a status line (the consent dialog).
+
+    Reuses the status line's carriers and gates, so a dialog cannot invent a new path - and in
+    particular cannot use ``QAccessible::Alert``, the one event Qt's Windows bridge answers with a
+    system sound. Nothing is sent without an active reader, and every failure means silence rather
+    than a broken dialog.
+    """
+    text = text or ""
+    if not text:
+        return False
+    if not a11y_alerts_enabled():
+        a11y_trace.record_announce(
+            "blocked", "", text, forced_silent=True, reason=f"{A11Y_ALERT_ENV} forces silence"
+        )
+        return False
+    if not a11y_trace.recorded_isActive():
+        a11y_trace.record_announce("blocked", "", text, forced_silent=False, reader_active=False)
+        return False
+    try:
+        channels = _send_a11y_channels(source, text)
+    except Exception as exc:  # noqa: BLE001 - accessibility is optional, the dialog is not
+        a11y_trace.record_announce(
+            "error", "", text, reader_active=True, sent=False, reason=type(exc).__name__
+        )
+        return False
+    sent = A11Y_SENT in channels.values()
+    a11y_trace.record_announce(
+        "sent" if sent else "error",
+        "",
+        text,
+        forced_silent=False,
+        reader_active=True,
+        sent=sent,
+        channels=channels,
+    )
+    return sent
+
+
 class StatusLabel(QLabel):
     """Status text whose colour follows the severity of the last message.
 
@@ -462,82 +582,8 @@ class StatusLabel(QLabel):
         )
 
     def _send_channels(self, text: str) -> dict[str, str]:
-        """Hand one message to every carrier that can reach assistive technology; report each verdict.
-
-        Three carriers, none of them the alert the first implementation sent - that one is gone on
-        purpose and must not come back, for two reasons that both come from Qt's Windows backend
-        (``QWindowsUiaAccessibility::notifyAccessibilityUpdate``):
-
-        * it is the only accessibility event that backend turns into a sound. ``PlaySound`` runs for
-          ``PopupMenuStart``, ``MenuCommand`` and ``QAccessible::Alert``, and an alert on a widget that
-          is not a QMessageBox plays the "SystemAsterisk" sound - so with a reader attached every
-          distinct status message chimed;
-        * it reaches no reader on Windows: an alert is not one of the events that backend forwards for
-          a static text widget, while the name change is forwarded only for combo boxes and focused
-          elements. It made the noise and carried nothing.
-
-        The broadcast - WCAG 4.1.3 wants the message available to assistive technology - is carried by
-        ``QAccessibleAnnouncementEvent`` instead, which Windows maps to a UI Automation notification
-        (the channel Narrator reads out) and which Qt never maps to a sound. The message travels as:
-
-        * ``label_name`` - a QLabel's accessible name *is* its text, so NameChanged is the event that
-          says "the thing this object stands for changed". Qt itself sends this one from
-          ``QLabel::setText``, which is the strongest argument that it is the semantically right
-          event; sending it here does not depend on that internal behaviour staying.
-        * ``bar_name`` - the status bar receives the same sentence as its accessible name, plus
-          NameChanged for it. This is what turns the message into *the status bar's message*: a
-          reader that lands on the container reads the sentence instead of an unnamed structure,
-          which is the exact complaint the trace run produced ("it read the status bar, not the
-          text").
-        * ``label_announcement`` - ``QAccessibleAnnouncementEvent``, the one event Qt documents as a
-          request to announce this message. On Windows Qt forwards it as a UI Automation
-          notification, which is the carrier Narrator consumes for spoken status text; it is the only
-          carrier here that a reader is asked to *speak* rather than to re-read.
-
-        Ordered, and always all three keys: the log then reads the same for every message. Each
-        carrier is attempted on its own, so an unsupported or failing one is recorded rather than
-        allowed to stop the others. None of the three is an event Qt plays a sound for, so an
-        announcement can never make Windows chime.
-        """
-        try:
-            from PySide6.QtGui import QAccessible, QAccessibleEvent
-        except Exception as exc:  # noqa: BLE001 - no Qt accessibility at all: every carrier fails alike
-            return {channel: _channel_failed(exc) for channel in A11Y_CHANNELS}
-
-        record: dict[str, str] = {}
-
-        def update(event) -> None:
-            QAccessible.updateAccessibility(event)
-
-        _attempt(
-            record,
-            A11Y_CHANNEL_LABEL_NAME,
-            lambda: update(QAccessibleEvent(self, QAccessible.Event.NameChanged)),
-        )
-
-        bar = _status_bar_host(self)
-        if bar is None:
-            record[A11Y_CHANNEL_BAR_NAME] = A11Y_SKIPPED_NO_BAR
-        else:
-
-            def name_the_status_bar() -> None:
-                # Name first, event second: a reader that reacts to the event reads the name, not what
-                # it was a moment ago.
-                bar.setAccessibleName(text)
-                update(QAccessibleEvent(bar, QAccessible.Event.NameChanged))
-
-            _attempt(record, A11Y_CHANNEL_BAR_NAME, name_the_status_bar)
-
-        try:
-            announcement = _announcement_event(self, text)
-        except Exception as exc:  # noqa: BLE001 - a Qt type that will not build is a missing carrier
-            record[A11Y_CHANNEL_LABEL_ANNOUNCEMENT] = _channel_failed(exc)
-        else:
-            if announcement is None:
-                record[A11Y_CHANNEL_LABEL_ANNOUNCEMENT] = A11Y_SKIPPED_OLD_QT
-            else:
-                _attempt(record, A11Y_CHANNEL_LABEL_ANNOUNCEMENT, lambda: update(announcement))
-        return record
+        """Send on the standard carriers; the implementation is shared with the consent dialog."""
+        return _send_a11y_channels(self, text)
 
     def _apply_level(self, level: str) -> None:
         self._level = level
@@ -845,14 +891,37 @@ class KeyboardFocusTracker(QObject):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._keyboard = False
+        # The key code of the latest KeyPress. It is an observation for callers that need to tell
+        # Space (which activates the focused button) from Enter (which only activates the default
+        # one); the keyboard/mouse decision below still uses _keyboard alone.
+        self._last_key: int | None = None
         # Controls currently carrying the mark. Usually one (the focused control) or none, and a
         # mouse event is what walks it. A list rather than a set: identity is what matters, and a
         # handful of entries compares faster by identity than by hash.
         self._marked: list = []
 
+    def last_input_was_keyboard(self) -> bool:
+        """Public read-only view of the "most recent input was the keyboard" flag.
+
+        The launch flow asks this to decide whether the player reached a launch button from the
+        keyboard, which is the only way the accessibility question may be asked. It is a read-only
+        accessor on purpose: the event-filter logic above remains the sole writer.
+        """
+        return self._keyboard
+
+    def last_key(self) -> int | None:
+        """The key code of the latest KeyPress, or None before the first one.
+
+        Used with :meth:`last_input_was_keyboard`: Space activates the focused button, while Enter
+        activates the default button only. A launch that cannot be attributed to either is not
+        treated as a keyboard launch.
+        """
+        return self._last_key
+
     def eventFilter(self, obj, event) -> bool:
         kind = event.type()
         if kind == QEvent.Type.KeyPress:
+            self._last_key = event.key()
             self._keyboard = True
         elif kind in self._MOUSE_INPUT:
             self._clear_marks()
