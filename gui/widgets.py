@@ -19,13 +19,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, Qt
+from PySide6.QtCore import QEvent, QModelIndex, QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
     QAbstractScrollArea,
     QAbstractSpinBox,
     QApplication,
+    QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QProgressBar,
+    QRadioButton,
     QSizePolicy,
     QSpinBox,
     QStatusBar,
@@ -48,6 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui import a11y_trace
+from gui.i18n import tr
 
 
 class NoFocusDelegate(QStyledItemDelegate):
@@ -117,6 +120,76 @@ class NoWheelDoubleSpinBox(QDoubleSpinBox):
 
     def wheelEvent(self, event) -> None:
         event.ignore()
+
+
+class AccessibilityPreferenceGroup(QWidget):
+    """Three radio buttons for the launcher's accessibility prompt policy.
+
+    One control, two independent owners: the settings page and the first-run wizard each construct
+    their own instance (never share the widget), and both read/write the same
+    ``accessibility_preference`` config key. ``changed`` is emitted only for a user/programmatic
+    toggle, never for :meth:`set_value`, so loading the stored value cannot trigger a save.
+
+    The radios are ordinary auto-exclusive QRadioButtons: each is a Tab stop and the arrow keys move
+    between the three answers. Each carries an explicit accessible name that includes the question
+    ("Accessibility onboarding: ...") because the derived name is only the answer and a screen reader
+    landing on "Ask me on the first keyboard launch" would not say what it answers.
+    """
+
+    changed = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self._group = QButtonGroup(self)
+        self._buttons: dict[str, QRadioButton] = {}
+        for value, label in (
+            ("auto", tr("settings.accessibility.auto")),
+            ("always_on", tr("settings.accessibility.always_on")),
+            ("never", tr("settings.accessibility.never")),
+        ):
+            radio = QRadioButton(label)
+            radio.setObjectName(f"accessibilityPreference_{value}")
+            radio.setAccessibleName(tr("settings.accessibility") + ": " + label)
+            self._group.addButton(radio)
+            self._buttons[value] = radio
+            layout.addWidget(radio)
+        layout.addStretch(1)  # the wizard page is tall: keep the three answers together at the top
+        self._buttons["auto"].setChecked(True)  # the documented default, also the fallback
+        self._group.buttonToggled.connect(self._on_button_toggled)
+
+    def _on_button_toggled(self, button: QAbstractButton, checked: bool) -> None:
+        if checked:
+            for value, radio in self._buttons.items():
+                if radio is button:
+                    self.changed.emit(value)
+                    return
+
+    def value(self) -> str:
+        """The checked preference, always one of auto / always_on / never."""
+        for value, radio in self._buttons.items():
+            if radio.isChecked():
+                return value
+        return "auto"  # no radio can be checked only while the group is being built
+
+    def set_value(self, value: object) -> None:
+        """Check ``value``; anything unrecognised falls back to auto (never leaves the group empty)."""
+        target = self._buttons.get(str(value).strip().lower()) if isinstance(value, str) else None
+        if target is None:
+            target = self._buttons["auto"]
+        if target.isChecked():
+            return
+        self._group.blockSignals(True)
+        try:
+            target.setChecked(True)
+        finally:
+            self._group.blockSignals(False)
+
+    def radios(self) -> tuple[QRadioButton, ...]:
+        """The three buttons in display order - for keyboard and accessible-name checks."""
+        return tuple(self._buttons.values())
 
 
 class WheelBlocker(QObject):

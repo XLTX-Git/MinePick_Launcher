@@ -128,6 +128,67 @@ def test_settings_autosave_without_save_button(app, monkeypatch, ws_tmp):
     window.close()
 
 
+def test_settings_accessibility_preference_is_three_radios_that_autosave(app, monkeypatch, ws_tmp):
+    """Task 1: a radio group (not a dropdown), loaded from config and written on every change."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_a11y_settings"))
+    from PySide6.QtWidgets import QRadioButton
+
+    from gui.main_window import MainWindow
+
+    window = MainWindow()
+    page = window.pages["settings"]
+    group = page.accessibility_group
+    radios = group.radios()
+
+    assert all(isinstance(radio, QRadioButton) for radio in radios)
+    assert len(radios) == 3
+    assert group.value() == "auto"  # the default, and the fallback
+    assert page.accessibility_hint.wordWrap()  # the "only the launcher's question" sentence
+    # The group sits with the behaviour options, before the checkboxes.
+    layout = page.accessibility_box.parentWidget().layout()
+    assert layout.indexOf(page.accessibility_box) < layout.indexOf(page.isolation_check)
+
+    radios[2].setChecked(True)  # "never", as a user click would
+    cfg, _ = config_mod.load()
+    assert cfg.accessibility_preference == "never"
+
+    page.load()  # reloading reflects the stored value
+    assert group.value() == "never"
+
+    group.set_value("ask-me")  # an illegal value means auto, and never leaves the group empty
+    assert group.value() == "auto"
+    window.close()
+
+
+def test_accessibility_radios_are_keyboard_reachable(app, monkeypatch, ws_tmp):
+    """Task 4: each radio can take focus, and the arrow keys move the exclusive choice."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_a11y_keys"))
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from gui.main_window import NAV_KEYS, MainWindow
+
+    window = MainWindow()
+    window.show()
+    page = window.pages["settings"]
+    window.sidebar.setCurrentRow(NAV_KEYS.index("settings"))
+    app.processEvents()
+
+    radios = page.accessibility_group.radios()
+    for radio in radios:
+        assert radio.focusPolicy() != Qt.FocusPolicy.NoFocus
+        assert radio.accessibleName().strip()
+
+    radios[0].setFocus(Qt.FocusReason.TabFocusReason)
+    app.processEvents()
+    assert radios[0].hasFocus()
+    QTest.keyClick(radios[0], Qt.Key.Key_Down)
+    app.processEvents()
+    assert page.accessibility_group.value() == "always_on"
+    assert radios[1].hasFocus()
+    window.close()
+
+
 def test_versions_page_auto_jre_default(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data4"))
     from gui.main_window import MainWindow
@@ -387,6 +448,58 @@ def test_first_run_wizard_applies(app, monkeypatch, ws_tmp):
     assert cfg2.ui_language == "en_us"
     assert cfg2.game_dir == ws_tmp / "mc"
     assert cfg2.memory_gb == 6.0
+
+
+def test_wizard_has_accessibility_step_and_skip_writes_nothing(app, monkeypatch, ws_tmp):
+    """Task 2: one extra step after memory; Skip means its preselected answer is not saved."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_a11y_wizard_skip"))
+    from gui import i18n
+    from gui.main_window import MainWindow
+
+    window = MainWindow()
+    window.show_wizard()
+    overlay = window.wizard_overlay
+    steps = overlay._steps
+
+    assert [step.title for step in steps[-2:]] == [
+        i18n.tr("wizard.memory"),
+        i18n.tr("settings.accessibility"),
+    ]
+    assert steps[-1].widget is window._wz_accessibility  # its own widget, not the settings page's
+    assert steps[-1].description == i18n.tr("settings.accessibility.hint")
+    assert steps[-1].rail == i18n.tr("wizard.accessibility")  # the short name the 220px rail needs
+    assert window._wz_accessibility.value() == "auto"
+
+    window._wz_accessibility.set_value("never")
+    overlay.finish(skipped=True)
+    cfg, _ = config_mod.load()
+    assert cfg.accessibility_preference == "auto"  # Skip did not submit the step
+    window.close()
+
+
+def test_wizard_accessibility_step_loads_and_writes_the_shared_config_key(app, monkeypatch, ws_tmp):
+    """Task 2: the wizard and the settings page are separate widgets over one config key."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_a11y_wizard_done"))
+    from gui.main_window import MainWindow
+
+    cfg, cfg_path = config_mod.load()
+    cfg.accessibility_preference = "never"
+    config_mod.save(cfg, cfg_path)
+
+    window = MainWindow()
+    window.show_wizard()
+    assert window._wz_accessibility.value() == "never"  # loaded from the shared key
+
+    window._wz_accessibility.set_value("always_on")
+    window.wizard_overlay.finish()  # Done, not Skip
+    cfg2, _ = config_mod.load()
+    assert cfg2.accessibility_preference == "always_on"
+
+    # The settings page reads the same key, as its own three radios.
+    page = window.pages["settings"]
+    assert page.accessibility_group is not window._wz_accessibility
+    assert page.accessibility_group.value() == "always_on"
+    window.close()
 
 
 def test_login_flow_opens_page_and_copies_code(app, monkeypatch, ws_tmp):

@@ -285,6 +285,84 @@ def test_invalid_decision_inputs_fall_back_conservatively():
     assert "no native" in result.reason
 
 
+# --- write_failed: retry the write, never ask again ------------------------------------------
+
+
+@pytest.mark.parametrize("trigger", TRIGGERS)
+@pytest.mark.parametrize(
+    ("tier", "expected"),
+    [(T.NARRATOR_ONLY, D.WRITE_NARRATOR), (T.ONBOARD_SCREEN, D.WRITE_ONBOARD)],
+)
+def test_auto_write_failed_retries_once_without_asking(tier, trigger, expected):
+    """The player already answered yes; only the write failed. Retry it, on any trigger, silently."""
+    result = a11y.decide(
+        preference="auto", tier=tier, trigger=trigger, state=S.WRITE_FAILED
+    )
+    assert result.decision is expected
+    assert "previous write failed" in result.reason
+    assert "without asking" in result.reason
+
+
+def test_auto_write_failed_never_becomes_a_second_prompt():
+    """The regression this guards: "unhandled" must not be implemented as "ask again"."""
+    for tier, trigger, mod_kind in product(TIERS, TRIGGERS, MOD_CASES):
+        result = a11y.decide(
+            preference="auto",
+            tier=tier,
+            trigger=trigger,
+            mods=MOD_CASES[mod_kind],
+            state=S.WRITE_FAILED,
+        )
+        assert result.decision not in (D.ASK_ONBOARD, D.ASK_NARRATOR), result.reason
+
+
+@pytest.mark.parametrize(
+    ("tier", "mods", "option_present", "keyword"),
+    [
+        (T.NO_ACCESSIBILITY, {}, False, "no native"),
+        (T.ONBOARD_SCREEN, {"disable": ["DisableAccessibilityScreen"]}, False, "disabled"),
+        (T.ONBOARD_SCREEN, {"override": ["YOSBR"]}, False, "overriding"),
+        (T.ONBOARD_SCREEN, {}, True, "already present"),
+    ],
+)
+def test_auto_write_failed_retry_obeys_the_same_vetoes(tier, mods, option_present, keyword):
+    result = a11y.decide(
+        preference="auto",
+        tier=tier,
+        trigger="mouse",
+        mods=mods,
+        state=S.WRITE_FAILED,
+        option_present=option_present,
+    )
+    assert result.decision is D.LAUNCH_QUIETLY
+    assert keyword in result.reason
+
+
+@pytest.mark.parametrize("state", [S.ANSWERED_ON, S.ANSWERED_OFF, S.DISMISSED, S.APPLIED])
+def test_auto_other_recorded_states_still_mean_handled(state):
+    result = a11y.decide(
+        preference="auto", tier=T.ONBOARD_SCREEN, trigger="keyboard", state=state
+    )
+    assert result.decision is D.LAUNCH_QUIETLY
+    assert "already handled" in result.reason
+
+
+def test_write_failed_retry_respects_an_always_on_style_write_while_never_stays_quiet():
+    """The retry path is auto-only; the other two preferences keep their own rules."""
+    assert (
+        a11y.decide(
+            preference="always_on", tier=T.ONBOARD_SCREEN, trigger="keyboard", state=S.WRITE_FAILED
+        ).decision
+        is D.WRITE_ONBOARD
+    )
+    assert (
+        a11y.decide(
+            preference="never", tier=T.ONBOARD_SCREEN, trigger="keyboard", state=S.WRITE_FAILED
+        ).decision
+        is D.LAUNCH_QUIETLY
+    )
+
+
 @pytest.mark.parametrize(
     ("tier", "expected"),
     [
@@ -320,10 +398,38 @@ def test_state_json_with_wrong_shape_means_untreated(ws_tmp):
     assert a11y.load_states(path) == {}
 
 
+def test_saved_state_file_carries_version_one(ws_tmp):
+    path = ws_tmp / "accessibility.json"
+    assert a11y.save_state("inst", S.APPLIED, path) is True
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload == {
+        a11y.STATE_VERSION_KEY: 1,
+        a11y.STATE_INSTANCES_KEY: {"inst": "applied"},
+    }
+
+
+def test_old_flat_state_file_is_untreated_and_does_not_raise(ws_tmp, caplog):
+    """Phase 1 wrote a bare {instance_id: state} map; without a version it is a different structure."""
+    path = ws_tmp / "accessibility.json"
+    path.write_text(json.dumps({"inst": "applied"}), encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger=a11y.__name__):
+        assert a11y.load_states(path) == {}
+    assert "no supported version" in caplog.text
+
+
+@pytest.mark.parametrize("payload", [{"version": 2, "instances": {"inst": "applied"}}, {"version": 1}])
+def test_unsupported_or_incomplete_state_structure_is_untreated(ws_tmp, payload):
+    path = ws_tmp / "accessibility.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert a11y.load_states(path) == {}
+
+
 def test_unknown_state_values_are_ignored_but_known_ones_survive(ws_tmp):
     path = ws_tmp / "accessibility.json"
     path.write_text(
-        json.dumps({"good": "applied", "bad": "something_else"}),
+        json.dumps(
+            {"version": a11y.STATE_VERSION, "instances": {"good": "applied", "bad": "something_else"}}
+        ),
         encoding="utf-8",
     )
     assert a11y.load_states(path) == {"good": S.APPLIED}

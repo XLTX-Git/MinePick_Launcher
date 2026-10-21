@@ -160,9 +160,13 @@ class BulletList(QWidget):
 
 
 class WizardOverlay(QWidget):
-    """Overlay with a step rail, one card per step and a fixed action bar."""
+    """Overlay with a step rail, one card per step and a fixed action bar.
 
-    finished = Signal()
+    ``finished(skipped)`` says how the wizard ended. A skip is not a confirmation of every step:
+    callers must leave choices that were never submitted alone rather than persist their defaults.
+    """
+
+    finished = Signal(bool)
 
     def __init__(self, parent: QWidget, steps: list[WizardStep], labels: dict[str, str]) -> None:
         super().__init__(parent)
@@ -214,7 +218,7 @@ class WizardOverlay(QWidget):
         self.next_button.clicked.connect(self.go_next)
         self.skip_button = QPushButton(labels["skip"])
         self.skip_button.setObjectName("secondaryButton")
-        self.skip_button.clicked.connect(self.finish)
+        self.skip_button.clicked.connect(lambda *_: self.finish(skipped=True))
 
         actions = QWidget()
         actions.setObjectName("wizardActionBar")
@@ -258,8 +262,9 @@ class WizardOverlay(QWidget):
         else:
             self.finish()
 
-    def finish(self) -> None:
-        self.fade_out(lambda: self.finished.emit())
+    def finish(self, skipped: bool = False) -> None:
+        """Close the wizard; ``skipped=True`` means the remaining answers were never submitted."""
+        self.fade_out(lambda: self.finished.emit(bool(skipped)))
 
     def _sync(self, fade: bool = False) -> None:
         step = self._steps[self._index]

@@ -290,6 +290,39 @@ def _select(window_page, key: str, scope: str):
     return page.detail.stack.currentWidget()
 
 
+def test_accessibility_preference_radios_have_explicit_accessible_names(window) -> None:
+    """The new radio groups name the question, not just the answer (WCAG 4.1.2 / 3.3.2).
+
+    Qt derives a name from a radio's own text, which is exactly why this needs its own check:
+    "Ask me on the first keyboard launch" reported as a bare answer does not say *what* it answers.
+    Each radio therefore carries an explicit name that includes the group title, and the gate below
+    fails if one is deleted even though Qt would still report the visible text.
+    """
+    from PySide6.QtWidgets import QRadioButton
+
+    from gui import i18n
+    from gui.widgets import AccessibilityPreferenceGroup
+
+    app, built = window
+    built.pages["settings"]  # lazy pages: build the one that owns the first group
+    built.show_wizard()  # the second group only exists inside the first-run overlay
+    app.processEvents()
+
+    groups = built.findChildren(AccessibilityPreferenceGroup)
+    assert len(groups) == 2, "expected one group on settings and one in the wizard"
+    title = i18n.tr("settings.accessibility")
+    for group in groups:
+        radios = group.radios()
+        assert len(radios) == 3
+        assert all(isinstance(radio, QRadioButton) for radio in radios)
+        names = [radio.accessibleName().strip() for radio in radios]
+        assert all(names), f"unnamed radio in {group.objectName() or type(group).__name__}"
+        assert len(set(names)) == 3, f"duplicate radio names: {names}"
+        for radio, name in zip(radios, names, strict=True):
+            assert radio.text().strip() in name
+            assert title in name, f"{name!r} does not name the question {title!r}"
+
+
 def test_the_gate_covers_every_page_and_sub_page(window) -> None:
     """Guard the guard: a scope list that silently shrinks would make the gate vacuous."""
     scopes = _scopes(window)

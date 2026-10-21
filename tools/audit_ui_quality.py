@@ -411,7 +411,7 @@ def check_text_overflow() -> int:
     os.environ["MINECRAFT_GAME_DIR"] = str(root / "_preview" / "game")
 
     from PySide6.QtGui import QFontDatabase
-    from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QWidget
+    from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QRadioButton, QWidget
 
     from gui import i18n
     from gui.main import create_app
@@ -445,6 +445,35 @@ def check_text_overflow() -> int:
 
     from gui.main_window import MainWindow
 
+    kinds = (QLabel, QPushButton, QComboBox, QRadioButton)
+
+    def overflow_problems(scope, where: str) -> int:
+        found = 0
+        for widget in _text_widgets(scope, (*kinds, QWidget)):
+            if not isinstance(widget, kinds) or not widget.isVisible():
+                continue
+            text = widget.text() if not isinstance(widget, QComboBox) else widget.currentText()
+            if not text or "\n" in text:
+                continue
+            if isinstance(widget, QLabel) and widget.wordWrap():
+                continue
+            available = widget.contentsRect().width()  # usable width, padding already excluded
+            if isinstance(widget, QRadioButton):
+                # The text does not start at the widget's left edge: the indicator + spacing take
+                # 24px first. sizeHint() is exactly "what the style needs to paint this label and
+                # its indicator", so comparing it with the actual width catches a squeezed radio
+                # instead of crediting it the indicator's pixels.
+                needed = widget.sizeHint().width()
+            else:
+                needed = widget.fontMetrics().horizontalAdvance(text)
+            if needed > available and widget.width() > 0:
+                found += 1
+                print(
+                    f"  {code:6} {where:10} {type(widget).__name__:12} needs {needed:4}px, "
+                    f"has {available:4}px  {text[:40]!r}"
+                )
+        return found
+
     problems = 0
     for code, name in i18n.UI_LANGUAGES:
         i18n.set_language(code)
@@ -459,19 +488,18 @@ def check_text_overflow() -> int:
             for _ in range(6):
                 app.processEvents()
                 time.sleep(0.03)
-            for widget in _text_widgets(page, (QLabel, QPushButton, QComboBox, QWidget)):
-                if not isinstance(widget, (QLabel, QPushButton, QComboBox)) or not widget.isVisible():
-                    continue
-                text = widget.text() if not isinstance(widget, QComboBox) else widget.currentText()
-                if not text or "\n" in text:
-                    continue
-                if isinstance(widget, QLabel) and widget.wordWrap():
-                    continue
-                available = widget.contentsRect().width()  # usable width, padding already excluded
-                needed = widget.fontMetrics().horizontalAdvance(text)
-                if needed > available and widget.width() > 0:
-                    problems += 1
-                    print(f"  {code:6} {page_key:10} {type(widget).__name__:12} needs {needed:4}px, has {available:4}px  {text[:40]!r}")
+            problems += overflow_problems(page, page_key)
+        # The first-run wizard is an overlay, not a page. Its last step is where the accessibility
+        # copy lives, and the fixed 220px rail is exactly the kind of place a long translation gets
+        # clipped, so it is checked here rather than left to the page pass.
+        window.show_wizard()
+        overlay = window.wizard_overlay
+        overlay._index = len(overlay._steps) - 1
+        overlay._sync()
+        for _ in range(6):
+            app.processEvents()
+            time.sleep(0.03)
+        problems += overflow_problems(overlay, "wizard")
         window.close()
         print(f"  checked {code} ({name})")
     print(f"text overflow problems: {problems}")

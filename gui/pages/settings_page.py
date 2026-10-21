@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
 from gui import i18n
 from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve_theme
 from gui.widgets import (
+    AccessibilityPreferenceGroup,
     NoWheelDoubleSpinBox,
     NoWheelSpinBox,
     build_page_header,
@@ -146,6 +148,19 @@ class SettingsPage(QWidget):
             self.after_launch_combo.addItem(label, code)
         self.trim_memory_check = QCheckBox(tr("settings.trim_memory"))
         self.analysis_check = QCheckBox(tr("settings.auto_crash_analysis"))
+        # Accessibility prompt policy: three visible answers instead of a dropdown, each a stop a
+        # screen reader can read on its own. The hint is part of the group, not a tooltip: it is the
+        # one sentence that keeps "never" from reading as "turn the game's accessibility off".
+        self.accessibility_group = AccessibilityPreferenceGroup()
+        self.accessibility_hint = QLabel(tr("settings.accessibility.hint"))
+        self.accessibility_hint.setObjectName("hint")
+        self.accessibility_hint.setWordWrap(True)
+        self.accessibility_box = QGroupBox(tr("settings.accessibility"))
+        accessibility_layout = QVBoxLayout(self.accessibility_box)
+        accessibility_layout.setContentsMargins(12, 12, 12, 12)
+        accessibility_layout.setSpacing(8)
+        accessibility_layout.addWidget(self.accessibility_hint)
+        accessibility_layout.addWidget(self.accessibility_group)
         self.encrypt_check = QCheckBox(tr("settings.encrypt_tokens"))
         self.encrypt_button = QPushButton(tr("settings.encrypt_set"))
         self.encrypt_button.setObjectName("secondaryButton")
@@ -291,6 +306,7 @@ class SettingsPage(QWidget):
         inner = QWidget()
         layout = QVBoxLayout(inner)
         layout.addLayout(form)
+        layout.addWidget(self.accessibility_box)
         layout.addWidget(self.isolation_check)
         layout.addWidget(self.demo_check)
         layout.addWidget(self.trim_memory_check)
@@ -347,6 +363,7 @@ class SettingsPage(QWidget):
             self.encrypt_check,
         ):
             on_change(check.toggled)
+        on_change(self.accessibility_group.changed)
         for spin in (
             self.memory_spin,
             self.concurrency_spin,
@@ -382,6 +399,8 @@ class SettingsPage(QWidget):
         self.after_launch_combo.setCurrentIndex(max(idx, 0))
         self.trim_memory_check.setChecked(cfg.trim_memory_on_launch)
         self.analysis_check.setChecked(cfg.auto_crash_analysis)
+        # "auto" is what an unknown/hand-edited value means; the config validator already normalises it.
+        self.accessibility_group.set_value(cfg.accessibility_preference)
         self.encrypt_check.setChecked(cfg.token_encryption)
         self._update_encrypt_button()
         index = self.language_combo.findData(cfg.game_language)
@@ -462,6 +481,7 @@ class SettingsPage(QWidget):
         cfg.after_launch_behavior = self.after_launch_combo.currentData() or "keep"
         cfg.trim_memory_on_launch = self.trim_memory_check.isChecked()
         cfg.auto_crash_analysis = self.analysis_check.isChecked()
+        cfg.accessibility_preference = self.accessibility_group.value()
         cfg.game_language = self.language_combo.currentData()
         cfg.ui_language = self.ui_language_combo.currentData()
         cfg.download_speed_limit_kb = self.speed_limit_spin.value()

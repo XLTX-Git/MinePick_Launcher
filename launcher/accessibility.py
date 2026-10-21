@@ -58,6 +58,12 @@ NARRATOR_OPTION_KEY = "narrator"
 NARRATOR_OPTION_VALUE = "1"
 
 ACCESSIBILITY_STATE_FILENAME = "accessibility.json"
+# The state file carries a version so a future layout can be told apart from an old one. Version 1 is
+# {"version": 1, "instances": {instance_id: state}}. A file without the field - the old flat map - is a
+# different structure, not a missing detail: it is ignored as untreated rather than guessed at.
+STATE_VERSION = 1
+STATE_VERSION_KEY = "version"
+STATE_INSTANCES_KEY = "instances"
 
 # These mods remove, hide, or take over the accessibility screen / narrator. Writing the
 # vanilla option would either do nothing or fight the pack's deliberate choice, so we never
@@ -124,7 +130,11 @@ class TriggerSource(str, Enum):
 
 
 class AccessibilityState(str, Enum):
-    """One instance's recorded outcome; every stored value counts as handled."""
+    """One instance's recorded outcome; every value except ``write_failed`` counts as handled.
+
+    ``write_failed`` records a failed *write* after the player had already said yes. It is therefore
+    not an answer to ask about again: auto retries the write once on the next launch, silently.
+    """
 
     ANSWERED_ON = "answered_on"
     ANSWERED_OFF = "answered_off"
@@ -273,11 +283,12 @@ def decide(
     """Return the one action to take plus a stable, log/test-friendly reason.
 
     ``option_present`` means the target options.txt key already exists. always_on never
-    overwrites it; it is deliberately absent from the auto flow, where the "already
-    handled" answer is the recorded per-instance state.
+    overwrites it. The normal auto flow asks instead of reading it, but the write retry after a
+    failed write does consult it: if the key is there now there is nothing left to retry.
 
-    ``state`` is ``None`` for an untreated instance. Any recorded value — including
-    ``write_failed`` — is handled, so auto never nags twice.
+    ``state`` is ``None`` for an untreated instance. Every recorded value is handled by auto except
+    ``write_failed``: the player had already answered yes and only the write failed, so the next launch
+    retries that write once and never asks again (:meth:`AccessibilityState.WRITE_FAILED`).
     """
     pref = _enum_or_default(AccessibilityPreference, preference, AccessibilityPreference.AUTO)
     resolved_tier = _enum_or_default(VersionTier, tier, VersionTier.NO_ACCESSIBILITY)
@@ -319,6 +330,44 @@ def decide(
         return DecisionResult(
             Decision.WRITE_NARRATOR,
             "always_on: writing narrator:1 for the narrator-only tier",
+        )
+
+    # auto: a failed write is not an unanswered question. The player already said yes; retry the write
+    # silently, once per launch, so a transient failure does not turn into a second dialog. The same
+    # vetoes as below still apply: writing for a version without native support, or against a mod that
+    # owns the setting, would be pointless at best.
+    if resolved_state is AccessibilityState.WRITE_FAILED:
+        if resolved_tier is VersionTier.NO_ACCESSIBILITY:
+            return DecisionResult(
+                Decision.LAUNCH_QUIETLY,
+                "auto: the previous write failed, but this version has no native accessibility; "
+                "nothing to retry",
+            )
+        if disable:
+            return DecisionResult(
+                Decision.LAUNCH_QUIETLY,
+                "auto: the previous write failed, but accessibility is disabled or taken over by mods "
+                f"({', '.join(disable)}); not retrying",
+            )
+        if override:
+            return DecisionResult(
+                Decision.LAUNCH_QUIETLY,
+                "auto: the previous write failed, but options-overriding mods would undo a retry "
+                f"({', '.join(override)}); not retrying",
+            )
+        if option_present:
+            return DecisionResult(
+                Decision.LAUNCH_QUIETLY,
+                "auto: the previous write failed, but the option is already present; nothing to retry",
+            )
+        if resolved_tier is VersionTier.ONBOARD_SCREEN:
+            return DecisionResult(
+                Decision.WRITE_ONBOARD,
+                "auto: the previous write failed; retrying onboardAccessibility:true once, without asking",
+            )
+        return DecisionResult(
+            Decision.WRITE_NARRATOR,
+            "auto: the previous write failed; retrying narrator:1 once, without asking",
         )
 
     # auto: everything below is about whether to ask, and only a keyboard launch may ask.
@@ -373,7 +422,13 @@ def default_state_path() -> Path:
 
 
 def load_states(path: Path | None = None) -> dict[str, AccessibilityState]:
-    """Read the instance-id -> state map; every read failure means "untreated"."""
+    """Read the instance-id -> state map; every read failure or old layout means "untreated".
+
+    The file is a versioned object: ``{"version": 1, "instances": {...}}``. A file without the
+    version field is the old flat instance map, a *different* structure rather than a state value we
+    could still trust; it is ignored as a whole (the instances are retried as untreated) and never
+    raises. The same goes for a future version: a newer launcher's file must not be misread by this one.
+    """
     target = Path(path) if path is not None else default_state_path()
     try:
         text = target.read_text(encoding="utf-8-sig")
@@ -390,9 +445,26 @@ def load_states(path: Path | None = None) -> dict[str, AccessibilityState]:
     if not isinstance(raw, dict):
         _LOGGER.warning("accessibility state is not an object; ignored: %s", target)
         return {}
+    if raw.get(STATE_VERSION_KEY) != STATE_VERSION:
+        _LOGGER.warning(
+            "accessibility state has no supported version (expected %s, found %r); treating every "
+            "instance as untreated: %s",
+            STATE_VERSION,
+            raw.get(STATE_VERSION_KEY),
+            target,
+        )
+        return {}
+    instances = raw.get(STATE_INSTANCES_KEY)
+    if not isinstance(instances, dict):
+        _LOGGER.warning(
+            "accessibility state version %s has no instance map; treating every instance as untreated: %s",
+            STATE_VERSION,
+            target,
+        )
+        return {}
 
     states: dict[str, AccessibilityState] = {}
-    for instance_id, value in raw.items():
+    for instance_id, value in instances.items():
         if not isinstance(instance_id, str) or not instance_id:
             continue
         try:
@@ -428,7 +500,10 @@ def save_state(
     states = load_states(target)
     states[instance_id] = resolved
     payload = {
-        instance_id: value.value for instance_id, value in sorted(states.items())
+        STATE_VERSION_KEY: STATE_VERSION,
+        STATE_INSTANCES_KEY: {
+            instance_id: value.value for instance_id, value in sorted(states.items())
+        },
     }
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     try:

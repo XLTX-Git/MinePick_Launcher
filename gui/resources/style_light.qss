@@ -318,6 +318,24 @@ QCheckBox::indicator:checked {
 }
 QCheckBox::indicator:checked:hover { background: __ACCENT_HOVER__; border-color: __ACCENT_HOVER__; }
 
+/* ---------- radio buttons ---------- */
+
+/* Same construction as the checkbox, so the accessible-name gate and the focus ring work the same
+   way: the 1px transparent border is the ring's placeholder and the indicator is 16x16 in both
+   states. A checked radio is a filled accent disc - the only shape a QSS-only radio can draw
+   without an extra image asset. Auto-exclusive siblings: each answer is a Tab stop, and the arrow
+   keys move between the three. */
+QRadioButton { spacing: 8px; border: 1px solid transparent; }
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid __BORDER_HOVER__;
+    border-radius: 8px;
+    background: __BG_LIST__;
+}
+QRadioButton::indicator:hover { border-color: __ACCENT__; }
+QRadioButton::indicator:checked { background: __ACCENT__; border-color: __ACCENT__; }
+
 /* ---------- status bar ---------- */
 
 QStatusBar { background: __BG_WINDOW__; color: __FG_HINT__; border-top: 1px solid __BORDER_LIST__; }
@@ -588,6 +606,10 @@ QScrollArea[keyboardFocus="true"] { border: 1px solid __FOCUS_RING__; }
    checkbox section below, so colouring it cannot move anything. Gated on keyboardFocus like the rest, so
    a mouse click paints nothing. */
 QCheckBox[keyboardFocus="true"]:focus {
+    border-color: __FOCUS_RING__;
+}
+/* Radios: same placeholder border as the checkbox, so the keyboard ring costs no layout space. */
+QRadioButton[keyboardFocus="true"]:focus {
     border-color: __FOCUS_RING__;
 }
 /* The resource tab widget is itself the focus stop (its tab bar is NoFocus and draws the tabs). Qt gives
