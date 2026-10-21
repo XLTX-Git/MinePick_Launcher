@@ -23,6 +23,7 @@ Packaging-compatible: all paths are resolved at runtime; the argfile is written 
 
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 from dataclasses import dataclass
@@ -30,12 +31,23 @@ from pathlib import Path
 
 from launcher import __version__, paths
 from launcher.install import library_path
+from launcher.launch.options import OptionWriteResult, ensure_option
 from launcher.meta.rules import (
     Platform,
     ResolvedLibrary,
     allowed,
 )
 from launcher.meta.version import ArgumentItem, GameArgument, VersionJson
+
+_LOGGER = logging.getLogger(__name__)
+
+__all__ = [
+    "LaunchCommand",
+    "LaunchProfile",
+    "OptionWriteResult",
+    "build_argv",
+    "ensure_option",
+]
 
 ARGFILE_THRESHOLD = 7000  # Windows command-line length threshold; beyond it, use an @argfile (Java 9+)
 
@@ -77,27 +89,19 @@ def _flatten_filtered(
 def _ensure_options_lang(path: Path, lang_code: str) -> None:
     """Write/update the lang line in options.txt (keeping other settings; UTF-8 without BOM).
 
-    All versions (including 1.8.9) read the language from options.txt; the --lang arg is only supported by some newer versions.
+    All versions (including 1.8.9) read the language from options.txt; the --lang arg is only
+    supported by some newer versions. A read-only or locked file is logged and skipped: a launch
+    with the wrong language is a small problem, a launch that dies here is a large one.
     """
-    lines: list[str] = []
-    if path.exists():
-        try:
-            lines = path.read_text(encoding="utf-8-sig").splitlines()
-        except OSError:
-            lines = []
-    new_line = "lang:" + lang_code
-    out: list[str] = []
-    replaced = False
-    for line in lines:
-        if line.startswith("lang:"):
-            out.append(new_line)
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.append(new_line)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    try:
+        result = ensure_option(path, "lang", lang_code)
+    except Exception as exc:  # noqa: BLE001 - a language write must never abort a launch
+        _LOGGER.warning(
+            "could not write the game language to %s (%s); continuing the launch", path, exc
+        )
+        return
+    if result is OptionWriteResult.FAILED:
+        _LOGGER.warning("could not write the game language to %s; continuing the launch", path)
 
 
 def _split_extra_jvm_args(text: str) -> list[str]:
