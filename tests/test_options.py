@@ -22,7 +22,28 @@ from __future__ import annotations
 import logging
 
 from launcher.launch.command import _ensure_options_lang
-from launcher.launch.options import OptionWriteResult, ensure_option
+from launcher.launch.options import OptionWriteResult, ensure_option, option_present
+
+
+def test_option_present_matches_the_exact_key_and_missing_file_is_false(ws_tmp):
+    path = ws_tmp / "options.txt"
+    assert option_present(path, "onboardAccessibility") is False
+    path.write_text("onboardAccessibility:true\nnarrator:1\n", encoding="utf-8")
+    assert option_present(path, "onboardAccessibility") is True
+    assert option_present(path, "narrator") is True
+    assert option_present(path, "onboard") is False  # not a prefix match
+
+
+def test_option_present_reads_a_bom_file_and_survives_a_read_failure(ws_tmp, monkeypatch):
+    path = ws_tmp / "options.txt"
+    path.write_bytes(b"\xef\xbb\xbfonboardAccessibility:true\r\n")
+    assert option_present(path, "onboardAccessibility") is True
+
+    def broken_read(_self, **_kwargs):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(type(path), "read_text", broken_read)
+    assert option_present(path, "narrator") is False
 
 
 def test_key_with_space_after_colon_keeps_that_style(ws_tmp):

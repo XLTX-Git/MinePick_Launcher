@@ -93,6 +93,28 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
+def option_present(path: Path, key: str) -> bool:
+    """Whether ``path`` already contains ``key`` (read-only; failures mean "not present").
+
+    The launcher asks this before deciding what to do, so it must never be the thing that stops a
+    launch: a missing file is an ordinary "no", and an unreadable or corrupt one is logged and
+    treated the same way. Matching is exact and uses the same line parser as :func:`ensure_option`,
+    so a key such as ``key`` cannot be confused with ``key_extra``.
+    """
+    try:
+        existed, text = _read_text(Path(path))
+    except (OSError, UnicodeError) as exc:
+        _LOGGER.warning("could not read options file %s: %s", path, exc)
+        return False
+    if not existed:
+        return False
+    for line in text.splitlines():
+        parsed = _line_key_and_prefix(line)
+        if parsed is not None and parsed[0] == key:
+            return True
+    return False
+
+
 def ensure_option(path: Path, key: str, value: str) -> OptionWriteResult:
     """Ensure exactly one ``key:value`` line, without disturbing the rest of the file.
 

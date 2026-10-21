@@ -59,6 +59,7 @@ from gui.widgets import (
 )
 from gui.workers import run_in_background
 from launcher import config, paths
+from launcher.accessibility import TriggerSource
 from launcher.install import list_installed_versions
 from launcher.instances import (
     create_instance,
@@ -372,11 +373,12 @@ class InstancesPage(QWidget):
             return
         self.detail.delete()
 
-    def _launch(self) -> None:
+    def _launch(self, trigger_source: TriggerSource | str = TriggerSource.UNKNOWN) -> None:
+        """Legacy delegate: the detail panel owns the button, but this entry passes the source on."""
         if self._current_name() is None:
             set_app_status(self, tr("instances.msg.need_select"), "warning")
             return
-        self.detail.launch()
+        self.detail.launch(trigger_source)
 
     def _open_crash_viewer(self) -> None:
         self.detail.open_crash_viewer()

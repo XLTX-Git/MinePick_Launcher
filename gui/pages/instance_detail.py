@@ -54,6 +54,10 @@ from PySide6.QtWidgets import (
 )
 
 from gui import i18n
+from gui.accessibility_launch import (
+    prepare_launch_accessibility,
+    trigger_source_for_click,
+)
 from gui.errors import show_fatal
 from gui.view_state import remember_column_widths
 from gui.widgets import (
@@ -70,6 +74,7 @@ from gui.widgets import (
 )
 from gui.workers import ProgressBridge, run_in_background
 from launcher import config, paths
+from launcher.accessibility import TriggerSource
 from launcher.auth import AccountStore
 from launcher.instances import (
     ISOLATION_FOLLOW,
@@ -221,7 +226,7 @@ class InstanceDetail(QWidget):
         layout.addWidget(self.stack, 1)
 
         self.tab_group.idClicked.connect(self._on_tab_clicked)
-        self.launch_button.clicked.connect(self.launch)
+        self.launch_button.clicked.connect(self._on_launch_clicked)
         self.crash_button.clicked.connect(self.open_crash_viewer)
 
     # ---------- construction ----------
@@ -1473,7 +1478,11 @@ class InstanceDetail(QWidget):
 
     # ---------- launch ----------
 
-    def launch(self) -> None:
+    def _on_launch_clicked(self, _checked: bool = False) -> None:
+        """A real button click: classify it, then take the same path as every other entry."""
+        self.launch(trigger_source_for_click(self.launch_button))
+
+    def launch(self, trigger_source: TriggerSource | str = TriggerSource.UNKNOWN) -> None:
         if self._require_instance() is None:
             return
         instance_id = self.instance_id
@@ -1490,6 +1499,19 @@ class InstanceDetail(QWidget):
             return
         disable_keeping_focus(self.launch_button)
         set_app_status(self, tr("instances.msg.preparing", instance_id))
+
+        prepare_launch_accessibility(
+            parent=self.window(),
+            instance_id=instance_id,
+            game_dir=resolved.game_dir,
+            launch_dir=resolved.launch_dir,
+            trigger_source=trigger_source,
+            launch_button=self.launch_button,
+            on_continue=lambda: self._launch_now(instance_id, cfg, resolved),
+        )
+
+    def _launch_now(self, instance_id: str, cfg, resolved) -> None:
+        """The actual launch worker, reached only through the single pre-launch accessibility gate."""
 
         def do_prepare() -> object:
             try:

@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -35,6 +36,10 @@ from PySide6.QtWidgets import (
 )
 
 from gui import i18n, icons
+from gui.accessibility_launch import (
+    prepare_launch_accessibility,
+    trigger_source_for_click,
+)
 from gui.errors import show_fatal
 from gui.widgets import (
     NoWheelDoubleSpinBox,
@@ -46,6 +51,7 @@ from gui.widgets import (
 )
 from gui.workers import run_in_background
 from launcher import config, paths
+from launcher.accessibility import TriggerSource
 from launcher.auth import AccountStore
 from launcher.launch import (
     JavaMissingError,
@@ -56,6 +62,7 @@ from launcher.launch import (
 )
 
 tr = i18n.tr
+_LOGGER = logging.getLogger(__name__)
 
 
 class LaunchPage(QWidget):
@@ -132,7 +139,7 @@ class LaunchPage(QWidget):
         layout.addLayout(instance_actions)
         layout.addStretch(1)
 
-        self.launch_button.clicked.connect(self.launch)
+        self.launch_button.clicked.connect(self._on_launch_clicked)
         self.account_button.clicked.connect(self.account_requested.emit)
         self.select_instance_button.clicked.connect(self._request_instance)
         self.instance_settings_button.clicked.connect(self._request_instance_settings)
@@ -215,7 +222,11 @@ class LaunchPage(QWidget):
         """Refresh the dropdown after the versions page installs/uninstalls."""
         self._populate_versions()
 
-    def launch(self) -> None:
+    def _on_launch_clicked(self, _checked: bool = False) -> None:
+        """A real button click: classify it, then take the same path as every other entry."""
+        self.launch(trigger_source_for_click(self.launch_button))
+
+    def launch(self, trigger_source: TriggerSource | str = TriggerSource.UNKNOWN) -> None:
         version_id = (self.version_combo.currentData() or self.version_combo.currentText()).strip()
         if not version_id:
             set_app_status(self, tr("launch.msg.need_id"))
@@ -237,6 +248,34 @@ class LaunchPage(QWidget):
                 self.launch_button.setEnabled(True)
                 set_app_status(self, tr("launch.msg.offline_locked"), "warning")
                 return
+
+        # options.txt and mods live in the effective working directory, which isolation decides.
+        # Resolving it here is cheap; a failure must not stop the pre-launch step (the worker will
+        # report the real launch error).
+        launch_dir = None
+        try:
+            from launcher.instances import resolve_instance
+
+            launch_dir = resolve_instance(version_id, cfg, game_dir).launch_dir
+        except Exception:  # the accessibility probe degrades to the shared directory
+            _LOGGER.warning(
+                "could not resolve %s for the accessibility pre-launch step; using the shared directory",
+                version_id,
+                exc_info=True,
+            )
+
+        prepare_launch_accessibility(
+            parent=self.window(),
+            instance_id=version_id,
+            game_dir=game_dir,
+            launch_dir=launch_dir,
+            trigger_source=trigger_source,
+            launch_button=self.launch_button,
+            on_continue=lambda: self._launch_now(version_id, cfg, game_dir),
+        )
+
+    def _launch_now(self, version_id: str, cfg, game_dir: Path) -> None:
+        """The actual launch worker, reached only through the single pre-launch accessibility gate."""
         server = self.server_edit.text().strip() or None
         # Auto memory: size the heap from mod count and available RAM at launch time
         memory_gb = self.memory_spin.value()
