@@ -23,11 +23,16 @@ import json
 import logging
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from launcher import paths
 
 CONFIG_FILENAME = "config.json"
+
+# The launcher's own accessibility prompt policy. It never changes the game's
+# built-in onboarding; it only decides whether this launcher asks first.
+ACCESSIBILITY_PREFERENCE_DEFAULT = "auto"
+ACCESSIBILITY_PREFERENCE_CHOICES = ("auto", "always_on", "never")
 
 # Common game languages (code, display name); en_us is built into the game, the rest are the game's bundled language packs
 GAME_LANGUAGES: list[tuple[str, str]] = [
@@ -83,6 +88,13 @@ class LauncherConfig(BaseModel):
     game_language: str = Field(
         default="",
         description="Game language code (zh_cn/en_us/ja_jp...); empty = follow in-game setting (not forced)",
+    )
+    accessibility_preference: str = Field(
+        default=ACCESSIBILITY_PREFERENCE_DEFAULT,
+        description=(
+            "Launcher accessibility prompt policy (auto / always_on / never); it only affects the "
+            "launcher's prompt, not the game's own onboarding"
+        ),
     )
     ui_language: str = Field(
         default="zh_cn",
@@ -174,6 +186,20 @@ class LauncherConfig(BaseModel):
         default="",
         description="HTTP proxy address (e.g. http://127.0.0.1:7890); empty = auto-read proxy from environment variables",
     )
+
+    @field_validator("accessibility_preference", mode="before")
+    @classmethod
+    def _normalize_accessibility_preference(cls, value: object) -> str:
+        """Keep old or hand-edited configs loadable: anything unrecognised means ``auto``."""
+        normalized = value.strip().lower() if isinstance(value, str) else value
+        if normalized in ACCESSIBILITY_PREFERENCE_CHOICES:
+            return str(normalized)
+        logging.getLogger(__name__).warning(
+            "Invalid accessibility_preference %r; falling back to %r",
+            value,
+            ACCESSIBILITY_PREFERENCE_DEFAULT,
+        )
+        return ACCESSIBILITY_PREFERENCE_DEFAULT
 
 
 def default_config_path() -> Path:
