@@ -164,6 +164,10 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_RAIL_DOT": {"dark": "#33404f", "light": "#b6c1cd"},
     "BG_SCROLLBAR": {"dark": "#6d7f95", "light": "#8a96a3"},
     "BG_SECTION": {"dark": "#1c2531", "light": "#f1f3f6"},
+    # The settings page mock-up's two-stop "paper" background (PCL's pale blue under white
+    # cards). Dark keeps the window colour: this pair is referenced by style_light.qss only.
+    "BG_SETTINGS_BOTTOM": {"dark": "#0f141b", "light": "#e3edf9"},
+    "BG_SETTINGS_TOP": {"dark": "#0f141b", "light": "#eef4fb"},
     "BG_SEPARATOR": {"dark": "#27303d", "light": "#dfe4ea"},
     "BG_SIDEBAR": {"dark": "#1c2531", "light": "#e7ebf0"},
     "BG_TITLEBAR_CLOSE": {"dark": "#cf3f3f", "light": "#cf3f3f"},

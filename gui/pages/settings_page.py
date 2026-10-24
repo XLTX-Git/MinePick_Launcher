@@ -115,6 +115,11 @@ class SettingsPage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        # Scopes the PCL-style sheet rules to this page only (see style_light.qss). The attribute is
+        # what lets a plain QWidget paint the gradient that rule names; without it Qt skips the
+        # background and the page stays the window's white - i.e. the flat look this mock-up removes.
+        self.setObjectName("settingsPage")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.game_dir_edit = QLineEdit()
         self.game_dir_edit.setPlaceholderText(tr("wizard.default_dir.hint"))  # 留空使用默认目录
         self.browse_game = QPushButton(tr("settings.browse"))
@@ -251,6 +256,9 @@ class SettingsPage(QWidget):
 
         form = QFormLayout()
         style_form(form)
+        # The sheet gives a field 30px of content + 8px padding + 1px border on each side = 48px;
+        # with this 4px gap the row pitch is the 52px PCL's settings use.
+        form.setVerticalSpacing(4)
         # WCAG 4.1.2: a control added straight to a row *is* the row's field, so QFormLayout hands it the
         # label text as its accessible name. Wrapping a control in a layout instead (the three rows
         # below) breaks that association - the form sees a layout, not a field - which left the game
@@ -304,7 +312,11 @@ class SettingsPage(QWidget):
         buttons_row.addStretch(1)
 
         inner = QWidget()
+        inner.setObjectName("settingsCard")
         layout = QVBoxLayout(inner)
+        # The card's 20px inner padding and 16px block gap are layout values, not sheet values.
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
         layout.addLayout(form)
         layout.addWidget(self.accessibility_box)
         layout.addWidget(self.isolation_check)
@@ -323,7 +335,13 @@ class SettingsPage(QWidget):
         scroll.setWidget(inner)
         outer = QVBoxLayout(self)
         style_page_layout(outer)
-        outer.addWidget(build_page_header(tr("nav.settings"), tr("page.settings.desc")))
+        # PCL leaves a 16px paper margin around the blue banner and the white card.
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(16)
+        header = build_page_header(tr("nav.settings"), tr("page.settings.desc"))
+        header.layout().setContentsMargins(20, 16, 20, 16)
+        header.layout().setSpacing(4)
+        outer.addWidget(header)
         outer.addWidget(scroll)
 
         self.browse_game.clicked.connect(self._browse_game)

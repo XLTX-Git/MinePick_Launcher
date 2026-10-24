@@ -78,6 +78,9 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     ("FG_TEXT", "BG_LIST_2", 4.5, True),
     ("FG_TEXT", "BG_SIDEBAR", 4.5, True),
     ("FG_TEXT", "BG_SECTION", 4.5, True),
+    # Settings mock-up: the page's pale-blue gradient stops.
+    ("FG_TEXT", "BG_SETTINGS_TOP", 4.5, True),
+    ("FG_TEXT", "BG_SETTINGS_BOTTOM", 4.5, True),
     ("FG_TEXT", "BG_BUTTON_ICON", 4.5, True),
     ("FG_TEXT", "BG_HOVER", 4.5, True),
     ("FG_TEXT", "BG_DISABLED_2", 4.5, True),

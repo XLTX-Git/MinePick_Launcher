@@ -693,3 +693,133 @@ QPushButton#wizardOption[selected="true"] {
 QLabel#wizardStatus { color: __FG_HINT__; font-size: 12px; }
 QLabel#wizardBullet { color: __FG_OPTION__; font-size: 13px; }
 QDoubleSpinBox#wizardMemory { min-height: 30px; }
+
+/* ========================================================================== */
+/* Settings page mock-up (light only): PCL's three colour layers.             */
+/*                                                                            */
+/* Everything here is scoped to QWidget#settingsPage / #settingsCard, so no   */
+/* other page moves. It deliberately adds no widget and no image: the blue     */
+/* banner is the existing pageHeader, the white layer is the existing scroll   */
+/* content, and the accent is the same user-chosen __ACCENT_BUTTON__ the rest  */
+/* of the app already uses.                                                   */
+/* ========================================================================== */
+
+/* Layer 1 - the pale blue "paper" behind the page. */
+QWidget#settingsPage {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 __BG_SETTINGS_TOP__,
+        stop: 1 __BG_SETTINGS_BOTTOM__
+    );
+}
+
+/* Layer 3 - the solid accent banner that replaces the old flat title strip. */
+QWidget#settingsPage QWidget#pageHeader {
+    background: __ACCENT_BUTTON__;
+    border: none;
+    border-radius: __RADIUS_LG__;
+}
+QWidget#settingsPage QWidget#pageHeader QLabel#pageTitle {
+    color: __FG_SELECTED__;
+    font-size: 19px;
+    font-weight: 700;
+}
+QWidget#settingsPage QWidget#pageHeader QLabel#pageSubtitle {
+    color: __FG_SELECTED__;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* Layer 2 - one white card, no shadow and no second outline. */
+QWidget#settingsPage QWidget#settingsCard {
+    background: __BG_LIST__;
+    border: none;
+    border-radius: __RADIUS_LG__;
+}
+
+/* Controls inside the card: neutral 1px outline, white field, 52px row rhythm
+   (30px content + 8px padding + 1px border, twice; the form adds a 4px gap). */
+QWidget#settingsPage QLineEdit,
+QWidget#settingsPage QComboBox,
+QWidget#settingsPage QSpinBox,
+QWidget#settingsPage QDoubleSpinBox {
+    background: __BG_LIST__;
+    color: __FG_TEXT__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_SM__;
+    padding: 8px 12px;
+    min-height: 30px;
+}
+QWidget#settingsPage QLineEdit:hover,
+QWidget#settingsPage QComboBox:hover,
+QWidget#settingsPage QSpinBox:hover,
+QWidget#settingsPage QDoubleSpinBox:hover {
+    border-color: __BORDER_HOVER__;
+}
+QWidget#settingsPage QLineEdit:disabled,
+QWidget#settingsPage QComboBox:disabled,
+QWidget#settingsPage QSpinBox:disabled,
+QWidget#settingsPage QDoubleSpinBox:disabled {
+    background: __BG_DISABLED__;
+    color: __FG_DISABLED_2__;
+}
+/* Keep the keyboard-only contract: id-scoped rules above would otherwise win
+   over the generic [keyboardFocus="true"] ring at the end of the base sheet. */
+QWidget#settingsPage QLineEdit[keyboardFocus="true"]:focus,
+QWidget#settingsPage QComboBox[keyboardFocus="true"]:focus,
+QWidget#settingsPage QSpinBox[keyboardFocus="true"]:focus,
+QWidget#settingsPage QDoubleSpinBox[keyboardFocus="true"]:focus {
+    border: 1px solid __FOCUS_RING__;
+}
+
+/* Secondary buttons: white fill, one neutral outline, dark label. The accent is
+   not used as a hover colour here - only the keyboard ring keeps it. */
+QWidget#settingsPage QPushButton#secondaryButton {
+    background: __BG_LIST__;
+    color: __FG_TEXT__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: __RADIUS_SM__;
+    padding: 8px 16px;
+    min-height: 30px;
+    font-weight: 600;
+}
+QWidget#settingsPage QPushButton#secondaryButton:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __BORDER_HOVER__;
+    color: __FG_TEXT__;
+}
+QWidget#settingsPage QPushButton#secondaryButton:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#settingsPage QPushButton#secondaryButton:disabled {
+    background: __BG_LIST__;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#settingsPage QPushButton#secondaryButton[keyboardFocus="true"] {
+    background: __BG_LIST__;
+    border-color: __FOCUS_RING__;
+}
+QWidget#settingsPage QPushButton#secondaryButton[keyboardFocus="true"]:disabled {
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+
+/* The existing accessibility QGroupBox becomes a quiet section: no framed card,
+   just a hairline and a 16px heading above 12px of air. */
+QWidget#settingsPage QGroupBox {
+    background: transparent;
+    border: none;
+    border-top: 1px solid __BG_SEPARATOR__;
+    border-radius: 0;
+    margin-top: 24px;
+    padding: 16px 0 0 0;
+}
+QWidget#settingsPage QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 0;
+    padding: 0 4px 12px 0;
+    color: __FG_TEXT__;
+    font-size: 16px;
+    font-weight: 700;
+}
