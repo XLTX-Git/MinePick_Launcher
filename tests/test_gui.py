@@ -995,6 +995,7 @@ def test_about_page_modes_and_credits(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data19"))
     from PySide6.QtWidgets import QLabel
 
+    import gui.pages.about_page as about
     from gui.pages.about_page import MODE_KEYS
     from gui.theme import apply_theme
     from launcher import config as config_mod
@@ -1017,6 +1018,15 @@ def test_about_page_modes_and_credits(app, monkeypatch, ws_tmp):
         for entry in notices.all_entries():
             assert any(entry.name in text for text in labels), f"credit not rendered: {entry.name}"
         assert any("TheDarkLord234" in text for text in labels)
+        # The source link is printed under its button and wraps instead of widening the card: a long
+        # URL must never be clipped by the card it sits in.
+        assert page.source_url.text() == about.SOURCE_URL
+        assert page.source_url.wordWrap()
+        wrapped = page.source_url.heightForWidth(220)
+        assert wrapped > page.source_url.fontMetrics().height(), (
+            f"a long URL does not wrap: {wrapped}px at 220px wide, one line is "
+            f"{page.source_url.fontMetrics().height()}px"
+        )
     finally:
         if window is not None:
             window.close()

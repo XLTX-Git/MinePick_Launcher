@@ -1101,6 +1101,11 @@ QWidget#aboutPage QGroupBox {
     border: 1px solid __BORDER_TABLE__;
 }
 
+/* Inside a card: the explanation text is the 12px hint, and a long URL wraps under the button that
+   opens it instead of stretching the card. */
+QWidget#aboutPage QLabel#hint { font-size: 12px; }
+QWidget#aboutPage QLabel#aboutLink { font-size: 12px; color: __FG_HINT__; }
+
 /* ========================================================================== */
 /* Launch page: the shared page paper + one white side panel flush to the     */
 /* edge.                                                                      */

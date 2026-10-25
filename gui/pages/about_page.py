@@ -113,7 +113,10 @@ class AboutPage(QWidget):
     def _build_information(self) -> QGroupBox:
         box = QGroupBox(tr("about.info.title"))
         layout = QVBoxLayout(box)
-        layout.setSpacing(8)
+        # The card's own QSS padding (12px) is the inset; the layout adds nothing on top of it, and
+        # the rows inside a card sit 6px apart - the same rhythm the forms use.
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setSpacing(6)
 
         layout.addWidget(QLabel(tr("about.info.version", __version__)))
 
@@ -123,6 +126,15 @@ class AboutPage(QWidget):
         source_row.addWidget(self.source_button)
         source_row.addStretch(1)
         layout.addLayout(source_row)
+
+        # The link itself, under the button that opens it: a long URL wraps instead of pushing the
+        # card wider. Plain text on purpose - it is not a control, so it must not become a focus stop
+        # that would need a focus ring of its own; the button above is the way to open it.
+        self.source_url = QLabel(SOURCE_URL)
+        self.source_url.setObjectName("aboutLink")
+        self.source_url.setWordWrap(True)
+        self.source_url.setToolTip(SOURCE_URL)
+        layout.addWidget(self.source_url)
 
         layout.addWidget(
             self._legal_block("about.legal.title", "about.legal.body", LICENSE_URL, "about.legal.view_license")
@@ -139,10 +151,12 @@ class AboutPage(QWidget):
         """A titled paragraph of legal text with an optional link button."""
         holder = QWidget()
         layout = QVBoxLayout(holder)
-        layout.setContentsMargins(0, 4, 0, 4)
-        layout.setSpacing(3)
+        # 6px above every block: the card's own 6px spacing plus this makes two blocks sit 12px apart,
+        # while the rows inside one block stay at the form rhythm of 6px.
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(6)
         title = QLabel(tr(title_key))
-        title.setObjectName("title")
+        title.setObjectName("sectionTitle")
         layout.addWidget(title)
         body = QLabel(tr(body_key))
         body.setObjectName("hint")
@@ -161,7 +175,8 @@ class AboutPage(QWidget):
     def _build_updates(self) -> QGroupBox:
         box = QGroupBox(tr("about.update.title"))
         layout = QVBoxLayout(box)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setSpacing(6)
 
         versions = QHBoxLayout()
         self.current_label = QLabel(tr("about.update.current", __version__))
@@ -191,7 +206,10 @@ class AboutPage(QWidget):
         self.progress_row.setVisible(False)
         layout.addWidget(self.progress_row)
 
-        layout.addWidget(QLabel(tr("about.update.mode.title")))
+        # The mode label is a form label, not a second section heading: it names the field under it.
+        mode_title = QLabel(tr("about.update.mode.title"))
+        mode_title.setObjectName("formLabel")
+        layout.addWidget(mode_title)
         self.mode_combo = QComboBox()
         for value, key in MODE_KEYS:
             self.mode_combo.addItem(tr(key), value)
@@ -205,10 +223,11 @@ class AboutPage(QWidget):
     def _build_credits(self) -> QGroupBox:
         box = QGroupBox(tr("about.credits.title"))
         layout = QVBoxLayout(box)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setSpacing(6)
         for group_key, entries in notices.groups():
             heading = QLabel(tr(group_key))
-            heading.setObjectName("title")
+            heading.setObjectName("sectionTitle")
             layout.addWidget(heading)
             for entry in entries:
                 layout.addWidget(self._credit_row(entry))
@@ -221,6 +240,7 @@ class AboutPage(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
         text = QLabel(f"<b>{entry.name}</b> — {tr(entry.detail_key)}")
+        text.setObjectName("hint")
         text.setWordWrap(True)
         row.addWidget(text, 1)
         if entry.url:
