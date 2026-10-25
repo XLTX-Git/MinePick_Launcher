@@ -204,6 +204,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.credit.cryptography": "令牌加密与证书校验（含 OpenSSL）",
         "about.credit.prism": "提供了默认的微软登录 Client ID。",
         "about.credit.truststore": "使用系统证书存储",
+        "about.credit.lucide": "侧栏导航图标",
         "nav.about": "关于",
         "page.about.desc": "版本、法律声明、鸣谢与更新",
         # Navigation
@@ -893,6 +894,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.credit.cryptography": "token encryption and certificate handling (including OpenSSL)",
         "about.credit.prism": "provides the default Microsoft sign-in client id.",
         "about.credit.truststore": "using the operating system's certificate store",
+        "about.credit.lucide": "sidebar navigation icons",
         "nav.about": "About",
         "page.about.desc": "Version, legal notices, credits and updates",
         "nav.launch": "Launch",

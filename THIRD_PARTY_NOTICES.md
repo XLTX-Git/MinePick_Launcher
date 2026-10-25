@@ -52,6 +52,10 @@ MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）�
   - using the operating system's certificate store
   - 使用系统证书存储
   - <https://github.com/sethmlarson/truststore>
+- **Lucide** — `ISC`
+  - sidebar navigation icons
+  - 侧栏导航图标
+  - <https://lucide.dev/>
 - **anyio 4.14.2, certifi 2026.7.22, httpcore 1.0.9, h11 0.16.0, idna 3.18**
   - pulled in by httpx; no separate notice applies, their licences are listed per package in the distribution metadata
   - 由 httpx 引入；各自的许可条款见对应发行版的元数据

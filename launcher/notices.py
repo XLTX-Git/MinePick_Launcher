@@ -63,6 +63,7 @@ DEPENDENCIES: tuple[Credit, ...] = (
         "https://cryptography.io/",
     ),
     Credit("truststore", "about.credit.truststore", "MIT", "https://github.com/sethmlarson/truststore"),
+    Credit("Lucide", "about.credit.lucide", "ISC", "https://lucide.dev/"),
 )
 
 DEV_TOOLS: tuple[Credit, ...] = (

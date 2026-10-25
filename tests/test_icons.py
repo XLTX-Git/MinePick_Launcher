@@ -55,3 +55,42 @@ def test_unknown_kind_returns_a_blank_icon_instead_of_raising(app):
         if image.pixelColor(x, y).alpha() > 0
     )
     assert painted == 0
+
+
+def test_every_navigation_icon_renders_its_svg(app):
+    """All eight bundled Lucide files must resolve and actually paint; a broken path fails here."""
+    from gui import nav_icons
+
+    for name in nav_icons.ICON_FILES:
+        icon = nav_icons.nav_icon(name, "#2f9e6f", 24)
+        assert not icon.isNull(), f"{name}: no icon"
+        image = icon.pixmap(24, 24).toImage()
+        painted = sum(
+            1
+            for x in range(image.width())
+            for y in range(image.height())
+            if image.pixelColor(x, y).alpha() > 0
+        )
+        assert painted > 12, f"{name} painted almost nothing ({painted} pixels)"
+
+
+def test_navigation_icon_colour_is_part_of_the_cache_key(app):
+    """A theme switch must not hand back the old-coloured pixmap."""
+    from gui import nav_icons
+
+    light = nav_icons.nav_icon("launch", "#2f9e6f", 24).pixmap(24, 24).toImage()
+    dark = nav_icons.nav_icon("launch", "#e6ecf5", 24).pixmap(24, 24).toImage()
+    assert light != dark, "the icon cache ignored the requested colour"
+
+
+def test_navigation_svgs_keep_their_licence_comment():
+    """The bundled files are third-party assets: their ISC header must ship with them."""
+    from gui import nav_icons
+    from launcher import paths
+
+    for filename in nav_icons.ICON_FILES.values():
+        text = paths.resource_path(f"gui/resources/icons/nav/{filename}.svg").read_text(
+            encoding="utf-8"
+        )
+        assert "@license lucide-static" in text, f"{filename}: missing licence header"
+        assert "ISC" in text, f"{filename}: missing ISC notice"

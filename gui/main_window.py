@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n
+from gui import i18n, nav_icons, theme
 
 tr = i18n.tr
 from gui.pages.about_page import AboutPage
@@ -162,6 +162,8 @@ class MainWindow(QMainWindow):
         self.sidebar = QListWidget()
         self.sidebar.setAccessibleName(tr("a11y.nav"))  # WCAG 4.1.2
         self.sidebar.setObjectName("sidebar")
+        # 24px glyph + 10px transparent right padding; the item height stays the pre-icon 40px.
+        self.sidebar.setIconSize(nav_icons.icon_size())
         apply_no_focus_outline(self.sidebar)  # remove focus outline from the selected item's text
 
         nav = QWidget()
@@ -218,9 +220,17 @@ class MainWindow(QMainWindow):
         self.build_pages()
         self.sidebar.setCurrentRow(0)
         self.set_status(tr("status.ready"))
+        # Icons are rasterised from the SVGs after every theme/accent switch; the colour is part of
+        # nav_icons' cache key, so a switched theme can never keep the old-coloured pixmap.
+        theme.register_self_styling(self)
         # Startup update check: delayed so the window is up first, once per session
         self._update_checked = False
         QTimer.singleShot(2500, self._auto_check_updates)
+
+    def on_theme_applied(self) -> None:
+        """Called by apply_theme() after the stylesheet swap: repaint the themed nav icons."""
+        nav_icons.clear_cache()
+        self._refresh_nav_icons()
 
     def _auto_check_updates(self) -> None:
         """Let the About page run its startup check (it honours the configured update mode)."""
@@ -337,7 +347,24 @@ class MainWindow(QMainWindow):
             page.refresh_installed()
         elif key == "about":
             page.refresh()  # the update settings may have changed elsewhere
+        self._refresh_nav_icons()
         self._fade_in_current_page()
+
+    def _refresh_nav_icons(self) -> None:
+        """Paint every rail item: hint colour at rest, accent for the selected row.
+
+        Called on first build, on every selection change and after a theme/accent swap, which is what
+        keeps the icons from freezing in the colours of whichever theme was active at startup.
+        """
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        resting = tokens["FG_HINT"]
+        selected = tokens["ACCENT"]
+        current = self.sidebar.currentRow()
+        for index, key in enumerate(NAV_KEYS):
+            item = self.sidebar.item(index)
+            if item is None:
+                continue
+            item.setIcon(nav_icons.nav_icon_with_gap(key, selected if index == current else resting))
 
     # -- cross-page slots (resolve the peer lazily, so peers are not built by wiring alone) --
     def _on_account_changed(self) -> None:
