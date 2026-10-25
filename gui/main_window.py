@@ -175,12 +175,10 @@ class MainWindow(QMainWindow):
         nav_layout.addWidget(self.sidebar, 1)
 
         self.stack = QStackedWidget()
-        # The stack carries the 12px inset for every page except the launch page (which goes
-        # edge-to-edge). Applying it here rather than on each page keeps the other seven pages
-        # pixel-identical after the window margin change: their own layouts are untouched.
-        stack_layout = self.stack.layout()
-        if stack_layout is not None:
-            stack_layout.setContentsMargins(12, 12, 12, 12)
+        # The stack carries the old 12/6/12/12 frame for every page except the launch page (which
+        # goes edge-to-edge). QStackedLayout lays its child out in the *widget's* contents rect, so
+        # the margin is set on the stack itself; this keeps the other seven pages pixel-identical.
+        self.stack.setContentsMargins(6, 12, 12, 12)
         # The window's height must not depend on which pages happen to be built. A stacked widget
         # reports the largest minimum of its children, so with lazy construction a tall page would
         # change the floor the moment it was first visited. Ignoring the height stops that; the width
@@ -317,17 +315,18 @@ class MainWindow(QMainWindow):
         self._on_nav_changed(0)  # blocks were held, so the first page is shown explicitly
 
     def _apply_page_inset(self, key: str) -> None:
-        """Give the launch page the full content area; keep the 12px frame on every other page.
+        """Give the launch page the full content area; keep the old frame on every other page.
 
-        The content layout's margin is zero so the launch panel can touch the window edge. The other
-        pages used to get their 12px frame from that margin; moving the same inset onto the stack for
-        them keeps their geometry - and therefore every screenshot and width measurement - unchanged.
+        The content layout's margin and its 6px nav/stack spacing are zero so the launch panel can
+        touch the window edge. Every other page used to sit inside 12px of margin, plus that 6px gap:
+        reproducing the same 6/12/12/12 insets on the stack keeps their geometry - and therefore
+        every screenshot and width measurement - unchanged. QStackedLayout honours the widget's
+        contents margins, not a layout-level margin, so the value is set on the stack itself.
         """
-        stack_layout = self.stack.layout()
-        if stack_layout is None:
-            return
-        inset = 0 if key == "launch" else 12
-        stack_layout.setContentsMargins(inset, inset, inset, inset)
+        if key == "launch":
+            self.stack.setContentsMargins(0, 0, 0, 0)
+        else:
+            self.stack.setContentsMargins(6, 12, 12, 12)
 
     def _on_nav_changed(self, row: int) -> None:
         """Show the page for ``row`` - building it on first visit - then refresh and fade it in."""
