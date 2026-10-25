@@ -58,17 +58,18 @@ tr = i18n.tr
 # One-click accent colours offered next to the hex field
 ACCENT_PRESETS = ("#35a06a", "#3b82f6", "#a855f7", "#e0703a", "#e05a5a", "#14b8a6", "#ec4899", "#f59e0b")
 
-# PCL's form metrics, applied to every settings field: a 40px control in a 56px row, a fixed
-# label column, and one 16px gutter between the two. The sheet carries the colours and the radius.
-FIELD_HEIGHT = 40
-FIELD_LABEL_WIDTH = 220
-ROW_SPACING = 16
+# PCL's form metrics scaled to this window: PCL measures 56px rows at 1350px wide, and this window
+# is 1000px wide, so the same proportions give 44px rows. That is a 36px control plus an 8px gutter,
+# with a fixed label column. The sheet carries the colours and the radius.
+FIELD_HEIGHT = 36
+FIELD_LABEL_WIDTH = 176
+ROW_SPACING = 8
 
 
 def _wrap_checkbox_text(checkbox: QCheckBox, text: str, width: int) -> str:
     """Insert the line breaks a QCheckBox cannot compute for itself.
 
-    QCheckBox draws its label on one line, so a long sentence - the isolation policy is
+    QCheckBox draws its label on one line, so a long sentence - the encryption row is
     ~900px in English - used to force the whole settings card wider than the viewport,
     which pushed every field's right edge off-screen. QCheckBox does honour explicit
     newlines (measured: its size hint grows in height and shrinks to the longest line),
@@ -209,14 +210,57 @@ class SettingsPage(QWidget):
         self.concurrency_spin.setRange(1, 32)
         self.download_segments_spin = NoWheelSpinBox()
         self.download_segments_spin.setRange(1, 16)
-        self.download_segments_spin.setSpecialValueText(tr("settings.download_segments.single"))
         self.download_segments_spin.setToolTip(tr("settings.download_segments.hint"))
-        self.isolation_check = QCheckBox()
-        # 620px keeps this sentence from driving the card width; it is the longest plain
-        # checkbox label and would otherwise run past the viewport in English.
-        self.isolation_check.setText(
-            _wrap_checkbox_text(self.isolation_check, tr("settings.isolation"), 620)
+        # WCAG 4.1.2: the spin sits in a box (field + hint), so QFormLayout no longer hands it the
+        # row label; name it explicitly like the game-directory / accent fields.
+        self.download_segments_spin.setAccessibleName(tr("settings.download_segments"))
+        self.download_segments_spin.setAccessibleDescription(
+            tr("settings.download_segments.single_hint")
         )
+        # A numeric field shows a number, never a word: 1 stays "1", and the sentence that explains
+        # what 1 means is a 12px hint under the row instead of replacing the value.
+        self.download_segments_hint = QLabel(tr("settings.download_segments.single_hint"))
+        self.download_segments_hint.setObjectName("hint")
+        self.download_segments_hint.setWordWrap(True)
+        self.download_segments_box = QWidget()
+        segments_layout = QVBoxLayout(self.download_segments_box)
+        segments_layout.setContentsMargins(0, 0, 0, 0)
+        segments_layout.setSpacing(4)
+        segments_layout.addWidget(self.download_segments_spin)
+        segments_layout.addWidget(self.download_segments_hint)
+        # Version isolation is a fixed choice, so it is a dropdown like the other enumerated
+        # settings. It stays where the checkbox was (same tab position); the old sentence becomes
+        # the hint under the row instead of a checkbox label.
+        self.isolation_combo = QComboBox()
+        self.isolation_combo.addItem(tr("settings.isolation.combo.on"), True)
+        self.isolation_combo.addItem(tr("settings.isolation.combo.off"), False)
+        self.isolation_combo.setFixedHeight(FIELD_HEIGHT)
+        self.isolation_combo.setMinimumWidth(0)
+        self.isolation_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.isolation_combo.setAccessibleName(tr("settings.isolation.label"))
+        self.isolation_combo.setAccessibleDescription(tr("settings.isolation"))
+        self.isolation_hint = QLabel(tr("settings.isolation"))
+        self.isolation_hint.setObjectName("hint")
+        self.isolation_hint.setWordWrap(True)
+        self.isolation_label = QLabel(tr("settings.isolation.label"))
+        self.isolation_label.setObjectName("settingsFieldLabel")
+        self.isolation_label.setFixedWidth(FIELD_LABEL_WIDTH)
+        self.isolation_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.isolation_label.setWordWrap(True)
+        isolation_right = QWidget()
+        isolation_right_layout = QVBoxLayout(isolation_right)
+        isolation_right_layout.setContentsMargins(0, 0, 0, 0)
+        isolation_right_layout.setSpacing(4)
+        isolation_right_layout.addWidget(self.isolation_combo)
+        isolation_right_layout.addWidget(self.isolation_hint)
+        self.isolation_row = QWidget()
+        isolation_layout = QHBoxLayout(self.isolation_row)
+        isolation_layout.setContentsMargins(0, 0, 0, 0)
+        isolation_layout.setSpacing(16)
+        isolation_layout.addWidget(self.isolation_label)
+        isolation_layout.addWidget(isolation_right, 1)
         self.demo_check = QCheckBox(tr("launch.demo"))
         self.after_launch_combo = QComboBox()
         for code, label in (
@@ -264,7 +308,7 @@ class SettingsPage(QWidget):
         self.speed_limit_spin.setRange(0, 1_048_576)
         self.speed_limit_spin.setSingleStep(100)
         self.speed_limit_spin.setSuffix(" " + tr("unit.kb_s"))
-        self.speed_limit_spin.setSpecialValueText(tr("common.off"))
+        # No special-value wording: 0 renders as "0 KB/s" (the label already says 0 = unlimited).
         self.window_mode_combo = QComboBox()
         for code, label in (
             ("default", tr("settings.window_mode.default")),
@@ -357,7 +401,7 @@ class SettingsPage(QWidget):
         form.addRow(tr("settings.memory"), self.memory_box)
         form.addRow("", self.memory_auto_check)
         form.addRow(tr("settings.concurrency"), self.concurrency_spin)
-        form.addRow(tr("settings.download_segments"), self.download_segments_spin)
+        form.addRow(tr("settings.download_segments"), self.download_segments_box)
         form.addRow(tr("settings.speed_limit"), self.speed_limit_spin)
         form.addRow(tr("settings.proxy"), self.proxy_edit)
         form.addRow(tr("settings.cf_key"), self.cf_key_edit)
@@ -398,7 +442,7 @@ class SettingsPage(QWidget):
         layout.setSpacing(16)
         layout.addLayout(form)
         layout.addWidget(self.accessibility_box)
-        layout.addWidget(self.isolation_check)
+        layout.addWidget(self.isolation_row)
         layout.addWidget(self.demo_check)
         layout.addWidget(self.trim_memory_check)
         layout.addWidget(self.analysis_check)
@@ -448,12 +492,12 @@ class SettingsPage(QWidget):
             self.language_combo,
             self.after_launch_combo,
             self.window_mode_combo,
+            self.isolation_combo,
             self.font_combo,
         ):
             on_change(combo.currentIndexChanged)
         for check in (
             self.memory_auto_check,
-            self.isolation_check,
             self.demo_check,
             self.trim_memory_check,
             self.analysis_check,
@@ -553,7 +597,8 @@ class SettingsPage(QWidget):
         self.memory_auto_check.setChecked(cfg.memory_auto)
         self.concurrency_spin.setValue(cfg.max_concurrent_downloads)
         self.download_segments_spin.setValue(cfg.download_segments)
-        self.isolation_check.setChecked(cfg.default_isolation)
+        isolation_index = self.isolation_combo.findData(bool(cfg.default_isolation))
+        self.isolation_combo.setCurrentIndex(max(isolation_index, 0))
         self.demo_check.setChecked(cfg.demo_mode)
         idx = self.after_launch_combo.findData(cfg.after_launch_behavior)
         self.after_launch_combo.setCurrentIndex(max(idx, 0))
@@ -636,7 +681,7 @@ class SettingsPage(QWidget):
         cfg.memory_auto = self.memory_auto_check.isChecked()
         cfg.max_concurrent_downloads = self.concurrency_spin.value()
         cfg.download_segments = self.download_segments_spin.value()
-        cfg.default_isolation = self.isolation_check.isChecked()
+        cfg.default_isolation = bool(self.isolation_combo.currentData())
         cfg.demo_mode = self.demo_check.isChecked()
         cfg.after_launch_behavior = self.after_launch_combo.currentData() or "keep"
         cfg.trim_memory_on_launch = self.trim_memory_check.isChecked()

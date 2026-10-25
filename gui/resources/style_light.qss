@@ -729,9 +729,9 @@ QWidget#settingsPage QWidget#settingsCard {
     border-radius: __RADIUS_LG__;
 }
 
-/* PCL form metrics, the same ones the launch page's server field uses: 40px field,
-   6px radius, 1px #c5d5e8 border, 12px left padding, 15px text. The label column and
-   the 56px row pitch are layout values in settings_page.py. */
+/* PCL form metrics scaled to this window: a 36px field (34px content + the 1px frame)
+   in a 44px row, 6px radius, 1px #c5d5e8 border, 12px left padding, 15px text. The
+   label column and the 44px row pitch are layout values in settings_page.py. */
 QWidget#settingsPage QLineEdit,
 QWidget#settingsPage QComboBox,
 QWidget#settingsPage QSpinBox,
@@ -741,7 +741,7 @@ QWidget#settingsPage QDoubleSpinBox {
     border: 1px solid __BORDER_LAUNCH_FIELD__;
     border-radius: 6px;
     padding: 0 12px;
-    min-height: 38px;
+    min-height: 34px;
     font-size: 15px;
     selection-background-color: __ACCENT_SEL__;
     selection-color: __ACCENT_SEL_TEXT__;
@@ -779,10 +779,12 @@ QWidget#settingsPage QDoubleSpinBox[keyboardFocus="true"]:focus {
     border: 1px solid __FOCUS_RING__;
 }
 
-/* The fixed label column: left aligned like PCL, never re-centred per row. */
+/* The fixed label column: left aligned like PCL, never re-centred per row. 13px keeps the
+   common two-line label (long German/French nouns) inside the 36px field height, so the
+   row pitch stays 44px instead of growing by 2px on a wrapped word. */
 QWidget#settingsPage QLabel#settingsFieldLabel {
     color: __FG_TEXT__;
-    font-size: 14px;
+    font-size: 13px;
 }
 QWidget#settingsPage QLabel#hint {
     font-size: 12px;
@@ -862,7 +864,7 @@ QWidget#settingsPage QPushButton#secondaryButton {
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
     border-radius: 6px;
     padding: 0 16px;
-    min-height: 38px;
+    min-height: 34px;
     font-weight: 600;
 }
 QWidget#settingsPage QPushButton#secondaryButton:hover {

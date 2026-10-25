@@ -68,12 +68,12 @@ def test_settings_isolation_toggle_saves(app, monkeypatch, ws_tmp):
 
     window = MainWindow()
     page = window.pages["settings"]
-    assert page.isolation_check.isChecked() is True  # checked by default
-    page.isolation_check.setChecked(False)
+    assert page.isolation_combo.currentData() is True  # isolated by default
+    page.isolation_combo.setCurrentIndex(page.isolation_combo.findData(False))
     page.save()
     cfg, _ = config_mod.load()
     assert cfg.default_isolation is False
-    page.isolation_check.setChecked(True)
+    page.isolation_combo.setCurrentIndex(page.isolation_combo.findData(True))
     page.save()
     cfg, _ = config_mod.load()
     assert cfg.default_isolation is True
@@ -90,13 +90,38 @@ def test_settings_download_segments_control(app, monkeypatch, ws_tmp):
     # the default keeps the historical behaviour (one stream per file)
     assert page.download_segments_spin.value() == 1
     assert page.download_segments_spin.minimum() == 1
-    assert page.download_segments_spin.specialValueText()  # "1" reads as "single stream", not a bare 1
+    # a numeric field shows the number; the wording lives in a 12px hint under the row
+    assert page.download_segments_spin.specialValueText() == ""
+    assert page.download_segments_spin.text() == "1"
+    assert page.download_segments_hint.text().startswith("1")
+    assert page.download_segments_hint.objectName() == "hint"
     page.download_segments_spin.setValue(4)
     cfg, _ = config_mod.load()
     assert cfg.download_segments == 4
     # a reload shows the stored value again
     page.load()
     assert page.download_segments_spin.value() == 4
+    window.close()
+
+
+def test_settings_numeric_fields_show_numbers_not_words(app, monkeypatch, ws_tmp):
+    """A numeric field renders its number: 1 is "1", 0 is "0 KB/s"; wording moves to a hint."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_numbers"))
+    from gui.main_window import MainWindow
+
+    window = MainWindow()
+    page = window.pages["settings"]
+    page.concurrency_spin.setValue(4)
+    page.download_segments_spin.setValue(1)
+    page.speed_limit_spin.setValue(0)
+    assert page.concurrency_spin.text() == "4"
+    assert page.download_segments_spin.text() == "1"
+    assert page.speed_limit_spin.text() == "0 KB/s"
+    # no special-value wording may replace either number
+    assert page.download_segments_spin.specialValueText() == ""
+    assert page.speed_limit_spin.specialValueText() == ""
+    assert page.download_segments_hint.text()
+    assert page.download_segments_hint.objectName() == "hint"
     window.close()
 
 
@@ -109,8 +134,8 @@ def test_settings_autosave_without_save_button(app, monkeypatch, ws_tmp):
     page = window.pages["settings"]
     assert not hasattr(page, "save_button")
 
-    # a checkbox writes straight through
-    page.isolation_check.setChecked(False)
+    # a dropdown writes straight through
+    page.isolation_combo.setCurrentIndex(page.isolation_combo.findData(False))
     cfg, _ = config_mod.load()
     assert cfg.default_isolation is False
 
@@ -144,9 +169,12 @@ def test_settings_accessibility_preference_is_three_radios_that_autosave(app, mo
     assert len(radios) == 3
     assert group.value() == "auto"  # the default, and the fallback
     assert page.accessibility_hint.wordWrap()  # the "only the launcher's question" sentence
-    # The group sits with the behaviour options, before the checkboxes.
+    # The group sits with the behaviour options, before the isolation dropdown and the checkboxes.
     layout = page.accessibility_box.parentWidget().layout()
-    assert layout.indexOf(page.accessibility_box) < layout.indexOf(page.isolation_check)
+    assert layout.indexOf(page.accessibility_box) < layout.indexOf(page.isolation_row)
+    assert page.isolation_combo.count() == 2
+    assert [page.isolation_combo.itemData(i) for i in range(2)] == [True, False]
+    assert page.isolation_combo.accessibleName().strip()
 
     radios[2].setChecked(True)  # "never", as a user click would
     cfg, _ = config_mod.load()
