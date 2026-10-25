@@ -105,7 +105,7 @@ def test_settings_download_segments_control(app, monkeypatch, ws_tmp):
 
 
 def test_settings_numeric_fields_show_numbers_not_words(app, monkeypatch, ws_tmp):
-    """A numeric field renders its number: 1 is "1", 0 is "0 KB/s"; wording moves to a hint."""
+    """A numeric field renders only its number: 1 is "1", 0 is "0"; wording and units move to labels."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_numbers"))
     from gui.main_window import MainWindow
 
@@ -116,13 +116,54 @@ def test_settings_numeric_fields_show_numbers_not_words(app, monkeypatch, ws_tmp
     page.speed_limit_spin.setValue(0)
     assert page.concurrency_spin.text() == "4"
     assert page.download_segments_spin.text() == "1"
-    assert page.speed_limit_spin.text() == "0 KB/s"
+    # The speed limit's unit is in the row label ("KB/s, 0=unlimited"), not in the control.
+    assert page.speed_limit_spin.text() == "0"
+    assert page.speed_limit_spin.suffix() == ""
+    labels = [label.text() for label in page.findChildren(QLabel, "settingsFieldLabel")]
+    assert any("KB/s" in text for text in labels)
+    # The memory row's label carries the unit the read-out no longer repeats.
+    from gui import i18n
+
+    assert any(i18n.tr("unit.gb.label") in text for text in labels)
     # no special-value wording may replace either number
     assert page.download_segments_spin.specialValueText() == ""
     assert page.speed_limit_spin.specialValueText() == ""
     assert page.download_segments_hint.text()
     assert page.download_segments_hint.objectName() == "hint"
     window.close()
+
+
+def test_settings_rows_are_compact_and_labels_have_room(app, monkeypatch, ws_tmp):
+    """Density round: 32px fields, a 6px row gap, 16px card padding and a 216px label column.
+
+    The column is wider than the 176px it replaced so the longest German/French labels keep
+    two lines inside the 32px row instead of growing it; the row pitch stays 38px (32 + 6).
+    """
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_density"))
+    from PySide6.QtWidgets import QFormLayout
+
+    from gui.main_window import MainWindow
+    from gui.pages import settings_page as settings_module
+
+    window = MainWindow()
+    try:
+        page = window.pages["settings"]
+        assert settings_module.FIELD_HEIGHT == 32
+        # 32px is comfortably above the 24px minimum clickable area
+        assert settings_module.FIELD_HEIGHT >= 24
+        assert settings_module.FIELD_LABEL_WIDTH == 216
+        assert settings_module.ROW_SPACING == 6
+        labels = page.findChildren(QLabel, "settingsFieldLabel")
+        assert labels
+        assert all(label.width() == 216 for label in labels)
+        form = page.findChild(QFormLayout)
+        assert form.verticalSpacing() == 6
+        card = page.findChild(QWidget, "settingsCard")
+        margins = card.layout().contentsMargins()
+        assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (16, 16, 16, 16)
+        assert card.layout().spacing() == 12
+    finally:
+        window.close()
 
 
 def test_settings_autosave_without_save_button(app, monkeypatch, ws_tmp):
@@ -455,7 +496,7 @@ def test_settings_memory_slider_keeps_an_above_range_value(app, monkeypatch, ws_
     try:
         assert page.memory_slider.maximum() == 14  # 1.0 .. 8.0 in 0.5 GB steps
         assert page.memory_slider.value() == 14  # thumb parked at max, not at 32 GB
-        assert page.memory_value_label.text().startswith("32.0")
+        assert page.memory_value_label.text() == "32.0"  # the number; GB is in the row label
         assert page.memory_warning_label.text()
         page.save()
         stored, _ = config.load()
@@ -591,6 +632,13 @@ def test_first_run_wizard_applies(app, monkeypatch, ws_tmp):
     wizard.language_combo.setCurrentIndex(wizard.language_combo.findData("en_us"))
     wizard.game_dir_edit.setText(str(ws_tmp / "mc"))
     wizard.memory_spin.setValue(6.0)
+    # The spin shows the number; the unit sits in its form label.
+    from gui import i18n
+
+    assert wizard.memory_spin.suffix() == ""
+    assert any(
+        i18n.tr("unit.gb.label") in label.text() for label in wizard.findChildren(QLabel)
+    )
     wizard.apply(cfg, cfg_path)
     cfg2, _ = config_mod.load()
     assert cfg2.wizard_done is True
@@ -611,7 +659,7 @@ def test_wizard_has_accessibility_step_and_skip_writes_nothing(app, monkeypatch,
     steps = overlay._steps
 
     assert [step.title for step in steps[-2:]] == [
-        i18n.tr("wizard.memory"),
+        i18n.tr("wizard.memory") + i18n.tr("unit.gb.label"),
         i18n.tr("settings.accessibility"),
     ]
     assert steps[-1].widget is window._wz_accessibility  # its own widget, not the settings page's
@@ -1597,6 +1645,13 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
         page.list.setCurrentRow(0)
         detail = page.detail
         detail.set_tab(4)
+        # The per-instance memory field is a number; "GB" belongs to its row label.
+        assert detail.memory_spin.suffix() == ""
+        assert any(
+            label.text()
+            == i18n.tr("instances.detail.row.memory") + i18n.tr("unit.gb.label")
+            for label in detail.findChildren(QLabel)
+        )
         detail.java_follow_check.setChecked(False)
         detail.java_edit.setText(str(java))
         detail.memory_follow_check.setChecked(False)
@@ -1622,8 +1677,9 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
         assert page.detail.memory_spin.value() == 6.0
         assert page.detail.jvm_args_edit.text() == "-XX:+UseG1GC"
         assert page.detail.game_args_edit.text() == "--width 1280"
-        # the overview reports the instance's own memory
+        # the overview reports the instance's own memory, still as a read-only value with its unit
         assert "6" in page.detail.overview_values["memory"].text()
+        assert i18n.tr("unit.gb") in page.detail.overview_values["memory"].text()
         assert i18n.tr("instances.detail.memory.source.instance") in (
             page.detail.overview_values["memory"].text()
         )

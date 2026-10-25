@@ -691,8 +691,10 @@ class InstanceDetail(QWidget):
         self.memory_spin = NoWheelDoubleSpinBox()
         self.memory_spin.setRange(1.0, 64.0)
         self.memory_spin.setSingleStep(0.5)
-        self.memory_spin.setSuffix(" " + tr("unit.gb"))
-        self.memory_spin.setAccessibleName(tr("instances.detail.row.memory"))
+        # The number is the value; the row label carries the unit, so no suffix here.
+        self.memory_spin.setAccessibleName(
+            tr("instances.detail.row.memory") + tr("unit.gb.label")
+        )
         memory_box = QWidget()
         memory_layout = QVBoxLayout(memory_box)
         memory_layout.setContentsMargins(0, 0, 0, 0)
@@ -709,7 +711,9 @@ class InstanceDetail(QWidget):
 
         form.addRow(tr("instances.detail.row.isolation"), self.isolation_combo)
         form.addRow(tr("instances.detail.row.java"), java_box)
-        form.addRow(tr("instances.detail.row.memory"), memory_box)
+        form.addRow(
+            tr("instances.detail.row.memory") + tr("unit.gb.label"), memory_box
+        )
         # Form row labels are plain labels, so these two elide with a tooltip: theirs are the longest
         # strings in the form ("JVM arguments (empty = follow global)") and they set a hard floor on
         # the detail panel's minimum width.

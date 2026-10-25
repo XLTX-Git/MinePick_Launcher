@@ -704,6 +704,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "unit.kb_s": "KB/s",
         "unit.mb": "MB",
         "unit.gb": "GB",
+        # A form label reads "Memory (GB)" while the field itself shows only the number.
+        "unit.gb.label": "（GB）",
         "page.launch.desc": "选择版本与账号，即可启动游戏",
         "page.instances.desc": "每个实例都是独立的存档、模组与配置环境",
         "page.versions.desc": "浏览官方版本清单，安装或卸载游戏版本",
@@ -1402,6 +1404,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "unit.kb_s": "KB/s",
         "unit.mb": "MB",
         "unit.gb": "GB",
+        "unit.gb.label": " (GB)",
         "page.launch.desc": "Pick a version and account, then launch the game",
         "page.instances.desc": "Every instance is its own saves, mods and configuration environment",
         "page.versions.desc": "Browse the official version list, install or uninstall game versions",

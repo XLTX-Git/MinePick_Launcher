@@ -539,7 +539,7 @@ class MainWindow(QMainWindow):
         self._wz_memory.setRange(0.5, 64.0)
         self._wz_memory.setSingleStep(0.5)
         self._wz_memory.setValue(cfg.memory_gb or 4.0)
-        self._wz_memory.setSuffix(" " + tr("unit.gb"))
+        # A number, not "4.0 GB": the step heading below carries the unit.
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(5, 640)
         slider.setValue(int((cfg.memory_gb or 4.0) * 10))
@@ -570,7 +570,12 @@ class MainWindow(QMainWindow):
                 tr("settings.game_language"),
             ),
             WizardStep(tr("wizard.game_dir"), tr("wizard.default_dir.hint"), dir_box, tr("wizard.game_dir")),
-            WizardStep(tr("wizard.memory"), tr("wizard.hint"), memory_box, tr("wizard.memory")),
+            WizardStep(
+                tr("wizard.memory") + tr("unit.gb.label"),
+                tr("wizard.hint"),
+                memory_box,
+                tr("wizard.memory"),
+            ),
             WizardStep(
                 tr("settings.accessibility"),
                 tr("settings.accessibility.hint"),

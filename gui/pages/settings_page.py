@@ -58,12 +58,14 @@ tr = i18n.tr
 # One-click accent colours offered next to the hex field
 ACCENT_PRESETS = ("#35a06a", "#3b82f6", "#a855f7", "#e0703a", "#e05a5a", "#14b8a6", "#ec4899", "#f59e0b")
 
-# PCL's form metrics scaled to this window: PCL measures 56px rows at 1350px wide, and this window
-# is 1000px wide, so the same proportions give 44px rows. That is a 36px control plus an 8px gutter,
-# with a fixed label column. The sheet carries the colours and the radius.
-FIELD_HEIGHT = 36
-FIELD_LABEL_WIDTH = 176
-ROW_SPACING = 8
+# PCL's settings metrics scaled to this window, tightened one more step: this window is 1000px
+# wide, so the rows are a 32px control plus a 6px gutter (38px pitch), with a fixed 216px label
+# column. The column grew from 176px so the longest German/French/Russian labels wrap to at most
+# two lines and still fit the 32px row (measured: 30px for two lines at 12px) instead of pushing
+# the row taller. The sheet carries the colours and the radius.
+FIELD_HEIGHT = 32
+FIELD_LABEL_WIDTH = 216
+ROW_SPACING = 6
 
 
 def _wrap_checkbox_text(checkbox: QCheckBox, text: str, width: int) -> str:
@@ -307,8 +309,9 @@ class SettingsPage(QWidget):
         self.speed_limit_spin = NoWheelSpinBox()
         self.speed_limit_spin.setRange(0, 1_048_576)
         self.speed_limit_spin.setSingleStep(100)
-        self.speed_limit_spin.setSuffix(" " + tr("unit.kb_s"))
-        # No special-value wording: 0 renders as "0 KB/s" (the label already says 0 = unlimited).
+        # The number is the value; the unit lives in the row label ("KB/s, 0=unlimited"), the same
+        # way the memory row's label carries "GB".
+        # No special-value wording: 0 renders as "0" (the label already says 0 = unlimited).
         self.window_mode_combo = QComboBox()
         for code, label in (
             ("default", tr("settings.window_mode.default")),
@@ -379,7 +382,7 @@ class SettingsPage(QWidget):
 
         form = QFormLayout()
         style_form(form)
-        # PCL's settings row: a 40px field plus this 16px gap is the 56px row pitch. The label
+        # PCL's settings row: a 32px field plus this 6px gap is the 38px row pitch. The label
         # column is fixed in _apply_form_metrics() so every field starts on the same vertical line.
         form.setVerticalSpacing(ROW_SPACING)
         # WCAG 4.1.2: a control added straight to a row *is* the row's field, so QFormLayout hands it the
@@ -398,7 +401,7 @@ class SettingsPage(QWidget):
         java_row.addWidget(self.browse_java)
         form.addRow(tr("settings.game_dir"), game_row)
         form.addRow(tr("settings.java"), java_row)
-        form.addRow(tr("settings.memory"), self.memory_box)
+        form.addRow(tr("settings.memory") + tr("unit.gb.label"), self.memory_box)
         form.addRow("", self.memory_auto_check)
         form.addRow(tr("settings.concurrency"), self.concurrency_spin)
         form.addRow(tr("settings.download_segments"), self.download_segments_box)
@@ -437,9 +440,9 @@ class SettingsPage(QWidget):
         inner = QWidget()
         inner.setObjectName("settingsCard")
         layout = QVBoxLayout(inner)
-        # The card's 20px inner padding and 16px block gap are layout values, not sheet values.
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
+        # The card's 16px inner padding and 12px block gap are layout values, not sheet values.
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
         layout.addLayout(form)
         layout.addWidget(self.accessibility_box)
         layout.addWidget(self.isolation_row)
@@ -531,7 +534,7 @@ class SettingsPage(QWidget):
         self.java_path_edit.editingFinished.connect(self._refresh_memory_bounds)
 
     def _apply_form_metrics(self, form: QFormLayout) -> None:
-        """PCL's settings metrics: fixed left-aligned label column, 40px fields, 56px rows.
+        """PCL's settings metrics: fixed left-aligned label column, 32px fields, 38px row pitch.
 
         Done after the rows exist because QFormLayout builds the label widget itself when a
         plain string is passed. Rows whose field is a layout (game directory, Java path,
@@ -781,7 +784,9 @@ class SettingsPage(QWidget):
 
     def _update_memory_labels(self) -> None:
         """Paint the GB read-out, the device recommendation and any non-blocking warning."""
-        value_text = f"{self._memory_value:.1f} " + tr("unit.gb")
+        # The field shows the number only; "GB" is in the row label. The accessible description
+        # still says the unit out loud, because a screen reader has no label column to lean on.
+        value_text = f"{self._memory_value:.1f}"
         self.memory_value_label.setText(value_text)
         self.memory_recommend_label.setText(
             tr("settings.memory_recommend", f"{self._memory_max_gb:g}")
@@ -802,7 +807,7 @@ class SettingsPage(QWidget):
             )
         self.memory_warning_label.setText("\n".join(warnings))
         self.memory_warning_label.setVisible(bool(warnings))
-        description = value_text + " · " + self.memory_recommend_label.text()
+        description = value_text + " " + tr("unit.gb") + " · " + self.memory_recommend_label.text()
         if warnings:
             description += " · " + " ".join(warnings)
         self.memory_slider.setAccessibleDescription(description)

@@ -63,7 +63,7 @@ class FirstRunWizard(QDialog):
         self.memory_spin.setRange(0.5, 64.0)
         self.memory_spin.setSingleStep(0.5)
         self.memory_spin.setValue(cfg.memory_gb)
-        self.memory_spin.setSuffix(" " + tr("unit.gb"))
+        # The field is the number; the unit is in the row label, like the settings page.
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("wizard.finish"))
         self.buttons.accepted.connect(self.accept)
@@ -78,7 +78,7 @@ class FirstRunWizard(QDialog):
         form = QFormLayout()
         form.addRow(tr("wizard.language"), self.language_combo)
         form.addRow(tr("wizard.game_dir"), dir_row)
-        form.addRow(tr("wizard.memory"), self.memory_spin)
+        form.addRow(tr("wizard.memory") + tr("unit.gb.label"), self.memory_spin)
         layout = QVBoxLayout(self)
         layout.addWidget(hint)
         layout.addLayout(form)

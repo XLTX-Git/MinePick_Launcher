@@ -93,6 +93,10 @@ def window(app, monkeypatch, ws_tmp):
     built.close()
     built.deleteLater()
     app.processEvents()
+    # The suite's default language: the fixture switches the global tr() table to fr_fr, and a test
+    # that uses this fixture (rather than the parametrized one) used to leave every later file in
+    # French - the e2e assertions on Chinese status text then failed depending on file order.
+    i18n.set_language("zh_cn")
 
 
 @pytest.mark.parametrize("language", LANGUAGES)

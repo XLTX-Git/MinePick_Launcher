@@ -22,16 +22,18 @@ the version delete flow (instances page, mocked confirmation dialog), launch-pag
 the launch flow (prepare -> run -> exit code), crash report viewer.
 """
 
+import faulthandler
 import json
 import os
 import time
 from types import SimpleNamespace
+from typing import Self
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import httpx
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -63,6 +65,65 @@ def _wait_until(app, cond, timeout=8.0):
             return True
         time.sleep(0.02)
     return False
+
+
+class _HangGuard:
+    """Turn an unanswered modal dialog into a test failure instead of a stuck runner.
+
+    A blocking ``QMessageBox.exec()`` (or any window-modal dialog) runs a nested Qt event loop,
+    and a ``QTimer`` still fires inside that loop. On expiry the guard records which dialog is
+    open, dumps every thread's stack, and closes it so control returns to the test; ``__exit__``
+    then fails with the dialog's name. Without this guard the launch tests wait forever in
+    ``show_fatal()`` or in the accessibility consent dialog, and CI hangs instead of failing.
+
+    The guard covers the class of hang the launch flow can produce (a dialog nobody answers).
+    A hang with no event loop running (for example a non-Qt deadlock) is outside its reach.
+    """
+
+    def __init__(self, seconds: float = 20.0) -> None:
+        self._seconds = seconds
+        self._modal: str | None = None
+        self._timer = QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._expire)
+        self._timer.start(int(seconds * 1000))
+
+    def _expire(self) -> None:
+        widget = QApplication.activeModalWidget()
+        if widget is None:
+            self._modal = "no active modal widget"
+        else:
+            self._modal = f"{type(widget).__name__}: {widget.windowTitle()!r}"
+            widget.close()
+        faulthandler.dump_traceback()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self._timer.stop()
+        if self._modal is not None:
+            pytest.fail(
+                f"launch test exceeded {self._seconds:g}s with a modal dialog open "
+                f"({self._modal}); the dialog was closed so the runner fails instead of hanging"
+            )
+        return False
+
+
+def _install_launch_instance(ws_tmp, cfg, cfg_path, version: str = "1.20.1"):
+    """Create the profile the launch flow resolves before its (faked) worker starts.
+
+    ``launch_page.launch()`` calls ``resolve_instance()`` on the main thread before
+    ``prepare_launch``; without ``versions/<id>/<id>.json`` that raises and
+    ``_on_launch_error`` opens a blocking ``QMessageBox.critical``.
+    """
+    game = ws_tmp / "mc"
+    folder = game / "versions" / version
+    folder.mkdir(parents=True)
+    (folder / f"{version}.json").write_text(json.dumps({"id": version}), encoding="utf-8")
+    cfg.game_dir = game
+    config_mod.save(cfg, cfg_path)
+    return game
 
 
 SEARCH_RAW = {
@@ -229,7 +290,21 @@ def test_e2e_launch_uses_configured_jvm_args(app, monkeypatch, ws_tmp):
     _cfg, _p = config_mod.load()
     _cfg.offline_unlocked = True
     _cfg.jvm_args = "-XX:+UseG1GC"
-    config_mod.save(_cfg, _p)
+    _install_launch_instance(ws_tmp, _cfg, _p)
+
+    # The accessibility consent gate reads its per-instance state through the real state API.
+    # Recording this instance as handled keeps the gate silent even for a keyboard launch,
+    # which is the trigger that would otherwise open the (unanswered, hence blocking) dialog.
+    from launcher.accessibility import (
+        AccessibilityState,
+        TriggerSource,
+        get_state,
+        save_state,
+    )
+
+    assert save_state("1.20.1", AccessibilityState.ANSWERED_OFF)
+    assert get_state("1.20.1") is AccessibilityState.ANSWERED_OFF
+
     import gui.pages.launch_page as launch_page_mod
     from launcher.launch import JavaMissingError
 
@@ -249,18 +324,19 @@ def test_e2e_launch_uses_configured_jvm_args(app, monkeypatch, ws_tmp):
     from gui.main_window import MainWindow
 
     window = None
-    try:
-        window = MainWindow()
-        page = window.pages["launch"]
-        page.set_version_id("1.20.1")
-        page.launch()
-        app.processEvents()
-        assert _wait_until(app, lambda: "已取消" in window.status_label.text())
-        assert "-XX:+UseG1GC" in (seen.get("jvm_args") or "")
-    finally:
-        if window is not None:
-            window.close()
+    with _HangGuard():
+        try:
+            window = MainWindow()
+            page = window.pages["launch"]
+            page.set_version_id("1.20.1")
+            page.launch(TriggerSource.KEYBOARD)
             app.processEvents()
+            assert _wait_until(app, lambda: "已取消" in window.status_label.text())
+            assert "-XX:+UseG1GC" in (seen.get("jvm_args") or "")
+        finally:
+            if window is not None:
+                window.close()
+                app.processEvents()
 
 
 def test_e2e_crash_viewer_lists_reports(app, ws_tmp):
@@ -282,12 +358,10 @@ def test_e2e_launch_flow_runs_and_reports_exit(app, monkeypatch, ws_tmp):
     _cfg, _p = config_mod.load()
     _cfg.offline_unlocked = True
     _cfg.after_launch_behavior = "keep"  # hide/exit paths are covered by test_gui
-    config_mod.save(_cfg, _p)
+    cwd = _install_launch_instance(ws_tmp, _cfg, _p)
 
     import gui.pages.launch_page as launch_page_mod
 
-    cwd = ws_tmp / "mc"
-    cwd.mkdir(parents=True)
     argv = ["java", "-version"]
     run_calls = []  # (argv, cwd, on_started)
 
@@ -312,26 +386,27 @@ def test_e2e_launch_flow_runs_and_reports_exit(app, monkeypatch, ws_tmp):
     from gui.main_window import MainWindow
 
     window = None
-    try:
-        window = MainWindow()
-        page = window.pages["launch"]
-        page.set_version_id("1.20.1")
-        page.launch()
-        # the prepared command really reaches the process runner
-        assert _wait_until(app, lambda: bool(run_calls))
-        assert run_calls[0][0] == argv
-        assert run_calls[0][1] == cwd
-        assert run_calls[0][2] is None  # default behavior "keep": no after-launch start hook
-        # the exit code lands on the window's single status line and the button becomes usable again
-        assert _wait_until(app, lambda: "退出码: 7" in window.status_label.text())
-        assert _wait_until(app, lambda: page.launch_button.isEnabled())
-        # the game-log panel is gone: neither the widget nor its tailing timer exists
-        assert not hasattr(page, "log_view")
-        assert not hasattr(page, "_log_timer")
-        # the page keeps no status line of its own either: launch feedback goes to the window
-        assert not hasattr(page, "status")
-    finally:
-        if window is not None:
-            window.close()
-            app.processEvents()
+    with _HangGuard():
+        try:
+            window = MainWindow()
+            page = window.pages["launch"]
+            page.set_version_id("1.20.1")
+            page.launch()
+            # the prepared command really reaches the process runner
+            assert _wait_until(app, lambda: bool(run_calls))
+            assert run_calls[0][0] == argv
+            assert run_calls[0][1] == cwd
+            assert run_calls[0][2] is None  # default behavior "keep": no after-launch start hook
+            # the exit code lands on the window's single status line and the button becomes usable again
+            assert _wait_until(app, lambda: "退出码: 7" in window.status_label.text())
+            assert _wait_until(app, lambda: page.launch_button.isEnabled())
+            # the game-log panel is gone: neither the widget nor its tailing timer exists
+            assert not hasattr(page, "log_view")
+            assert not hasattr(page, "_log_timer")
+            # the page keeps no status line of its own either: launch feedback goes to the window
+            assert not hasattr(page, "status")
+        finally:
+            if window is not None:
+                window.close()
+                app.processEvents()
 
