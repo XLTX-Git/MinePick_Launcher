@@ -640,6 +640,56 @@ QListWidget#versionList::item {
 }
 QListWidget#versionList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
 
+/* ---------- shared page cards (java / account) ---------- */
+/* One white card holding a 15px section title and a list of dense rows. The rows paint their own
+   hover/selection tint and the hairline between two of them; the card owns the surface. */
+
+QFrame#pageCard {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+    border-radius: __RADIUS_LG__;
+}
+
+/* The step between the 20px page title and the 12px hint: one section heading inside a card. */
+QLabel#sectionTitle { font-size: 15px; font-weight: 600; color: __FG_TEXT__; }
+/* A form row's own label (no QFormLayout to pass it on): 13px, same colour as body text. */
+QLabel#formLabel { font-size: 13px; color: __FG_TEXT__; }
+
+QListWidget#javaManagedList, QListWidget#javaDetectedList {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    outline: none;
+}
+QListWidget#javaManagedList::item, QListWidget#javaDetectedList::item {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QListWidget#javaManagedList[keyboardFocus="true"],
+QListWidget#javaDetectedList[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* Row-level delete: the danger colour on a secondary button, sized like #rowInstall. */
+QPushButton#rowDanger {
+    background: transparent;
+    color: __DANGER_FG__;
+    border: 1px solid __DANGER_BORDER__;
+    border-radius: 6px;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#rowDanger:hover { background: __DANGER_BG__; border-color: __DANGER_BORDER_2__; }
+QPushButton#rowDanger:pressed { background: __DANGER_BG_2__; }
+QPushButton#rowDanger:disabled {
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QPushButton#rowDanger[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
 /* ---------- icon-only buttons (launch page: switch account) ---------- */
 
 QPushButton#iconButton {

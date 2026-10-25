@@ -408,6 +408,12 @@ def test_batch1_widgets_exist(app, monkeypatch, ws_tmp):
     assert versions.list.objectName() == "versionList"
     assert not hasattr(versions, "table")
     assert versions.list.count() == 0  # nothing was fetched offline
+    # java page: both runtime tables became white cards with dense rows
+    java = window.pages["java"]
+    assert not hasattr(java, "managed_table") and not hasattr(java, "detected_table")
+    assert java.managed_list.objectName() == "javaManagedList"
+    assert java.detected_list.objectName() == "javaDetectedList"
+    assert java.managed_list.count() == len(java._managed)
     # launch page: the main page keeps only what a normal launch needs
     launch = window.pages["launch"]
     # The version number is a QLabel hero, not a dropdown: the launch page owns no QComboBox at all.
