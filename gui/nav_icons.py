@@ -17,7 +17,7 @@
 
 """Navigation icons rendered from the bundled Lucide SVGs.
 
-Eight 24px Lucide glyphs ship under ``gui/resources/icons/nav`` (ISC, see THIRD_PARTY_NOTICES.md).
+Fourteen 24px Lucide glyphs ship under ``gui/resources/icons/nav`` (ISC, see THIRD_PARTY_NOTICES.md).
 The SVGs use ``currentColor`` for their stroke, so the one thing this module does is substitute the
 colour the caller asks for, render the vector at the screen's device pixel ratio and cache the result.
 No icon theme, no network, no second font: the raster is generated from the same file at every scale.
@@ -45,6 +45,15 @@ ICON_FILES: dict[str, str] = {
     "mods": "puzzle",
     "settings": "settings",
     "about": "info",
+    # Instance detail sidebar. The first four deliberately reuse glyphs the rail already ships; the
+    # remaining six are the Lucide files added with the detail page (all ISC, same pinned version).
+    "overview": "layout-grid",
+    "resourcepacks": "layers",
+    "shaderpacks": "sparkles",
+    "saves": "archive",
+    "modify": "wrench",
+    "export": "package",
+    "diagnosis": "stethoscope",
 }
 
 _CACHE: dict[tuple[str, str, int, float], QIcon] = {}

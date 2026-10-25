@@ -15,10 +15,10 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Instance detail panel: header plus the 概览 / 模组 / 资源 / 存档 / 设置 tabs.
+"""Instance detail page: a 200px, eight-entry sidebar next to the instance content.
 
 The panel owns everything that acts on one instance (launching, mods, resource
-packs, saves, per-instance settings). It never touches widgets from a worker
+packs, shaders, saves, settings, diagnosis). It never touches widgets from a worker
 thread: every background job reports through @gui.workers.run_in_background with
 bound-method callbacks, so a result that arrives after the page was torn down is
 dropped by the owner guard instead of dereferencing a freed C++ object.
@@ -39,13 +39,16 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -53,7 +56,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n
+from gui import i18n, nav_icons, theme
 from gui.accessibility_launch import (
     prepare_launch_accessibility,
     trigger_source_for_click,
@@ -71,6 +74,7 @@ from gui.widgets import (
     name_table_for_screen_readers,
     set_app_status,
     style_form,
+    style_page_layout,
 )
 from gui.workers import ProgressBridge, run_in_background
 from launcher import config, paths
@@ -109,10 +113,52 @@ from launcher.mods.modrinth import (
 
 tr = i18n.tr
 
-# Stacked-page order of the horizontal tab row
-TAB_OVERVIEW, TAB_MODS, TAB_RESOURCES, TAB_SAVES, TAB_SETTINGS, TAB_DIAGNOSIS = range(6)
-_TAB_KEYS = ("overview", "mods", "resources", "saves", "settings", "diagnosis")
+# Stacked-page order. The sidebar owns the visual order; the stack is a sequence of pages only.
+TAB_OVERVIEW = 0
+TAB_MODS = 1
+TAB_RESOURCEPACKS = 2
+TAB_SHADERPACKS = 3
+TAB_SAVES = 4
+TAB_MODIFY = 5
+TAB_EXPORT = 6
+TAB_DIAGNOSIS = 7
+# Compatibility aliases for callers that predate the split of resources and the merge of settings
+# into the overview. New code should use the explicit constants above.
+TAB_RESOURCES = TAB_RESOURCEPACKS
+TAB_SETTINGS = TAB_OVERVIEW
+
+_RESOURCE_TABS = (TAB_RESOURCEPACKS, TAB_SHADERPACKS)
 _CONTENT_SUBDIRS = ("resourcepacks", "shaderpacks")
+
+#: Sidebar metrics are product constants, not layout accidents: the width gate in
+#: tests/test_instance_navigation.py measures every translated label against them.
+SIDEBAR_WIDTH = 200
+SIDEBAR_ITEM_HEIGHT = 36
+SIDEBAR_GROUP_HEIGHT = 20
+SIDEBAR_PADDING_X = 12
+SIDEBAR_ICON_SIZE = 18
+SIDEBAR_ICON_GAP = 8
+SIDEBAR_ACCENT_BAR = 3
+
+# One entry per stacked page. (key, stack index, icon name, translation key)
+_SECTIONS = (
+    ("overview", TAB_OVERVIEW, "overview", "instances.detail.nav.overview"),
+    ("mods", TAB_MODS, "mods", "instances.detail.nav.mods"),
+    ("resourcepacks", TAB_RESOURCEPACKS, "resourcepacks", "instances.detail.nav.resourcepacks"),
+    ("shaderpacks", TAB_SHADERPACKS, "shaderpacks", "instances.detail.nav.shaderpacks"),
+    ("saves", TAB_SAVES, "saves", "instances.detail.nav.saves"),
+    ("modify", TAB_MODIFY, "modify", "instances.detail.nav.modify"),
+    ("export", TAB_EXPORT, "export", "instances.detail.nav.export"),
+    ("diagnosis", TAB_DIAGNOSIS, "diagnosis", "instances.detail.nav.diagnosis"),
+)
+#: Group headers in the sidebar: (translation key, item key that starts the group).
+_GROUPS = (
+    ("instances.detail.nav.group.resources", "mods"),
+    ("instances.detail.nav.group.actions", "modify"),
+)
+_SEPARATOR_BEFORE = "diagnosis"
+_BADGED_SECTIONS = ("mods", "saves")
+_LOG_TAIL_CHARS = 64 * 1024
 
 
 def human_size(size: int) -> str:
@@ -221,19 +267,194 @@ class InstanceDetail(QWidget):
         self._loaded_tabs: set[int] = set()
         self._content_items: dict[str, list] = {sub: [] for sub in _CONTENT_SUBDIRS}
         self._saves: list[tuple[str, float, int]] = []
+        self._badge_counts: dict[str, int] = {key: 0 for key in _BADGED_SECTIONS}
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        layout.addWidget(self._build_header())
-        layout.addLayout(self._build_tab_row())
-        layout.addWidget(self.stack, 1)
+        self.tab_group = QButtonGroup(self)
+        self.tab_group.setExclusive(True)
+        self.tabs: list[QPushButton] = []
+        self.nav_buttons: dict[str, QPushButton] = {}
+        self.nav_labels: dict[str, QLabel] = {}
+        self.nav_icon_labels: dict[str, QLabel] = {}
+        self.nav_badges: dict[str, QLabel] = {}
+        self.nav_group_labels: list[QLabel] = []
+
+        main = QHBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(16)
+        self.sidebar = self._build_sidebar()
+        main.addWidget(self.sidebar)
+
+        content = QWidget()
+        content.setObjectName("instanceContent")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
+        content_layout.addWidget(self._build_header())
+
+        self.stack = QStackedWidget()
+        self.stack.setObjectName("instanceContentStack")
+        for builder in (
+            self._build_overview,
+            self._build_mods,
+            self._build_resourcepacks_page,
+            self._build_shaderpacks_page,
+            self._build_saves,
+            self._build_modify,
+            self._build_export,
+            self._build_diagnosis,
+        ):
+            self.stack.addWidget(builder())
+
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setObjectName("instanceContentScroll")
+        # WCAG 4.1.2: a QScrollArea is a keyboard stop of its own and must say what it scrolls.
+        self.content_scroll.setAccessibleName(tr("a11y.instance_content"))
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.content_scroll.setWidget(self.stack)
+        content_layout.addWidget(self.content_scroll, 1)
+        main.addWidget(content, 1)
 
         self.tab_group.idClicked.connect(self._on_tab_clicked)
         self.launch_button.clicked.connect(self._on_launch_clicked)
         self.crash_button.clicked.connect(self.open_crash_viewer)
+        self.tabs[TAB_OVERVIEW].setChecked(True)
+        self._sync_sidebar()
 
     # ---------- construction ----------
+
+    def _build_sidebar(self) -> QScrollArea:
+        """The eight-entry sidebar: 200px wide, 36px items, 20px group headings, scrollable.
+
+        Items are real checkable buttons (a screen reader announces the label and the badge, and the
+        keyboard can reach every section). Labels are QLabels rather than button text so the 12px
+        horizontal padding, 18px icon, 8px gap and badge can be measured against a fixed width; the
+        corresponding gate lives in tests/test_instance_navigation.py.
+        """
+        scroll = QScrollArea()
+        scroll.setObjectName("instanceNavScroll")
+        scroll.setAccessibleName(tr("a11y.instance_sidebar"))
+        scroll.setFixedWidth(SIDEBAR_WIDTH)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        body = QWidget()
+        body.setObjectName("instanceNavBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+
+        group_starts = {item_key: title_key for title_key, item_key in _GROUPS}
+        for section in _SECTIONS:
+            key, index, _icon, label_key = section
+            if key in group_starts:
+                group = QLabel(tr(group_starts[key]))
+                group.setObjectName("instanceNavGroup")
+                group.setFixedHeight(SIDEBAR_GROUP_HEIGHT)
+                group.setWordWrap(False)
+                body_layout.addSpacing(8)
+                body_layout.addWidget(group)
+                self.nav_group_labels.append(group)
+            if key == _SEPARATOR_BEFORE:
+                body_layout.addSpacing(8)
+                separator = QFrame()
+                separator.setObjectName("instanceNavSeparator")
+                separator.setFixedHeight(1)
+                body_layout.addWidget(separator)
+                body_layout.addSpacing(8)
+            body_layout.addWidget(self._build_nav_item(key, index, label_key))
+        body_layout.addStretch(1)
+        scroll.setWidget(body)
+        self.sidebar_body = body
+        return scroll
+
+    def _build_nav_item(self, key: str, index: int, label_key: str) -> QPushButton:
+        button = QPushButton()
+        button.setObjectName("instanceNavItem")
+        button.setCheckable(True)
+        button.setFixedHeight(SIDEBAR_ITEM_HEIGHT)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        button.setAccessibleName(tr(label_key))
+        button.setToolTip(tr(label_key))
+
+        row = QHBoxLayout(button)
+        row.setContentsMargins(SIDEBAR_PADDING_X, 0, SIDEBAR_PADDING_X, 0)
+        row.setSpacing(SIDEBAR_ICON_GAP)
+
+        icon = QLabel()
+        icon.setObjectName("instanceNavIcon")
+        icon.setFixedSize(SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE)
+        # The whole line belongs to the button: child labels must not swallow its click.
+        icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        label = QLabel(tr(label_key))
+        label.setObjectName("instanceNavLabel")
+        label.setWordWrap(False)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        badge = QLabel("")
+        badge.setObjectName("instanceNavBadge")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedHeight(18)
+        badge.setVisible(False)
+        badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        row.addWidget(icon)
+        row.addWidget(label, 1)
+        row.addWidget(badge)
+
+        self.tab_group.addButton(button, index)
+        self.tabs.append(button)
+        self.nav_buttons[key] = button
+        self.nav_labels[key] = label
+        self.nav_icon_labels[key] = icon
+        if key in _BADGED_SECTIONS:
+            self.nav_badges[key] = badge
+        else:
+            badge.deleteLater()
+        return button
+
+    def _nav_colors(self) -> tuple[str, str]:
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        return tokens["FG_HINT"], tokens["ACCENT"]
+
+    def _sync_sidebar(self) -> None:
+        """Update icon colours, selected-label properties and the keyboard focus cue."""
+        resting, selected = self._nav_colors()
+        for key, _index, icon_name, _label_key in _SECTIONS:
+            button = self.nav_buttons[key]
+            active = button.isChecked()
+            color = selected if active else resting
+            self.nav_icon_labels[key].setPixmap(
+                nav_icons.nav_icon(icon_name, color, SIDEBAR_ICON_SIZE).pixmap(
+                    SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE
+                )
+            )
+            label = self.nav_labels[key]
+            if bool(label.property("active")) != active:
+                label.setProperty("active", active)
+                label.style().unpolish(label)
+                label.style().polish(label)
+            badge = self.nav_badges.get(key)
+            if badge is not None and bool(badge.property("active")) != active:
+                badge.setProperty("active", active)
+                badge.style().unpolish(badge)
+                badge.style().polish(badge)
+
+    def _on_tab_clicked(self, index: int) -> None:
+        self._show_section(index)
+
+    def _show_section(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        self._sync_sidebar()
+        self._ensure_tab_data(index)
+
+    def set_tab(self, index: int) -> None:
+        """Activate a section programmatically (used by tests and cross-page jumps)."""
+        index = max(0, min(index, len(self.tabs) - 1))
+        self.tabs[index].setChecked(True)
+        self._show_section(index)
 
     def _build_header(self) -> QWidget:
         box = QWidget()
@@ -259,45 +480,32 @@ class InstanceDetail(QWidget):
         layout.addWidget(self.dir_label)
         return box
 
-    def _build_tab_row(self) -> QHBoxLayout:
-        """Horizontal tab row: checkable buttons driving a QStackedWidget.
+    def _make_card(self) -> tuple[QWidget, QVBoxLayout]:
+        """One white detail card, with the shared 16px inset and 12px inner rhythm."""
+        card = QWidget()
+        card.setObjectName("instanceCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        return card, layout
 
-        The theme styles `QPushButton#categoryTab` (the versions page uses the same
-        chip row) but has no QTabWidget appearance, so the tabs are plain buttons.
-        """
-        self.tab_group = QButtonGroup(self)
-        self.tab_group.setExclusive(True)
-        self.tabs: list[QPushButton] = []
-        self.stack = QStackedWidget()
-        builders = (
-            self._build_overview,
-            self._build_mods,
-            self._build_resources,
-            self._build_saves,
-            self._build_settings,
-            self._build_diagnosis,
-        )
-        for index, (key, builder) in enumerate(zip(_TAB_KEYS, builders, strict=True)):
-            button = QPushButton(tr("instances.detail.tab." + key))
-            button.setCheckable(True)
-            button.setObjectName("categoryTab")
-            self.tab_group.addButton(button, index)
-            self.tabs.append(button)
-            self.stack.addWidget(builder())
-        self.tabs[TAB_OVERVIEW].setChecked(True)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
-        for button in self.tabs:
-            row.addWidget(button)
-        row.addStretch(1)
-        return row
+    def _card_heading(self, key: str) -> QLabel:
+        label = QLabel(tr(key))
+        label.setObjectName("instanceCardTitle")
+        label.setWordWrap(False)
+        return label
 
     def _build_overview(self) -> QWidget:
+        """Overview and instance settings, merged into one page with two cards."""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
+
+        card, card_layout = self._make_card()
+        self.overview_card = card
+        card_layout.addWidget(self._card_heading("instances.detail.card.overview"))
         form = QFormLayout()
         style_form(form)
         self.overview_values: dict[str, QLabel] = {}
@@ -321,13 +529,13 @@ class InstanceDetail(QWidget):
             )
             self.overview_values[key] = value
             form.addRow(title, value)
-        layout.addLayout(form)
+        card_layout.addLayout(form)
 
         self.legacy_label = QLabel("")
         self.legacy_label.setObjectName("hint")
         self.legacy_label.setWordWrap(True)
         self.legacy_label.setVisible(False)
-        layout.addWidget(self.legacy_label)
+        card_layout.addWidget(self.legacy_label)
 
         self.open_folder_button = QPushButton(tr("instances.open_folder"))
         self.open_folder_button.setObjectName("secondaryButton")
@@ -337,8 +545,6 @@ class InstanceDetail(QWidget):
         self.crash_button.setObjectName("secondaryButton")
         self.rename_button = QPushButton(tr("instances.rename"))
         self.rename_button.setObjectName("secondaryButton")
-        self.export_button = QPushButton(tr("instances.export"))
-        self.export_button.setObjectName("secondaryButton")
         self.delete_button = QPushButton(tr("instances.delete"))
         self.delete_button.setObjectName("dangerButton")
         files_row = QHBoxLayout()
@@ -350,17 +556,20 @@ class InstanceDetail(QWidget):
         manage_row = QHBoxLayout()
         manage_row.setContentsMargins(0, 0, 0, 0)
         manage_row.setSpacing(6)
-        for button in (self.rename_button, self.export_button, self.delete_button):
+        for button in (self.rename_button, self.delete_button):
             manage_row.addWidget(button)
         manage_row.addStretch(1)
-        layout.addLayout(files_row)
-        layout.addLayout(manage_row)
+        card_layout.addLayout(files_row)
+        card_layout.addLayout(manage_row)
+        layout.addWidget(card)
+
+        # The former 设置 tab is now the second card of 概览: one destination, no duplicate navigation.
+        layout.addWidget(self._build_settings())
         layout.addStretch(1)
 
         self.open_folder_button.clicked.connect(self.open_instance_folder)
         self.open_logs_button.clicked.connect(self.open_logs_folder)
         self.rename_button.clicked.connect(self.rename)
-        self.export_button.clicked.connect(self.export)
         self.delete_button.clicked.connect(self.delete)
         return page
 
@@ -445,36 +654,38 @@ class InstanceDetail(QWidget):
         self.mods_install_button.clicked.connect(self.choose_mod_files)
         return page
 
-    def _build_resources(self) -> QWidget:
+    def _build_resourcepacks_page(self) -> QWidget:
+        self.content_tables: dict[str, QTableWidget] = {}
+        self.content_empty: dict[str, EmptyState] = {}
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(12)
         banner, self.res_banner_label = self._build_share_banner()
         self.res_banner = banner
         layout.addWidget(banner)
+        box, table, empty = self._build_content_section(
+            "resourcepacks", tr("mods.tab.resourcepacks")
+        )
+        self.content_tables["resourcepacks"] = table
+        self.content_empty["resourcepacks"] = empty
+        layout.addWidget(box, 1)
+        return page
 
-        inner = QWidget()
-        inner_layout = QVBoxLayout(inner)
-        inner_layout.setContentsMargins(0, 0, 0, 0)
-        inner_layout.setSpacing(12)
-        self.content_tables: dict[str, QTableWidget] = {}
-        self.content_empty: dict[str, EmptyState] = {}
-        for subdir, title_key in (
-            ("resourcepacks", "mods.tab.resourcepacks"),
-            ("shaderpacks", "mods.tab.shaderpacks"),
-        ):
-            box, table, empty = self._build_content_section(subdir, tr(title_key))
-            self.content_tables[subdir] = table
-            self.content_empty[subdir] = empty
-            inner_layout.addWidget(box, 1)
-        scroll = QScrollArea()
-        # WCAG 4.1.2: the tab is a keyboard stop of its own and had no name. It is named after what it
-        # scrolls, so it tells a screen-reader user which tab the focus just entered.
-        scroll.setAccessibleName(tr("instances.detail.tab.resources"))
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(inner)
-        layout.addWidget(scroll, 1)
+    def _build_shaderpacks_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        banner, self.shader_banner_label = self._build_share_banner()
+        self.shader_banner = banner
+        layout.addWidget(banner)
+        box, table, empty = self._build_content_section(
+            "shaderpacks", tr("mods.tab.shaderpacks")
+        )
+        self.content_tables["shaderpacks"] = table
+        self.content_empty["shaderpacks"] = empty
+        layout.addWidget(box, 1)
         return page
 
     def _build_content_section(self, subdir: str, title: str):
@@ -554,14 +765,16 @@ class InstanceDetail(QWidget):
         return page
 
     def _build_diagnosis(self) -> QWidget:
-        """Diagnostics tab: the last recorded diagnosis plus the crash reports on disk."""
-        box = QWidget()
-        layout = QVBoxLayout(box)
+        """Diagnosis and the live latest.log, merged into one page (two cards)."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
 
+        card, card_layout = self._make_card()
+        card_layout.addWidget(self._card_heading("instances.detail.tab.diagnosis"))
         self.diagnosis_empty = EmptyState(tr("instances.detail.diagnosis.none"))
-        layout.addWidget(self.diagnosis_empty)
+        card_layout.addWidget(self.diagnosis_empty)
 
         self.diagnosis_code = QLabel("")
         self.diagnosis_code.setObjectName("title")
@@ -577,8 +790,7 @@ class InstanceDetail(QWidget):
         self.diagnosis_body.setAlignment(Qt.AlignmentFlag.AlignTop)
         for widget in (self.diagnosis_code, self.diagnosis_time, self.diagnosis_body):
             widget.setVisible(False)
-            layout.addWidget(widget)
-        layout.addStretch(1)
+            card_layout.addWidget(widget)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -590,10 +802,80 @@ class InstanceDetail(QWidget):
         row.addWidget(self.diagnosis_copy_button)
         row.addWidget(self.diagnosis_reports_label)
         row.addStretch(1)
-        layout.addLayout(row)
+        card_layout.addLayout(row)
+        layout.addWidget(card)
+
+        log_card, log_layout = self._make_card()
+        log_layout.addWidget(self._card_heading("instances.detail.log.title"))
+        self.log_path_label = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideLeft)
+        self.log_path_label.setObjectName("hint")
+        self.log_empty = QLabel(tr("instances.detail.log.empty"))
+        self.log_empty.setObjectName("emptyState")
+        self.log_empty.setWordWrap(True)
+        self.log_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setObjectName("instanceLogView")
+        self.log_view.setReadOnly(True)
+        self.log_view.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.log_view.setAccessibleName(tr("instances.detail.log.title"))
+        self.log_view.setMinimumHeight(240)
+        self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_view.setVisible(False)
+        log_layout.addWidget(self.log_path_label)
+        log_layout.addWidget(self.log_empty)
+        log_layout.addWidget(self.log_view, 1)
+        layout.addWidget(log_card)
+        layout.addStretch(1)
+
         self._diagnosis_lines: list[str] = []
         self.diagnosis_copy_button.setEnabled(False)
-        return box
+        return page
+
+    def _build_modify(self) -> QWidget:
+        return self._build_not_implemented("modify")
+
+    def _build_export(self) -> QWidget:
+        return self._build_not_implemented("export")
+
+    def _build_not_implemented(self, key: str) -> QWidget:
+        """An honest placeholder page: the capability is absent, so no control pretends to offer it."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        card, card_layout = self._make_card()
+        heading = self._card_heading("instances.detail.not_implemented.title")
+        body = QLabel(tr("instances.detail.not_implemented." + key))
+        body.setObjectName("hint")
+        body.setWordWrap(True)
+        card_layout.addWidget(heading)
+        card_layout.addWidget(body)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _refresh_log(self) -> None:
+        """Show the tail of this instance's latest.log directly in the diagnosis page."""
+        if self.resolved is None:
+            self.log_path_label.setText("")
+            self.log_view.clear()
+            self.log_view.setVisible(False)
+            self.log_empty.setVisible(True)
+            return
+        log_path = self.resolved.launch_dir / "logs" / "latest.log"
+        self.log_path_label.setText(str(log_path))
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if len(text) > _LOG_TAIL_CHARS:
+            text = text[-_LOG_TAIL_CHARS:]
+        self.log_view.setPlainText(text)
+        self.log_view.setVisible(bool(text))
+        self.log_empty.setVisible(not text)
 
     def refresh_diagnosis(self) -> None:
         """Show the diagnosis recorded for this instance, plus its crash report count."""
@@ -630,6 +912,7 @@ class InstanceDetail(QWidget):
         except OSError:
             count = 0
         self.diagnosis_reports_label.setText(tr("instances.detail.diagnosis.reports", count))
+        self._refresh_log()
 
     def effective_dir(self) -> Path:
         """The directory the game actually uses for this instance (its own folder when isolated)."""
@@ -645,10 +928,9 @@ class InstanceDetail(QWidget):
         set_app_status(self, tr("instances.detail.diagnosis.copied"))
 
     def _build_settings(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        card, layout = self._make_card()
+        self.settings_card = card
+        layout.addWidget(self._card_heading("instances.detail.card.settings"))
         form = QFormLayout()
         style_form(form)
 
@@ -755,7 +1037,6 @@ class InstanceDetail(QWidget):
         buttons.addWidget(self.settings_reset_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
-        layout.addStretch(1)
 
         self.java_follow_check.toggled.connect(self._on_java_follow_toggled)
         self.memory_follow_check.toggled.connect(self._on_memory_follow_toggled)
@@ -765,7 +1046,7 @@ class InstanceDetail(QWidget):
         self.settings_reset_button.clicked.connect(self._reset_settings)
         self._on_java_follow_toggled(True)
         self._on_memory_follow_toggled(True)
-        return page
+        return card
 
     def _build_share_banner(self) -> tuple[QWidget, QLabel]:
         """Warning strip shown on the mods/resources tabs of a non-isolated instance."""
@@ -803,9 +1084,53 @@ class InstanceDetail(QWidget):
             for subdir in _CONTENT_SUBDIRS:
                 self._content_items[subdir] = []
             self._saves = []
+            for key in _BADGED_SECTIONS:
+                self._set_badge_count(key, 0)
             self._clear_rows()
             return
         self.reload()
+
+    def _set_badge_count(self, key: str, count: int) -> None:
+        """Store a sidebar badge count; zero hides the badge (and its width)."""
+        self._badge_counts[key] = max(0, int(count))
+        badge = self.nav_badges[key]
+        badge.setText(str(self._badge_counts[key]))
+        badge.setVisible(self._badge_counts[key] > 0)
+        label_key = next(
+            label_key for section_key, _i, _icon, label_key in _SECTIONS if section_key == key
+        )
+        name = tr(label_key)
+        if self._badge_counts[key]:
+            name += f" ({self._badge_counts[key]})"
+        self.nav_buttons[key].setAccessibleName(name)
+
+    def _refresh_badge_counts(self) -> None:
+        """Cheap directory counts before the async table scans publish their exact values."""
+        if self.resolved is None:
+            for key in _BADGED_SECTIONS:
+                self._set_badge_count(key, 0)
+            return
+        mods = 0
+        try:
+            if self.resolved.mods_dir.is_dir():
+                mods = sum(
+                    1
+                    for entry in self.resolved.mods_dir.iterdir()
+                    if entry.is_file()
+                    and entry.name.lower().endswith((".jar", ".jar.disabled"))
+                )
+        except OSError:
+            mods = 0
+        saves = 0
+        saves_dir = self.resolved.launch_dir / "saves"
+        try:
+            if saves_dir.is_dir():
+                saves = sum(1 for entry in saves_dir.iterdir() if entry.is_dir())
+        except OSError:
+            saves = 0
+        self._set_badge_count("mods", mods)
+        self._set_badge_count("saves", saves)
+        self._sync_sidebar()
 
     def reload(self) -> None:
         """Re-read the instance, resolve it and refresh every part of the panel."""
@@ -828,9 +1153,10 @@ class InstanceDetail(QWidget):
         self._fill_overview()
         self._fill_settings()
         self._fill_banners()
+        self._refresh_badge_counts()
         self._loaded_tabs = set()
         self._reload_mods()
-        if self.stack.currentIndex() in (TAB_RESOURCES, TAB_SAVES):
+        if self.stack.currentIndex() in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS):
             self._ensure_tab_data(self.stack.currentIndex(), force=True)
 
     def _clear_rows(self) -> None:
@@ -842,6 +1168,13 @@ class InstanceDetail(QWidget):
         self.legacy_label.setVisible(False)
         self.mods_banner.setVisible(False)
         self.res_banner.setVisible(False)
+        self.shader_banner.setVisible(False)
+        self.log_path_label.setText("")
+        self.log_view.clear()
+        self.log_view.setVisible(False)
+        self.log_empty.setVisible(True)
+        for key in _BADGED_SECTIONS:
+            self._set_badge_count(key, 0)
 
     def _fill_header(self) -> None:
         inst = self.instance
@@ -912,6 +1245,7 @@ class InstanceDetail(QWidget):
         for banner, label in (
             (self.mods_banner, self.mods_banner_label),
             (self.res_banner, self.res_banner_label),
+            (self.shader_banner, self.shader_banner_label),
         ):
             if isolated:
                 banner.setVisible(False)
@@ -965,22 +1299,13 @@ class InstanceDetail(QWidget):
     def _on_memory_follow_toggled(self, follow: bool) -> None:
         self.memory_spin.setEnabled(not follow)
 
-    def _on_tab_clicked(self, index: int) -> None:
-        self.stack.setCurrentIndex(index)
-        self._ensure_tab_data(index)
-
-    def set_tab(self, index: int) -> None:
-        """Activate a tab programmatically (used by tests and cross-page jumps)."""
-        self.tabs[index].setChecked(True)
-        self._on_tab_clicked(index)
-
     def _ensure_tab_data(self, index: int, force: bool = False) -> None:
-        if index not in (TAB_RESOURCES, TAB_SAVES, TAB_DIAGNOSIS):
+        if index not in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS):
             return
         if not force and index in self._loaded_tabs:
             return
         self._loaded_tabs.add(index)
-        if index == TAB_RESOURCES:
+        if index in _RESOURCE_TABS:
             self.reload_resources()
         elif index == TAB_SAVES:
             self.reload_saves()
@@ -1272,6 +1597,8 @@ class InstanceDetail(QWidget):
 
     def _fill_mods_table(self, mods: list) -> None:
         self._mods = mods
+        self._set_badge_count("mods", len(mods))
+        self._sync_sidebar()
         self._refill_mods()
 
     def _refill_mods(self) -> None:
@@ -1505,6 +1832,8 @@ class InstanceDetail(QWidget):
 
     def _fill_saves(self, saves: list) -> None:
         self._saves = saves
+        self._set_badge_count("saves", len(saves))
+        self._sync_sidebar()
         table = self.saves_table
         table.setRowCount(0)
         table.setRowCount(len(saves))
@@ -1682,3 +2011,52 @@ class InstanceDetail(QWidget):
         # Exit: hide first so no stale window remains while the app quits.
         self.window().hide()
         QTimer.singleShot(600, QApplication.instance().quit)
+
+
+class InstanceDetailPage(QWidget):
+    """Full-page host for :class:`InstanceDetail`, with the exit back to the instance grid.
+
+    The instances page owns both this page and the card grid in one internal QStackedWidget. Keeping the
+    back control here means the detail page can be reached from anywhere (the card grid, the launch page
+    or the versions page) without making the main sidebar grow a ninth entry.
+    """
+
+    back_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("instanceDetailPage")
+        layout = QVBoxLayout(self)
+        style_page_layout(layout)
+        layout.setSpacing(8)
+
+        self.back_button = QPushButton("← " + tr("instances.detail.back"))
+        self.back_button.setObjectName("backButton")
+        self.back_button.setAccessibleName(tr("instances.detail.back"))
+        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.back_button.clicked.connect(lambda: self.back_requested.emit())
+
+        self.detail = InstanceDetail()
+        self.no_selection = QLabel(tr("instances.select.hint"))
+        self.no_selection.setObjectName("emptyState")
+        self.no_selection.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.no_selection.setWordWrap(True)
+        self.detail_stack = QStackedWidget()
+        self.detail_stack.addWidget(self.detail)
+        self.detail_stack.addWidget(self.no_selection)
+
+        layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.detail_stack, 1)
+
+    def set_instance(self, instance_id: str | None) -> None:
+        """Load one instance, or show the empty hint when there is none."""
+        if instance_id is None:
+            self.detail_stack.setCurrentWidget(self.no_selection)
+            self.detail.set_instance(None)
+            return
+        self.detail_stack.setCurrentWidget(self.detail)
+        self.detail.set_instance(instance_id)
+
+    def focus_back_button(self) -> None:
+        """Keyboard users land on the way back, not on a card that is now hidden."""
+        self.back_button.setFocus(Qt.FocusReason.OtherFocusReason)

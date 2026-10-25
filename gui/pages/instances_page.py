@@ -15,20 +15,21 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Instances page: list of installed instances on the left, details of the selected one on the right.
+"""Instances page: a pure, responsive card grid. Opening a card drills into the detail page.
 
-An instance *is* a version folder (`versions/<id>/`), so this page owns every
-management action for the installed versions: launching, mods, resource packs,
-saves, per-instance settings, rename, export and delete. Everything that acts on
-one instance lives in @gui.pages.instance_detail.InstanceDetail; this module only
-keeps the list, the search box and the cross-instance actions.
+An instance *is* a version folder (`versions/<id>/`), so this page owns the
+grid, the search box and the cross-instance actions. Everything that acts on
+one instance lives in @gui.pages.instance_detail.InstanceDetail; the card grid
+never embeds it, and the detail page is shown only after a deliberate drill-down.
 """
 
 from __future__ import annotations
 
+import json
+from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -41,14 +42,16 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from gui import i18n
-from gui.pages.instance_detail import InstanceDetail
+from gui import i18n, nav_icons, theme
+from gui.pages.instance_detail import InstanceDetailPage
 from gui.widgets import (
+    ElidedLabel,
     EmptyState,
     add_search_icon,
     apply_no_focus_outline,
@@ -62,18 +65,207 @@ from launcher import config, paths
 from launcher.accessibility import TriggerSource
 from launcher.install import list_installed_versions
 from launcher.instances import (
+    InstancesError,
     create_instance,
     default_instance_name,
     display_version_name,
     import_instance,
     instance_dir,
     list_instances,
+    resolve_instance,
 )
 
 tr = i18n.tr
 
-LEFT_WIDTH = 270  # A3-a: the list column is fixed so the detail panel gets the rest, but 320 was what
-# forced a 1224px window in Spanish. The measured cost is exactly -1px of window per -1px here.
+CARD_HEIGHT = 156
+CARD_GAP = 12
+CARD_MIN_WIDTH = 260
+CARD_MAX_COLUMNS = 3
+# Three cards plus their four 12px gutters. Stated as a floor so the window never shrinks into a
+# one-card strip that would contradict the 2-3 column layout; tests/test_window_clipping.py also
+# uses the resulting floor to prove it still exceeds the old 1000px fixed pin.
+CARD_GRID_MIN_WIDTH = 860
+CARD_COLUMNS_MIN_WIDTH = CARD_GRID_MIN_WIDTH
+
+
+def _profile_json(game_dir: Path, version_id: str) -> dict:
+    path = instance_dir(game_dir, version_id) / (version_id + ".json")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _known_profile_identity(version_id: str) -> tuple[str, str] | None:
+    """(minecraft version, loader) for the profile-id shapes the launcher installs."""
+    if version_id.startswith("fabric-loader-"):
+        parts = version_id.split("-")
+        if len(parts) >= 4:
+            return parts[3], "Fabric " + parts[2]
+    if version_id.startswith("quilt-loader-"):
+        parts = version_id.split("-")
+        if len(parts) >= 4:
+            return parts[3], "Quilt " + parts[2]
+    if "-forge-" in version_id:
+        minecraft, loader_version = version_id.split("-forge-", 1)
+        return minecraft, "Forge " + loader_version
+    if version_id.startswith("neoforge-"):
+        loader_version = version_id[len("neoforge-") :]
+        numbers = loader_version.split(".")
+        # NeoForge encodes the Minecraft version in its first two components (21.1.5 -> 1.21.1).
+        minecraft = (
+            f"1.{numbers[0]}.{numbers[1]}"
+            if len(numbers) >= 2 and numbers[0].isdigit() and numbers[1].isdigit()
+            else loader_version
+        )
+        return minecraft, "NeoForge " + loader_version
+    return None
+
+
+def card_version_loader(instance, game_dir: Path) -> tuple[str, str]:
+    """Resolve the ``版本 · 加载器`` line, following an inherited profile when needed."""
+    seen: set[str] = set()
+    current = instance.id
+    while current and current not in seen:
+        seen.add(current)
+        known = _known_profile_identity(current)
+        if known is not None:
+            return known
+        parent = _profile_json(game_dir, current).get("inheritsFrom")
+        if not isinstance(parent, str) or not parent.strip():
+            return current, tr("instances.card.vanilla")
+        current = parent.strip()
+    return instance.id, tr("instances.card.vanilla")
+
+
+def instance_counts(instance, cfg, game_dir: Path) -> tuple[int, int]:
+    """(mods, saves) for the card footer; unreadable directories count as zero."""
+    try:
+        resolved = resolve_instance(instance.id, cfg, game_dir)
+    except (InstancesError, OSError):
+        return 0, 0
+    mods = 0
+    try:
+        if resolved.mods_dir.is_dir():
+            mods = sum(
+                1
+                for entry in resolved.mods_dir.iterdir()
+                if entry.is_file()
+                and entry.name.lower().endswith((".jar", ".jar.disabled"))
+            )
+    except OSError:
+        mods = 0
+    saves = 0
+    saves_dir = resolved.launch_dir / "saves"
+    try:
+        if saves_dir.is_dir():
+            saves = sum(1 for entry in saves_dir.iterdir() if entry.is_dir())
+    except OSError:
+        saves = 0
+    return mods, saves
+
+
+class _InstanceCard(QPushButton):
+    """One white card. The whole surface is the button; 管理 is its visual affordance, not a fake action."""
+
+    def __init__(
+        self,
+        instance,
+        meta: str,
+        counts: str,
+        *,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.instance_id = instance.id
+        self.setObjectName("instanceCard")
+        self.setAccessibleName(tr("instances.card.open", instance.name))
+        description = meta + (" · " + counts if counts else "")
+        self.setAccessibleDescription(description)
+        self.setToolTip(f"{instance.name}\n{description}")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(12)
+        icon = QLabel()
+        icon.setObjectName("instanceCardIcon")
+        icon.setFixedSize(40, 40)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        icon.setPixmap(
+            nav_icons.nav_icon("instances", tokens["ACCENT"], 22).pixmap(22, 22)
+        )
+        icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        name = ElidedLabel(instance.name)
+        name.setObjectName("instanceCardName")
+        name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        top.addWidget(icon)
+        top.addWidget(name, 1)
+        layout.addLayout(top)
+
+        meta_label = ElidedLabel(meta)
+        meta_label.setObjectName("instanceCardMeta")
+        meta_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(meta_label)
+        layout.addStretch(1)
+
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.setSpacing(8)
+        counts_label = QLabel(counts)
+        counts_label.setObjectName("instanceCardCounts")
+        counts_label.setWordWrap(False)
+        counts_label.setVisible(bool(counts))
+        counts_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        manage = QLabel(tr("instances.card.manage"))
+        manage.setObjectName("instanceCardManage")
+        manage.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        manage.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        bottom.addWidget(counts_label)
+        bottom.addStretch(1)
+        bottom.addWidget(manage)
+        layout.addLayout(bottom)
+
+        self.manage_label = manage
+
+
+class _CardListWidget(QListWidget):
+    """Icon-mode grid that reports viewport width changes so the column count can follow the window."""
+
+    resized = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setViewMode(QListWidget.ViewMode.IconMode)
+        self.setFrameShape(QListWidget.Shape.NoFrame)
+        self.setFlow(QListWidget.Flow.LeftToRight)
+        self.setWrapping(True)
+        self.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.setMovement(QListWidget.Movement.Static)
+        self.setUniformItemSizes(True)
+        # The card gap lives in the grid cell (item width = cell - gap), not in QListView's spacing:
+        # spacing is applied asymmetrically at column boundaries, which made 3-column rows wrap a few
+        # pixels early. With an explicit grid cell the column count is exactly viewport // cell.
+        self.setSpacing(0)
+        self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        # The card buttons are the keyboard stops. A second focus stop around the whole grid would
+        # announce the same content twice.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setWordWrap(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.resized.emit()
 
 
 class _CreateDialog(QDialog):
@@ -133,21 +325,28 @@ class _CreateDialog(QDialog):
 
 
 class InstancesPage(QWidget):
-    """Master-detail instances page."""
+    """Card grid, plus the drill-down detail page it reveals on request."""
+
+    #: A card (or the 管理 affordance drawn on it) asks the window to open the detail page.
+    instance_open_requested = Signal(str)
+    #: The detail page's back control asks to return to the grid.
+    back_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
+        self.setObjectName("instancesPage")
+
         self.search_edit = QLineEdit()
         add_search_icon(self.search_edit)
         self.search_edit.setPlaceholderText(tr("instances.search.placeholder"))
         self.search_edit.setAccessibleName(tr("instances.search.placeholder"))  # WCAG 4.1.2
         self.search_edit.setClearButtonEnabled(True)
 
-        self.list = QListWidget()
+        self.list = _CardListWidget()
+        self.list.setObjectName("instanceCardList")
         self.list.setAccessibleName(tr("nav.instances"))  # WCAG 4.1.2
+        self.list.setMinimumWidth(CARD_GRID_MIN_WIDTH)
         apply_no_focus_outline(self.list)
-        # Long rows (profile labels, notes) must elide with an ellipsis, not clip mid-glyph
-        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.empty_instances = EmptyState(tr("empty.instances"))
         self.empty_search = EmptyState(tr("instances.search.none"))
         self.list_stack = QStackedWidget()
@@ -166,54 +365,49 @@ class InstancesPage(QWidget):
         self.import_button = QPushButton(tr("instances.import"))
         self.import_button.setObjectName("secondaryButton")
 
-        self.detail = InstanceDetail()
-        self.no_selection = QLabel(tr("instances.select.hint"))
-        self.no_selection.setObjectName("emptyState")
-        self.no_selection.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.no_selection.setWordWrap(True)
-        self.detail_stack = QStackedWidget()
-        self.detail_stack.addWidget(self.detail)
-        self.detail_stack.addWidget(self.no_selection)
+        self.detail_page = InstanceDetailPage()
+        self.detail = self.detail_page.detail
+        self.detail_stack = self.detail_page.detail_stack
+        self.no_selection = self.detail_page.no_selection
 
-        # Legacy attribute names kept for callers (and tests) that predate the detail panel
+        # Legacy attribute names kept for callers (and tests) that predate the detail page
         self.open_folder_button = self.detail.open_folder_button
         self.launch_button = self.detail.launch_button
         self.crash_button = self.detail.crash_button
         self.mods_table = self.detail.mods_table
 
-        left = QWidget()
-        left.setFixedWidth(LEFT_WIDTH)
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
-        left_layout.addWidget(self.search_edit)
-        sort_row = QHBoxLayout()
-        sort_row.setContentsMargins(0, 0, 0, 0)
-        sort_row.setSpacing(6)
-        sort_row.addWidget(QLabel(tr("instances.sort.label")))
-        sort_row.addWidget(self.sort_combo, 1)
-        left_layout.addLayout(sort_row)
-        left_layout.addWidget(self.list_stack, 1)
-        # Stacked, not side by side: at LEFT_WIDTH the row left each button ~132px, and Japanese and
-        # Russian labels need 165-204px. Stacking gives both buttons the full column width, so every
-        # language fits without abbreviating the copy (the audit checks all nine).
-        actions = QVBoxLayout()
+        browser = QWidget()
+        browser.setObjectName("instanceBrowser")
+        browser_layout = QVBoxLayout(browser)
+        style_page_layout(browser_layout)
+        browser_layout.setSpacing(12)
+        browser_layout.addWidget(build_page_header(tr("nav.instances"), tr("page.instances.desc")))
+
+        first_row = QHBoxLayout()
+        first_row.setContentsMargins(0, 0, 0, 0)
+        first_row.setSpacing(8)
+        sort_label = QLabel(tr("instances.sort.label"))
+        sort_label.setBuddy(self.sort_combo)
+        first_row.addWidget(self.search_edit, 1)
+        first_row.addWidget(sort_label)
+        first_row.addWidget(self.sort_combo)
+        browser_layout.addLayout(first_row)
+
+        actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
+        actions.setSpacing(8)
+        actions.addStretch(1)
         actions.addWidget(self.create_button)
         actions.addWidget(self.import_button)
-        left_layout.addLayout(actions)
+        browser_layout.addLayout(actions)
+        browser_layout.addWidget(self.list_stack, 1)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(12)
-        body.addWidget(left)
-        body.addWidget(self.detail_stack, 1)
-
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(browser)
+        self.view_stack.addWidget(self.detail_page)
         layout = QVBoxLayout(self)
-        style_page_layout(layout)
-        layout.addWidget(build_page_header(tr("nav.instances"), tr("page.instances.desc")))
-        layout.addLayout(body, 1)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.view_stack)
 
         self.create_button.clicked.connect(self._create)
         self.import_button.clicked.connect(self._import)
@@ -224,14 +418,47 @@ class InstancesPage(QWidget):
         self._search_timer.timeout.connect(self._on_search_changed)
         self.search_edit.textChanged.connect(lambda _t: self._search_timer.start(200))
         self.list.currentRowChanged.connect(self._on_selection_changed)
+        self.list.resized.connect(self._relayout_cards)
         self.detail.changed.connect(self._on_detail_changed)
         self.detail.deleted.connect(self._on_detail_deleted)
+        self.detail_page.back_requested.connect(self._on_back_clicked)
+        self._card_size = QSize(0, 0)
         self.refresh()
+
+    # ---------- page navigation ----------
+
+    def open_instance(self, instance_id: str) -> bool:
+        """Show one instance's detail page (the window calls this for every drill-down route)."""
+        found = self.select_instance(instance_id)
+        if not found:
+            return False
+        self.detail_page.detail_stack.setCurrentWidget(self.detail)
+        self.view_stack.setCurrentWidget(self.detail_page)
+        self.detail_page.focus_back_button()
+        return True
+
+    def show_list(self) -> None:
+        """Return to the card grid, putting keyboard focus back on the current card."""
+        self.view_stack.setCurrentWidget(self.view_stack.widget(0))
+        item = self.list.currentItem()
+        card = self.list.itemWidget(item) if item is not None else None
+        if card is not None:
+            card.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def current_view(self) -> QWidget:
+        return self.view_stack.currentWidget()
+
+    def _on_back_clicked(self) -> None:
+        self.show_list()
+        self.back_requested.emit()
+
+    def _open_requested(self, instance_id: str) -> None:
+        self.instance_open_requested.emit(instance_id)
 
     # ---------- list ----------
 
     def refresh(self, select: str | None = None) -> None:
-        """Rebuild the instance list; `select` forces a selection (None keeps the current one)."""
+        """Rebuild the card grid; `select` forces a selection (None keeps the current one)."""
         wanted = select if select is not None else self._current_name()
         cfg, _ = config.load()
         game_dir = cfg.game_dir or paths.default_game_dir()
@@ -249,12 +476,53 @@ class InstancesPage(QWidget):
                 item = QListWidgetItem(self._row_text(inst))
                 item.setData(Qt.UserRole, inst.id)  # instance id in a data role, never parsed
                 item.setToolTip(str(instance_dir(game_dir, inst.id)))
+                item.setSizeHint(QSize(self._card_size.width() or CARD_MIN_WIDTH, CARD_HEIGHT))
                 self.list.addItem(item)
+                version, loader = card_version_loader(inst, game_dir)
+                mods, saves = instance_counts(inst, cfg, game_dir)
+                counts = " · ".join(
+                    part
+                    for part in (
+                        tr("instances.card.mods", mods) if mods else "",
+                        tr("instances.card.saves", saves) if saves else "",
+                    )
+                    if part
+                )
+                card = _InstanceCard(
+                    inst, f"{version} · {loader}", counts, parent=self.list
+                )
+                card.clicked.connect(partial(self._open_requested, inst.id))
+                self.list.setItemWidget(item, card)
                 shown += 1
         finally:
             self.list.blockSignals(False)
         self._update_list_state(len(instances), self.list.count())
+        self._relayout_cards()
         self._select(wanted)
+        if not instances:
+            self.show_list()
+
+    def _relayout_cards(self) -> None:
+        width = self.list.viewport().width()
+        if width <= 0 or self.list.count() == 0:
+            return
+        columns = CARD_MAX_COLUMNS if width >= CARD_COLUMNS_MIN_WIDTH else 2
+        # Two 12px page gutters plus one 12px gap between each pair of columns. Dividing the *inner*
+        # width (not the viewport) is what makes a 3-column row fit instead of wrapping the last card.
+        cell_width = max(
+            CARD_MIN_WIDTH + CARD_GAP, (width - 2 * CARD_GAP) // columns
+        )
+        card_width = cell_width - CARD_GAP
+        self.list.setGridSize(QSize(cell_width, CARD_HEIGHT + CARD_GAP))
+        size = QSize(card_width, CARD_HEIGHT)
+        if size == self._card_size:
+            return
+        self._card_size = size
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            if item is not None:
+                item.setSizeHint(size)
+        self.list.viewport().update()
 
     def _sort_key(self, inst):
         # Starred instances come first, then the chosen order
@@ -273,7 +541,7 @@ class InstancesPage(QWidget):
         return text
 
     def _haystack(self, inst) -> str:
-        """Search matches the display name, the instance id and the profile label."""
+        """Search matches the display name, the instance id, the profile label and the note."""
         return " ".join(
             (inst.name, inst.id, display_version_name(inst.id), inst.note)
         ).lower()
@@ -290,7 +558,7 @@ class InstancesPage(QWidget):
         self.list_stack.setCurrentWidget(self.list)
 
     def _select(self, instance_id: str | None) -> None:
-        """Select a row by instance id (no selection when it is gone)."""
+        """Select a card by instance id (no selection when it is gone)."""
         row = -1
         if instance_id:
             for index in range(self.list.count()):
@@ -301,7 +569,7 @@ class InstancesPage(QWidget):
         self._on_selection_changed(row)
 
     def select_instance(self, instance_id: str) -> bool:
-        """Show one instance (used by the versions page's 打开实例 button)."""
+        """Show one instance in the selection model (used by the versions/launch pages)."""
         self.refresh(select=instance_id)
         found = self._current_name() == instance_id
         if not found:
@@ -321,18 +589,17 @@ class InstancesPage(QWidget):
     def _on_selection_changed(self, _row: int) -> None:
         instance_id = self._current_name()
         if instance_id is None:
-            self.detail.set_instance(None)
-            self.detail_stack.setCurrentWidget(self.no_selection)
+            self.detail_page.set_instance(None)
             return
-        self.detail_stack.setCurrentWidget(self.detail)
-        self.detail.set_instance(instance_id)
+        self.detail_page.set_instance(instance_id)
 
     def _on_detail_changed(self) -> None:
-        """Metadata changed in the detail: rebuild the list, keeping the shown instance."""
+        """Metadata changed in the detail: rebuild the grid, keeping the shown instance."""
         self.refresh(select=self.detail.instance_id or self._current_name())
 
     def _on_detail_deleted(self, _instance_id: str) -> None:
         self.refresh()
+        self.show_list()
 
     def _selected_instance(self):
         instance_id = self._current_name()
@@ -374,7 +641,7 @@ class InstancesPage(QWidget):
         self.detail.delete()
 
     def _launch(self, trigger_source: TriggerSource | str = TriggerSource.UNKNOWN) -> None:
-        """Legacy delegate: the detail panel owns the button, but this entry passes the source on."""
+        """Legacy delegate: the detail page owns the button, but this entry passes the source on."""
         if self._current_name() is None:
             set_app_status(self, tr("instances.msg.need_select"), "warning")
             return

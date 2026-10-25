@@ -1,8 +1,8 @@
-/* MinePick Launcher — light theme
+/* MinePick Launcher 鈥?light theme
  *
  * This sheet holds no colour literals: every colour is a token placeholder resolved by gui/theme.py
  * (NEUTRAL_TOKENS + accent_palette), so one token carries a value per theme and the palette
- * lives in exactly one place. See MinePick_UI_实现规范.md §2.7.
+ * lives in exactly one place. See MinePick_UI_瀹炵幇瑙勮寖.md 搂2.7.
  * Unresolved placeholders are caught by tests/test_qss_tokens.py.
  *
  * Kept from the released theme on purpose (do not regress):
@@ -1247,3 +1247,161 @@ QFrame#resourceDetail {
     border-radius: __RADIUS_LG__;
 }
 QFrame#resourceDetail QLabel#title { font-size: 15px; font-weight: 600; color: __FG_TEXT__; }
+
+/* ========================================================================== */
+/* Instances: card grid and the drilled-down detail page.                     */
+/*                                                                            */
+/* The grid is a QListWidget in IconMode with one real card button per item.   */
+/* The detail sidebar is 200px (layout constant in instance_detail.py), with   */
+/* 36px rows and 20px group headings; the styles here only paint state.        */
+/* ========================================================================== */
+
+QListWidget#instanceCardList {
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 0;
+}
+QListWidget#instanceCardList::item,
+QListWidget#instanceCardList::item:hover,
+QListWidget#instanceCardList::item:selected,
+QListWidget#instanceCardList::item:selected:focus {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QPushButton#instanceCard {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_LG__;
+    padding: 0;
+    text-align: left;
+}
+QPushButton#instanceCard:hover {
+    background: __BG_LIST__;
+    border-color: __ACCENT__;
+}
+QPushButton#instanceCard:pressed { background: __BG_LIST_2__; }
+QPushButton#instanceCard[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+QLabel#instanceCardName {
+    background: transparent;
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 700;
+}
+QLabel#instanceCardMeta,
+QLabel#instanceCardCounts {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 12px;
+}
+QLabel#instanceCardIcon {
+    background: __ACCENT_SOFT__;
+    border-radius: __RADIUS_SM__;
+}
+QLabel#instanceCardManage {
+    background: transparent;
+    color: __FG_BUTTON_SECONDARY__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: __RADIUS_SM__;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#instanceCard:hover QLabel#instanceCardManage {
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+
+QWidget#instanceBrowser, QWidget#instanceDetailPage, QWidget#instanceContent,
+QWidget#instanceNavBody, QWidget#instanceContentStack { background: transparent; }
+QScrollArea#instanceNavScroll,
+QScrollArea#instanceContentScroll {
+    background: transparent;
+    border: none;
+}
+QPushButton#backButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: __RADIUS_SM__;
+    color: __FG_HINT__;
+    font-weight: 600;
+    padding: 4px 8px;
+    text-align: left;
+}
+QPushButton#backButton:hover { color: __FG_TEXT__; background: __BG_SIDEBAR__; }
+QPushButton#backButton[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
+QPushButton#instanceNavItem {
+    background: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: __RADIUS_SM__;
+    padding: 0;
+    text-align: left;
+}
+QPushButton#instanceNavItem:hover { background: __BG_SIDEBAR__; }
+QPushButton#instanceNavItem:checked {
+    background: __ACCENT_SOFT__;
+    border-left: 3px solid __ACCENT__;
+}
+QPushButton#instanceNavItem[keyboardFocus="true"]:focus {
+    background: __BG_SIDEBAR__;
+    border-left: 3px solid __FOCUS_RING__;
+}
+QPushButton#instanceNavItem:hover QLabel#instanceNavLabel { color: __FG_TEXT__; }
+QLabel#instanceNavLabel {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 13px;
+    font-weight: 500;
+}
+QLabel#instanceNavLabel[active="true"] {
+    color: __ACCENT_SEL_TEXT__;
+    font-weight: 700;
+}
+QLabel#instanceNavIcon { background: transparent; }
+QLabel#instanceNavBadge {
+    background: __BG_SIDEBAR__;
+    border-radius: 9px;
+    color: __FG_HINT__;
+    font-size: 11px;
+    padding: 0 4px;
+}
+QLabel#instanceNavBadge[active="true"] {
+    background: __ACCENT_TINT__;
+    color: __ACCENT_SEL_TEXT__;
+}
+QLabel#instanceNavGroup {
+    color: __FG_HINT__;
+    font-size: 11px;
+    padding: 0 12px;
+}
+QFrame#instanceNavSeparator {
+    background: __BORDER_LIST__;
+    border: none;
+}
+
+QWidget#instanceCard {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_LG__;
+}
+QLabel#instanceCardTitle {
+    background: transparent;
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 700;
+}
+QPlainTextEdit#instanceLogView {
+    background: __BG_LIST_2__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_SM__;
+    color: __FG_TEXT__;
+    padding: 8px;
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-size: 12px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}

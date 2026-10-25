@@ -293,6 +293,10 @@ class MainWindow(QMainWindow):
                 ("instance_settings_requested", self._goto_instance_settings),
                 ("account_requested", self._goto_account),
             ],
+            "instances": [
+                ("instance_open_requested", self._goto_instance),
+                ("back_requested", self._on_instances_back),
+            ],
             "settings": [("settings_changed", self._on_settings_changed)],
             "versions": [
                 ("versions_changed", self._on_versions_changed),
@@ -350,6 +354,7 @@ class MainWindow(QMainWindow):
             page.refresh_versions()
         elif key == "instances":
             page.refresh()
+            page.show_list()
         elif key == "versions":
             # a version can be deleted on the instances page: re-mark the installed column
             page.refresh_installed()
@@ -424,16 +429,21 @@ class MainWindow(QMainWindow):
         self.sidebar.setCurrentRow(0)
 
     def _goto_instance(self, version_id: str) -> None:
-        """The versions page hands an installed profile over to the instances page."""
+        """Open one instance's detail page, whichever page asked for it."""
         self.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
-        self.pages["instances"].select_instance(version_id)
+        self.pages["instances"].open_instance(version_id)
+
+    def _on_instances_back(self) -> None:
+        """The detail page's back control: return to the card grid on the instances page."""
+        self.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
+        self.pages["instances"].show_list()
 
     def _goto_instance_settings(self, version_id: str) -> None:
-        """Open the per-instance settings of the profile selected on the launch page."""
-        from gui.pages.instance_detail import TAB_SETTINGS
+        """Open the per-instance settings card of the profile selected on the launch page."""
+        from gui.pages.instance_detail import TAB_OVERVIEW
 
         self._goto_instance(version_id)
-        self.pages["instances"].detail.set_tab(TAB_SETTINGS)
+        self.pages["instances"].detail.set_tab(TAB_OVERVIEW)
 
     def _goto_account(self) -> None:
         """The launch page's account button: switching happens on the account page."""
