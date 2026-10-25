@@ -1014,17 +1014,23 @@ class InstanceDetail(QWidget):
         self.server_label = QLabel(tr("launch.server"))
         form.addRow(self.server_label, self.server_edit)
         self.settings_form = form
-        # Form row labels are plain labels, so these two elide with a tooltip: theirs are the longest
-        # strings in the form ("JVM arguments (empty = follow global)") and they set a hard floor on
-        # the detail panel's minimum width.
-        form.addRow(
-            ElidedLabel(tr("instances.detail.settings.jvm_args")),
-            self.jvm_args_edit,
+        # These two used to be ElidedLabels. Their horizontal size policy is Ignored so a value can
+        # shrink, but QFormLayout then measured the label column before the stylesheet font arrived and
+        # reserved zero width for both, which made "JVM 参数" and "游戏参数" disappear entirely. A plain
+        # wrapping label is the correct control here: the full sentence stays readable even in the long
+        # languages, and it never asks the form for a minimum width that would compete with the fields.
+        self.jvm_args_label = QLabel(tr("instances.detail.settings.jvm_args"))
+        self.jvm_args_label.setWordWrap(True)
+        self.jvm_args_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
-        form.addRow(
-            ElidedLabel(tr("instances.detail.settings.game_args")),
-            self.game_args_edit,
+        self.game_args_label = QLabel(tr("instances.detail.settings.game_args"))
+        self.game_args_label.setWordWrap(True)
+        self.game_args_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
+        form.addRow(self.jvm_args_label, self.jvm_args_edit)
+        form.addRow(self.game_args_label, self.game_args_edit)
         layout.addLayout(form)
 
         self.settings_save_button = QPushButton(tr("instances.detail.settings.save"))

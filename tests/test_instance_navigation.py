@@ -311,6 +311,44 @@ def _sidebar_width_gate(detail):
     return failures
 
 
+def test_jvm_and_game_argument_labels_are_visible(app, monkeypatch, ws_tmp):
+    """Regression: the two settings labels used to collapse to width 0 inside QFormLayout.
+
+    They were ElidedLabels with an Ignored horizontal policy; QFormLayout measured the label column
+    before the stylesheet font arrived, so both labels were invisible even though their fields were
+    there. The fix uses ordinary wrapping labels, and this gate checks the painted width/height rather
+    than trusting the source.
+    """
+    from gui.pages.instance_detail import TAB_OVERVIEW
+
+    window = None
+    try:
+        window, _game = _window(app, monkeypatch, ws_tmp)
+        page = window.pages["instances"]
+        assert page.open_instance("fabric-loader-0.19.3-1.21.11")
+        _settle(app, window)
+        detail = page.detail
+        detail.set_tab(TAB_OVERVIEW)
+
+        for attribute, key, field in (
+            ("jvm_args_label", "instances.detail.settings.jvm_args", detail.jvm_args_edit),
+            ("game_args_label", "instances.detail.settings.game_args", detail.game_args_edit),
+        ):
+            label = getattr(detail, attribute)
+            label.ensurePolished()
+            detail.content_scroll.ensureWidgetVisible(label)
+            app.processEvents()
+            assert label.text() == i18n.tr(key)
+            assert detail.settings_form.labelForField(field) is label
+            assert label.wordWrap() is True
+            assert label.width() > 0, f"{attribute} still has zero width"
+            assert label.height() >= label.fontMetrics().height(), f"{attribute} has no painted line"
+            assert label.isVisibleTo(detail), f"{attribute} is not part of the rendered page"
+    finally:
+        if window is not None:
+            _close(app, window)
+
+
 def test_sidebar_width_gate_all_nine_languages(app):
     """Hard gate: icon + gap + label + badge must fit inside 200px minus item padding.
 
