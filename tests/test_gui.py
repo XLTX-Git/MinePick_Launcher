@@ -404,7 +404,10 @@ def test_batch1_widgets_exist(app, monkeypatch, ws_tmp):
     # versions page: the uninstall button became a jump to the instance page
     versions = window.pages["versions"]
     assert versions.open_instance_button.text() == "打开实例"
-    assert versions.model.columnCount() == 4
+    # the manifest is a dense card list now: one row widget per version, no table and no model
+    assert versions.list.objectName() == "versionList"
+    assert not hasattr(versions, "table")
+    assert versions.list.count() == 0  # nothing was fetched offline
     # launch page: the main page keeps only what a normal launch needs
     launch = window.pages["launch"]
     # The version number is a QLabel hero, not a dropdown: the launch page owns no QComboBox at all.
@@ -1279,6 +1282,11 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
     window = None
     try:
         window = MainWindow()
+        # The rows are laid out only once the page has a real width; the card's own geometry is what
+        # the "20 characters fit" check below measures.
+        window.resize(1000, 600)
+        window.show()
+        app.processEvents()
         page = window.pages["versions"]
         versions = [
             ManifestVersion(
@@ -1299,20 +1307,23 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
             SimpleNamespace(versions=versions, latest={"release": "release-0", "snapshot": "25w14a"})
         )
         # all listed, no 500-row cap
-        assert page.model.rowCount() == 553
+        assert page.list.count() == 553
         # latest version cards
         assert page.latest_labels["release"].text() == "release-0"
         assert page.latest_labels["snapshot"].text() == "25w14a"
         assert page.latest_buttons["release"].isEnabled()
         assert page.latest_buttons["snapshot"].isEnabled()
-        # the version name column can fit 20 English characters
-        assert page.table.columnWidth(0) >= page.table.fontMetrics().horizontalAdvance("W" * 20)
-        row_of = {page.model.data(page.model.index(r, 0)): r for r in range(page.model.rowCount())}
-        # the type column shows the Chinese name per category
-        assert page.model.data(page.model.index(row_of["24w14potato"], 1)) == "愚人节版本"
-        assert page.model.data(page.model.index(row_of["25w14a"], 1)) == "快照版"
-        assert page.model.data(page.model.index(row_of["release-0"], 1)) == "正式版"
-        assert page.model.data(page.model.index(row_of["b1.7.3"], 1)) == "远古版 Beta"
+        # every version is a dense card row, and its name has room for 20 English characters
+        assert len(page.rows) == 553
+        assert page.rows[0].text_width() >= page.fontMetrics().horizontalAdvance("W" * 20)
+        # the type tag shows the Chinese name per category
+        assert page.type_of("24w14potato") == "愚人节版本"
+        assert page.type_of("25w14a") == "快照版"
+        assert page.type_of("release-0") == "正式版"
+        assert page.type_of("b1.7.3") == "远古版 Beta"
+        # the date is humanized, not the raw ISO stamp the manifest carries
+        assert page.date_of("24w14potato").startswith("2024")
+        assert "2024-04-01" not in page.date_of("24w14potato")
         # category tabs: all/release/snapshot/april-fools/legacy
         tabs = page.tabs
         assert len(tabs) == 5
@@ -1326,32 +1337,28 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
                     t.setChecked(True)
             page._refilter()
 
-        def cell(row, col):
-            return page.model.data(page.model.index(row, col))
+        def ids():
+            return page.version_ids()
 
         set_filter("april_fools")
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "24w14potato"
+        assert ids() == ["24w14potato"]
         set_filter("release")
-        assert page.model.rowCount() == 550
+        assert page.list.count() == 550
         set_filter("snapshot")
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "25w14a"
+        assert ids() == ["25w14a"]
         set_filter("legacy")
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "b1.7.3"
+        assert ids() == ["b1.7.3"]
         # search box: combines with the tab condition (debounced in the UI, apply directly here)
         set_filter(None)
         page.search_edit.setText("potato")
         page._refilter()
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "24w14potato"
+        assert ids() == ["24w14potato"]
         page.search_edit.setText("release-")
         page._refilter()
-        assert page.model.rowCount() == 550
+        assert page.list.count() == 550
         page.search_edit.clear()
         page._refilter()
-        assert page.model.rowCount() == 553
+        assert page.list.count() == 553
     finally:
         if window is not None:
             window.close()

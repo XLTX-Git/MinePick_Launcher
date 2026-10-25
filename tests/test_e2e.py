@@ -262,9 +262,9 @@ def test_e2e_version_delete_via_instances_page(app, monkeypatch, ws_tmp):
                 latest={},
             )
         )
-        assert page.model.rowCount() == 1
-        assert page.model.data(page.model.index(0, 3)) == "已安装"
-        page.table.selectRow(0)
+        assert page.list.count() == 1
+        assert page.status_of("1.20.1") == "已安装"
+        page.list.setCurrentRow(0)
         # 打开实例: the versions page only jumps, the instances page owns the entry
         page.open_instance_selected()
         assert window.sidebar.currentRow() == NAV_KEYS.index("instances")
@@ -274,9 +274,9 @@ def test_e2e_version_delete_via_instances_page(app, monkeypatch, ws_tmp):
         instances.detail.delete()
         assert _wait_until(app, lambda: not vdir.exists())
         assert list_instances(game) == {}
-        # the status column refreshes once the versions page re-reads the installed set
+        # the card's status refreshes once the versions page re-reads the installed set
         page.refresh_installed()
-        assert page.model.data(page.model.index(0, 3)) == "—"
+        assert page.status_of("1.20.1") == "—"
     finally:
         if window is not None:
             window.close()
