@@ -356,12 +356,11 @@ def main(argv: list[str] | None = None) -> int:
                     "avatar_label",
                     "account_label",
                     "accounts_list",
-                    "switch_button",
+                    "add_button",
                     "device_code",
                     "ms_button",
                     "offline_edit",
                     "offline_button",
-                    "logout_button",
                 )
             }
             if state != "no_account":

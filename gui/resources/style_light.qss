@@ -630,6 +630,46 @@ QPushButton#rowDanger:disabled {
 }
 QPushButton#rowDanger[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
 
+/* ---------- account page: the account-list card ---------- */
+
+QWidget#accountPage QLabel#hint { font-size: 12px; }
+
+QListWidget#accountList {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    outline: none;
+}
+QListWidget#accountList::item {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QListWidget#accountList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+/* Neutral row action (the account row's switch): the row button's shape, without the install name. */
+QPushButton#rowAction {
+    background: transparent;
+    color: __FG_BUTTON_SECONDARY__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: 6px;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#rowAction:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QPushButton#rowAction:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#rowAction:disabled {
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QPushButton#rowAction[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
 /* ---------- icon-only buttons (launch page: switch account) ---------- */
 
 QPushButton#iconButton {
