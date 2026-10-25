@@ -57,6 +57,22 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     selection-color: __ACCENT_SEL_TEXT__;
 }
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover { border-color: __BORDER_HOVER__; }
+
+/* Placeholder text: Qt draws it from the widget's text colour at 50% alpha, and the `color` rule above
+   overwrites the palette's PlaceholderText role (FG_HINT) on every input. The painted placeholder was
+   therefore #8f949a on white - a washed-out grey at 2.9:1 that belongs to no token in this theme, which
+   is exactly the "those light characters in the field look wrong" the user reported. Qt 6 has the
+   placeholder-text-color property, so FG_HINT (the secondary-text colour used everywhere else, 6.4:1 on
+   the white field) is pinned here. It stays clearly lighter than the near-black FG_TEXT of real input,
+   so a field that already has content never reads as empty at a glance. */
+QLineEdit { placeholder-text-color: __FG_HINT__; }
+QComboBox { placeholder-text-color: __FG_HINT__; }
+/* the editor inside an editable combo is its own QLineEdit */
+QComboBox QLineEdit { placeholder-text-color: __FG_HINT__; }
+/* A disabled field's placeholder steps down with its text: FG_DISABLED is one step lighter than the
+   FG_DISABLED_2 the disabled inputs paint their value in, so the two roles stay apart. Inactive
+   components are exempt from WCAG 1.4.3, which is why this one value sits below 3:1 on its own fill. */
+QLineEdit:disabled, QComboBox:disabled { placeholder-text-color: __FG_DISABLED__; }
 /* Focus visuals live in one place: the [keyboardFocus="true"] block at the end of this sheet.
    The rules that used to sit here were plain :focus, so clicking an input with the mouse
    painted a ring - the rule is that nothing shows focus unless it came from Tab, the arrow
@@ -391,11 +407,18 @@ QComboBox[keyboardFocus="true"]::down-arrow {
 QComboBox[comboDisabled="true"]::down-arrow {
     image: url(__CHEVRON_DOWN_DISABLED__);
 }
+/* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup). It fills its window
+   with this list, and Qt paints the window's own square frame under it - so a radius here rounded the
+   white card while the window corner stayed square, and the four corners showed a grey patch outside a
+   rounded edge. That is the "the dropdown's corners are broken" the user saw. The window cannot be
+   rounded from QSS, so the list is squared to it: one 1px border in the same BORDER_LIST every other
+   control uses, square. A truly rounded popup needs a translucent window attribute on the container in
+   code, which this QSS-only change deliberately does not touch. */
 QComboBox QAbstractItemView {
     background: __BG_LIST_2__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_LIST__;
-    border-radius: __RADIUS_LG__;
+    border-radius: 0;
     padding: 4px;
     selection-background-color: __ACCENT_SEL__;
     selection-color: __ACCENT_SEL_TEXT__;
@@ -820,59 +843,78 @@ QWidget#settingsPage QLabel#hint {
     font-size: 12px;
 }
 
-/* Memory slider: a 4px track with the accent on the filled side, and a white 16px
-   handle with an accent ring. The groove is drawn 16px tall with the line in its middle
-   band because a negative handle margin would be off the spacing ladder; the handle then
-   needs no margin at all. Disabled follows the field treatment above. */
-QWidget#settingsPage QSlider::groove:horizontal {
+/* Sliders: a flat 4px track (accent on the filled side) with a white 16px handle ringed in the accent.
+   Every subcontrol is styled on purpose. A QSlider whose groove / add-page / handle are not in the
+   sheet falls back to the platform's sunken groove, which is the "why is the slider's bar 3D?" the user
+   reported: the add-page (the unfilled side of the settings slider) was still drawn by Fusion, and the
+   wizard's slider had no rule at all, so every slider was native in dark.
+
+   Geometry is the interesting part. The handle moves inside the groove's contents rect, so a 4px groove
+   clips a 16px handle away entirely (measured: no handle pixels at all). The recipe that usually fixes
+   that is `margin: -5px 0` on the handle, but `margin` is the one property the spacing-ladder audit
+   checks and -5px is off the ladder. So the groove is 16px tall - the handle then fits with
+   `margin: 0` - and the 4px line is painted inside it by a gradient with near-hard stops
+   (0.375/0.39 and 0.61/0.625 of 16px). Duplicate stop positions do not survive Qt's parser (measured:
+   they degrade into a full-height ramp), which is why the pairs are 0.015 apart instead of equal.
+   `add-page` stays transparent so the groove's own band shows through on the unfilled side.
+   Disabled follows the field treatment above. */
+QSlider::groove:horizontal {
     height: 16px;
+    border: none;
     background: qlineargradient(
         x1: 0, y1: 0, x2: 0, y2: 1,
-        stop: 0 transparent,
         stop: 0.375 transparent,
-        stop: 0.375 __BORDER_LIST__,
-        stop: 0.625 __BORDER_LIST__,
+        stop: 0.39 __BORDER_LIST__,
+        stop: 0.61 __BORDER_LIST__,
         stop: 0.625 transparent
     );
-    border-radius: 8px;
 }
-QWidget#settingsPage QSlider::sub-page:horizontal {
+QSlider::sub-page:horizontal {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 0, y2: 1,
-        stop: 0 transparent,
         stop: 0.375 transparent,
-        stop: 0.375 __ACCENT_BUTTON__,
-        stop: 0.625 __ACCENT_BUTTON__,
+        stop: 0.39 __ACCENT_BUTTON__,
+        stop: 0.61 __ACCENT_BUTTON__,
         stop: 0.625 transparent
     );
-    border-radius: 8px;
 }
-QWidget#settingsPage QSlider::handle:horizontal {
+QSlider::add-page:horizontal {
+    background: transparent;
+}
+QSlider::handle:horizontal {
     width: 16px;
     height: 16px;
-    margin: 0 0;
+    margin: 0;
     border-radius: 8px;
     background: __BG_LIST__;
     border: 2px solid __ACCENT_BUTTON__;
 }
-QWidget#settingsPage QSlider::handle:horizontal:hover {
+QSlider::handle:horizontal:hover {
     background: __BG_HOVER__;
 }
-QWidget#settingsPage QSlider::sub-page:horizontal:disabled {
+QSlider::groove:horizontal:disabled {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 0, y2: 1,
-        stop: 0 transparent,
         stop: 0.375 transparent,
-        stop: 0.375 __BG_DISABLED_2__,
-        stop: 0.625 __BG_DISABLED_2__,
+        stop: 0.39 __BG_DISABLED_2__,
+        stop: 0.61 __BG_DISABLED_2__,
         stop: 0.625 transparent
     );
 }
-QWidget#settingsPage QSlider::handle:horizontal:disabled {
+QSlider::sub-page:horizontal:disabled {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __BG_DISABLED_2__,
+        stop: 0.61 __BG_DISABLED_2__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::handle:horizontal:disabled {
     border-color: __BORDER_LIST__;
     background: __BG_DISABLED__;
 }
-QSlider#memorySlider[keyboardFocus="true"]:focus::handle:horizontal {
+QSlider[keyboardFocus="true"]:focus::handle:horizontal {
     border-color: __FOCUS_RING__;
     background: __ACCENT_SOFT__;
 }

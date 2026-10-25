@@ -57,6 +57,17 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     selection-color: __FG_SELECTED__;
 }
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover { border-color: __BORDER_HOVER__; }
+
+/* Placeholder text: Qt derives it from the widget's text colour at 50% alpha, and the `color` rule above
+   overwrites the palette's PlaceholderText role on every input, so the painted placeholder belonged to
+   no token in the theme. The Qt 6 property pins it to the same FG_HINT the light sheet uses (the
+   secondary-text colour); the disabled field steps down to FG_DISABLED, one step lighter than the
+   FG_DISABLED_2 its value is painted in, so the two roles stay apart. */
+QLineEdit { placeholder-text-color: __FG_HINT__; }
+QComboBox { placeholder-text-color: __FG_HINT__; }
+/* the editor inside an editable combo is its own QLineEdit */
+QComboBox QLineEdit { placeholder-text-color: __FG_HINT__; }
+QLineEdit:disabled, QComboBox:disabled { placeholder-text-color: __FG_DISABLED__; }
 /* Focus visuals live in one place: the [keyboardFocus="true"] block at the end of this sheet.
    The rules that used to sit here were plain :focus, so clicking an input with the mouse
    painted a ring - the rule is that nothing shows focus unless it came from Tab, the arrow
@@ -391,11 +402,16 @@ QComboBox[keyboardFocus="true"]::down-arrow {
 QComboBox[comboDisabled="true"]::down-arrow {
     image: url(__CHEVRON_DOWN_DISABLED__);
 }
+/* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup) and it fills that
+   window, so a radius here rounds the white card while the window corner stays square - a rounded edge
+   with a grey patch outside it, the broken corner the light sheet documents in full. The window cannot
+   be rounded from QSS, so the list is squared to it here too: one BORDER_LIST outline, square, in both
+   themes. */
 QComboBox QAbstractItemView {
     background: __BG_LIST_2__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_LIST__;
-    border-radius: __RADIUS_LG__;
+    border-radius: 0;
     padding: 4px;
     selection-background-color: __ACCENT_SEL__;
     selection-color: __FG_SELECTED__;
@@ -405,6 +421,74 @@ QComboBox QAbstractItemView::item {
     padding: 8px 12px;
     min-height: 26px;
     border-radius: __RADIUS_SM__;
+}
+
+/* Sliders: flat 4px track, accent on the filled side, 16px round handle. Every subcontrol is styled on
+   purpose: an unstyled groove / add-page / handle falls back to the platform's sunken groove, which is
+   the 3D bar the user reported in the light theme. This sheet had no slider rules at all before, so the
+   settings memory slider and the wizard slider were both native here. The geometry is the light sheet's
+   (16px groove carrying a 4px band, 16px handle at margin 0 - the handle moves inside the groove's
+   contents rect, so a bare 4px groove would clip it, and a negative margin would fail the spacing audit);
+   only the values differ - dark is asked to be flat, not re-tuned. */
+QSlider::groove:horizontal {
+    height: 16px;
+    border: none;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __BORDER_LIST__,
+        stop: 0.61 __BORDER_LIST__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::sub-page:horizontal {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __ACCENT_BUTTON__,
+        stop: 0.61 __ACCENT_BUTTON__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::add-page:horizontal {
+    background: transparent;
+}
+QSlider::handle:horizontal {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    border-radius: 8px;
+    background: __BG_LIST_2__;
+    border: 2px solid __ACCENT_BUTTON__;
+}
+QSlider::handle:horizontal:hover {
+    background: __BG_HOVER__;
+}
+QSlider::groove:horizontal:disabled {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __BG_DISABLED_2__,
+        stop: 0.61 __BG_DISABLED_2__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::sub-page:horizontal:disabled {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __BG_DISABLED_2__,
+        stop: 0.61 __BG_DISABLED_2__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::handle:horizontal:disabled {
+    border-color: __BORDER_LIST__;
+    background: __BG_DISABLED__;
+}
+QSlider[keyboardFocus="true"]:focus::handle:horizontal {
+    border-color: __FOCUS_RING__;
+    background: __ACCENT_SOFT__;
 }
 
 /* ---------- menus and tooltips ---------- */
