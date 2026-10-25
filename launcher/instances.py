@@ -65,6 +65,10 @@ class InstanceSettings(BaseModel):
     memory_gb: float | None = Field(default=None, gt=0, le=64)  # None = follow global
     jvm_args: str = ""  # appended to the global custom JVM args
     game_args: str = ""  # extra arguments for the game itself
+    # Direct-connect address handed to the game as --server; empty = join no server. It is a per-instance
+    # property because the server usually belongs to the instance (a modpack's own server, a test world),
+    # and the launch page no longer keeps a field of its own: it reads this value when it launches.
+    server: str = ""
 
 
 class Instance(BaseModel):
@@ -104,6 +108,7 @@ class ResolvedInstance:
     game_args: str
     mods_dir: Path
     memory_from_instance: bool = False  # True when the instance pins its own heap size
+    server: str = ""  # direct-connect address; empty = no --server on the command line
 
     @property
     def version_id(self) -> str:
@@ -355,6 +360,7 @@ def resolve_instance(
         game_args=(inst.settings.game_args or "").strip(),
         mods_dir=launch_dir / "mods",
         memory_from_instance=from_instance,
+        server=(inst.settings.server or "").strip(),
     )
 
 

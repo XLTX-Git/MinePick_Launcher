@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Launch page: choose a version/account, optionally a server, and launch the game."""
+"""Launch page: choose a version/account and launch the game (direct connect lives per instance)."""
 
 from __future__ import annotations
 
@@ -26,11 +26,10 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QLocale, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QPalette
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -43,7 +42,7 @@ from gui.accessibility_launch import (
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
-from gui.paint_utils import avatar_pixmap, block_pixmap, chevron_pixmap
+from gui.paint_utils import avatar_pixmap, block_pixmap
 from gui.widgets import (
     disable_keeping_focus,
     set_app_status,
@@ -197,17 +196,14 @@ class LaunchPage(QWidget):
         self.version_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self.version_meta = QLabel("")
         self.version_meta.setObjectName("pageSubtitle")
-        self.version_hint = QLabel(tr("launch.instances.hint"))
-        self.version_hint.setObjectName("launchHint")
-        self.version_hint.setWordWrap(True)
+        # A "switch instances?" line used to sit under the subtitle. The instance buttons below already
+        # say the same thing, so the key stays in the tables but the page no longer draws it.
 
         version_text = QVBoxLayout()
         version_text.setContentsMargins(0, 0, 0, 0)
         version_text.setSpacing(4)
         version_text.addWidget(self.version_label)
         version_text.addWidget(self.version_meta)
-        version_text.addSpacing(4)
-        version_text.addWidget(self.version_hint)
         version_text.addStretch(1)
 
         version_row = QHBoxLayout()
@@ -264,50 +260,10 @@ class LaunchPage(QWidget):
         secondary_row.addWidget(self.select_instance_button, 1)
         secondary_row.addWidget(self.instance_settings_button, 1)
 
-        # ---- advanced: the direct-server field, collapsed by default ----
-        self.advanced_button = QPushButton(tr("launch.advanced"))
-        self.advanced_button.setObjectName("secondaryButton")
-        # A dynamic property, not a new object name: #secondaryButton already owns the focus ring in
-        # both sheets, so the keyboard cue keeps working without touching the dark sheet.
-        self.advanced_button.setProperty("disclosure", True)
-        self.advanced_button.setCheckable(True)
-        self.advanced_button.setAccessibleName(tr("launch.advanced"))
-        self.advanced_button.setIcon(QIcon(chevron_pixmap(False)))
-        self.advanced_button.setIconSize(QSize(10, 10))
-        self.advanced_button.setFixedHeight(32)
-        self.advanced_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-
-        self.server_edit = QLineEdit()
-        self.server_edit.setAccessibleName(tr("launch.server"))  # WCAG 4.1.2
-        self.server_edit.setPlaceholderText(tr("launch.server.placeholder"))
-        self.server_edit.setFixedHeight(40)
-        server_label = QLabel(tr("launch.server"))
-        server_label.setObjectName("fieldLabel")
-        # PCL's form metric: a fixed label column, left aligned, with every field starting on the
-        # same vertical line. The row itself is 56px tall.
-        server_label.setFixedWidth(96)
-        server_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        server_label.setWordWrap(True)
-        server_label.setBuddy(self.server_edit)
-
-        server_row = QHBoxLayout()
-        server_row.setContentsMargins(0, 0, 0, 0)
-        server_row.setSpacing(12)
-        server_row.addWidget(server_label, 0)
-        server_row.addWidget(self.server_edit, 1)
-        server_row_widget = QWidget()
-        server_row_widget.setMinimumHeight(56)
-        server_row_widget.setLayout(server_row)
-
-        self.advanced_panel = QWidget()
-        self.advanced_panel.setObjectName("advancedPanel")
-        panel_layout = QVBoxLayout(self.advanced_panel)
-        panel_layout.setContentsMargins(0, 8, 0, 0)
-        panel_layout.setSpacing(8)
-        panel_layout.addWidget(server_row_widget)
-        self.advanced_panel.setVisible(False)
+        # The old "Advanced" block held the direct-server field. It was the only way to reach --server,
+        # so the field moved to the per-instance settings (instances page, settings tab) instead of being
+        # dropped: the value is instance data, not launch-page state, and the launch page still reads it
+        # through resolve_instance().server when it builds the command line. The keys stay in the tables.
 
         # ---- quiet bottom block: counts only when they exist, then the last launch ----
         self.stats_label = QLabel("")
@@ -333,9 +289,6 @@ class LaunchPage(QWidget):
         panel.addWidget(self.launch_button)
         panel.addSpacing(12)
         panel.addLayout(secondary_row)
-        panel.addSpacing(16)
-        panel.addWidget(self.advanced_button, 0, Qt.AlignmentFlag.AlignLeft)
-        panel.addWidget(self.advanced_panel)
         panel.addStretch(1)
         panel.addWidget(self.stats_label)
         panel.addSpacing(4)
@@ -352,7 +305,6 @@ class LaunchPage(QWidget):
         self.account_button.clicked.connect(self.account_requested.emit)
         self.select_instance_button.clicked.connect(self._request_instance)
         self.instance_settings_button.clicked.connect(self._request_instance_settings)
-        self.advanced_button.toggled.connect(self._set_advanced_visible)
         theme.register_self_styling(self)
 
         self.refresh_config()
@@ -362,7 +314,6 @@ class LaunchPage(QWidget):
     def on_theme_applied(self) -> None:
         """Re-draw the accent-derived icon and avatar after a theme/accent swap."""
         self.version_icon.setPixmap(block_pixmap(30))
-        self.advanced_button.setIcon(QIcon(chevron_pixmap(self.advanced_button.isChecked())))
         self.refresh_account()
 
     # ---- version state: the launch page shows it, the paths choose it ----
@@ -415,11 +366,6 @@ class LaunchPage(QWidget):
             self.avatar_label.clear()
         else:
             self.avatar_label.setPixmap(avatar)
-
-    def _set_advanced_visible(self, expanded: bool) -> None:
-        """Show/hide the direct-server field and flip the toggle's chevron."""
-        self.advanced_panel.setVisible(expanded)
-        self.advanced_button.setIcon(QIcon(chevron_pixmap(expanded)))
 
     def _refresh_version_block(self) -> None:
         """Update the version number, the meta line, the counts and the last-launch line."""
@@ -632,7 +578,9 @@ class LaunchPage(QWidget):
 
     def _launch_now(self, version_id: str, cfg, game_dir: Path) -> None:
         """The actual launch worker, reached only through the single pre-launch accessibility gate."""
-        server = self.server_edit.text().strip() or None
+        # Direct connect is per instance now (instances page, settings tab): the launch page shows no
+        # field but still passes the instance's address to the game, so a configured server keeps being
+        # joined at launch time. It is read from the same resolved instance as memory/java, below.
         # Memory is a setting (settings page) or a per-instance override (instance settings); this
         # page no longer keeps a third copy, so the ordinary case reads the launcher setting.
         memory_gb = cfg.memory_gb
@@ -669,7 +617,7 @@ class LaunchPage(QWidget):
                     language=cfg.game_language or None,
                     jvm_args=resolved.jvm_args or (cfg.jvm_args or None),
                     game_args=resolved.game_args,
-                    server=server,
+                    server=resolved.server or None,
                 )
                 return ("ok", prepared, resolved)
             except JavaMissingError as exc:

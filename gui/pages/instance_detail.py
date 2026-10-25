@@ -712,12 +712,26 @@ class InstanceDetail(QWidget):
         self.game_args_edit = QLineEdit()
         self.game_args_edit.setPlaceholderText(tr("instances.detail.settings.game_args"))
         self.game_args_edit.setAccessibleName(tr("instances.detail.settings.game_args"))
+        # Direct connect is the only way to hand the game a --server, and it is per instance: the launch
+        # page no longer shows a field (it read as an advanced duplicate of a normal launch), so the value
+        # lives here with the other per-instance settings and the launch page reads it when it launches.
+        self.server_edit = QLineEdit()
+        self.server_edit.setPlaceholderText(tr("launch.server.placeholder"))
+        self.server_edit.setAccessibleName(tr("launch.server"))
 
         form.addRow(tr("instances.detail.row.isolation"), self.isolation_combo)
         form.addRow(tr("instances.detail.row.java"), java_box)
         form.addRow(
             tr("instances.detail.row.memory") + tr("unit.gb.label"), memory_box
         )
+        # Direct connect: the row label is a plain label, not an ElidedLabel. The form measures its label
+        # column before the stylesheet's 13px font reaches the widget (the fallback font measures this
+        # string ~40% narrower), so an eliding label either collapsed to nothing or, with a minimum width,
+        # overlapped its own field. _fill_settings re-measures this one in the painted font and lets the
+        # form re-run its column sizing, which keeps the label beside the field instead of under it.
+        self.server_label = QLabel(tr("launch.server"))
+        form.addRow(self.server_label, self.server_edit)
+        self.settings_form = form
         # Form row labels are plain labels, so these two elide with a tooltip: theirs are the longest
         # strings in the form ("JVM arguments (empty = follow global)") and they set a hard floor on
         # the detail panel's minimum width.
@@ -921,10 +935,28 @@ class InstanceDetail(QWidget):
             self.memory_spin.setValue(min(max(float(memory or 1.0), 1.0), 64.0))
             self.jvm_args_edit.setText(settings.jvm_args)
             self.game_args_edit.setText(settings.game_args)
+            self.server_edit.setText(settings.server)
         finally:
             self._filling = False
         self._on_java_follow_toggled(self.java_follow_check.isChecked())
         self._on_memory_follow_toggled(self.memory_follow_check.isChecked())
+        self._sync_server_label_width()
+
+    def _sync_server_label_width(self) -> None:
+        """Size the direct-connect label in the font that is actually painted.
+
+        ``_build_settings`` explains why: QFormLayout measured this label before the stylesheet's 13px UI
+        font reached the widget, and the fallback font measures the string about 40% narrower, so the
+        column it reserved clipped the text. ``ensurePolished`` puts that font in force before measuring
+        (it is also what makes this work when the page is filled before it is first shown), and
+        invalidating the form once makes the reserved column and the painted text agree. Idempotent: the
+        width is only written when it changes, so a reload does not churn the layout.
+        """
+        self.server_label.ensurePolished()
+        width = self.server_label.fontMetrics().horizontalAdvance(self.server_label.text()) + 2
+        if self.server_label.minimumWidth() != width:
+            self.server_label.setMinimumWidth(width)
+            self.settings_form.invalidate()
 
     def _on_java_follow_toggled(self, follow: bool) -> None:
         self.java_edit.setEnabled(not follow)
@@ -1179,6 +1211,7 @@ class InstanceDetail(QWidget):
                 ),
                 jvm_args=self.jvm_args_edit.text().strip(),
                 game_args=self.game_args_edit.text().strip(),
+                server=self.server_edit.text().strip(),
             )
             if self.instance is not None and isolated != self.instance.isolated:
                 update_instance(instance_id, game_dir=self.game_dir, isolated=isolated)

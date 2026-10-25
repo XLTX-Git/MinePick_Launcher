@@ -339,6 +339,70 @@ def test_e2e_launch_uses_configured_jvm_args(app, monkeypatch, ws_tmp):
                 app.processEvents()
 
 
+def test_e2e_launch_uses_the_instances_direct_connect_server(app, monkeypatch, ws_tmp):
+    """Direct connect is instance data now: the launch page has no field, but must still pass it on.
+
+    The field used to live behind an "advanced" disclosure on the launch page. It moved to the
+    per-instance settings (instances page) because the server belongs to the instance, and the launch
+    page has to keep honouring it - losing it silently would be the one regression that matters (the
+    feature would still be configured, just never used). ``prepare_launch`` is the seam: whatever lands
+    in its ``server`` argument is what becomes ``--server`` on the command line.
+    """
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data5b"))
+    _cfg, _p = config_mod.load()
+    _cfg.offline_unlocked = True
+    game = _install_launch_instance(ws_tmp, _cfg, _p)
+
+    from launcher.instances import resolve_instance, set_instance_settings
+
+    set_instance_settings("1.20.1", game_dir=game, server="mc.example.com")
+    assert resolve_instance("1.20.1", _cfg, game).server == "mc.example.com"
+
+    from launcher.accessibility import AccessibilityState, TriggerSource, save_state
+
+    assert save_state("1.20.1", AccessibilityState.ANSWERED_OFF)
+
+    import gui.pages.launch_page as launch_page_mod
+    from launcher.launch import JavaMissingError
+
+    seen: dict = {}
+
+    def fake_prepare(*args, **kwargs):
+        seen.clear()
+        seen.update(kwargs)
+        raise JavaMissingError(8)
+
+    monkeypatch.setattr(launch_page_mod, "prepare_launch", fake_prepare)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.No),
+    )
+
+    from gui.main_window import MainWindow
+
+    window = None
+    with _HangGuard():
+        try:
+            window = MainWindow()
+            page = window.pages["launch"]
+            page.set_version_id("1.20.1")
+            page.launch(TriggerSource.KEYBOARD)
+            app.processEvents()
+            assert _wait_until(app, lambda: "已取消" in window.status_label.text())
+            assert seen.get("server") == "mc.example.com"
+
+            # An empty value means "join no server", and that is how the instance clears it.
+            set_instance_settings("1.20.1", game_dir=game, server="")
+            page.launch(TriggerSource.KEYBOARD)
+            app.processEvents()
+            assert _wait_until(app, lambda: seen.get("server") is None)
+        finally:
+            if window is not None:
+                window.close()
+                app.processEvents()
+
+
 def test_e2e_crash_viewer_lists_reports(app, ws_tmp):
     game = ws_tmp / "mc2"
     reports = game / "crash-reports"

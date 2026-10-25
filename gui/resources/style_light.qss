@@ -1027,10 +1027,6 @@ QWidget#launchPage QLabel#pageSubtitle {
     color: __FG_LAUNCH_HINT__;
     font-size: 12px;
 }
-QWidget#launchPage QLabel#launchHint {
-    color: __FG_LAUNCH_HINT__;
-    font-size: 12px;
-}
 QWidget#launchPage QLabel#accountName {
     color: __FG_LAUNCH__;
     font-size: 14px;

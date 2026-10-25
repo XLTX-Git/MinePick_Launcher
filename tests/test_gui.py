@@ -416,8 +416,13 @@ def test_batch1_widgets_exist(app, monkeypatch, ws_tmp):
     # Memory moved to the settings page and the per-instance settings; the launch page no longer
     # keeps a third copy of the value (it reads cfg.memory_gb when it launches).
     assert not hasattr(launch, "memory_spin")
-    assert launch.server_edit is not None
-    assert launch.advanced_panel.isVisibleTo(launch) is False  # the server field starts collapsed
+    # Direct connect moved to the per-instance settings too: the old "Advanced" disclosure and its
+    # field are gone from the launch page (the instance buttons above already lead there), while the
+    # launch path still reads the instance's address (tests/test_e2e.py drives that).
+    assert not hasattr(launch, "server_edit")
+    assert not hasattr(launch, "advanced_button")
+    assert not hasattr(launch, "advanced_panel")
+    assert not hasattr(launch, "version_hint")  # the "switch instances" line under the subtitle
     # trimmed in 0.3.0: duplicated settings or details with a sane default
     assert not hasattr(launch, "jvm_args_edit")
     assert not hasattr(launch, "language_combo")
@@ -439,7 +444,7 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
 
     window = MainWindow()
     launch = window.pages["launch"]
-    assert launch.server_edit is not None
+    assert not hasattr(launch, "server_edit")  # direct connect lives in the instance settings now
     assert not hasattr(launch, "server_port_spin")  # the port defaults to 25565 now
     assert not hasattr(launch, "auto_close_check")  # moved to the settings page
     versions = window.pages["versions"]
@@ -1658,6 +1663,7 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
         detail.memory_spin.setValue(6.0)
         detail.jvm_args_edit.setText("-XX:+UseG1GC")
         detail.game_args_edit.setText("--width 1280")
+        detail.server_edit.setText("mc.example.com")
         detail.settings_save_button.click()
         app.processEvents()
 
@@ -1666,6 +1672,7 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
         assert stored.settings.memory_gb == 6.0
         assert stored.settings.jvm_args == "-XX:+UseG1GC"
         assert stored.settings.game_args == "--width 1280"
+        assert stored.settings.server == "mc.example.com"
 
         # a full page reload reads the overrides back into the widgets
         page.refresh(select="1.20.1")
@@ -1677,6 +1684,12 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
         assert page.detail.memory_spin.value() == 6.0
         assert page.detail.jvm_args_edit.text() == "-XX:+UseG1GC"
         assert page.detail.game_args_edit.text() == "--width 1280"
+        assert page.detail.server_edit.text() == "mc.example.com"
+        # clearing the field is the way back to "join no server"
+        page.detail.server_edit.setText("")
+        page.detail.settings_save_button.click()
+        app.processEvents()
+        assert get_instance("1.20.1", game).settings.server == ""
         # the overview reports the instance's own memory, still as a read-only value with its unit
         assert "6" in page.detail.overview_values["memory"].text()
         assert i18n.tr("unit.gb") in page.detail.overview_values["memory"].text()
