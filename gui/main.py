@@ -106,13 +106,16 @@ def create_app(argv: list[str] | None = None) -> QApplication:
 
     apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
     # The wheel only scrolls page content; combo/spin/tab-bar wheel input is blocked
-    from gui.widgets import KeyboardFocusTracker, WheelBlocker
+    from gui.widgets import ComboArrowState, KeyboardFocusTracker, WheelBlocker
 
     app._wheel_blocker = WheelBlocker(app)  # keep a reference so the filter stays alive
     app.installEventFilter(app._wheel_blocker)
     # Keyboard users get a visible focus indicator; mouse clicks stay flat
     app._focus_tracker = KeyboardFocusTracker(app)
     app.installEventFilter(app._focus_tracker)
+    # Hover/disabled states for the combo chevron (subcontrol pseudo-classes do not work in Qt 6.11)
+    app._combo_arrow_state = ComboArrowState(app)
+    app.installEventFilter(app._combo_arrow_state)
     # Tooltips the pointer can travel into, that stay until dismissed (WCAG 1.4.13)
     from gui.tooltip import TooltipController
 

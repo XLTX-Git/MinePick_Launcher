@@ -1129,3 +1129,48 @@ class NumericTableItem(QTableWidgetItem):
         if isinstance(other, NumericTableItem):
             return self._value < other._value
         return super().__lt__(other)
+
+
+class ComboArrowState(QObject):
+    """Mirrors hover/disabled onto combo properties the stylesheet can select.
+
+    Qt 6.11 does not evaluate ``:hover`` / ``:disabled`` written in front of the ``::down-arrow``
+    subcontrol: a ``QComboBox:disabled::down-arrow`` rule paints its image on *every* combo (it is not
+    state-filtered) and a ``:hover`` rule never turns on. Attribute selectors are evaluated at polish
+    time, so this filter keeps two dynamic properties on each combo and the sheet selects those. The
+    keyboard-focus state arrives the same way through ``KeyboardFocusTracker``'s ``keyboardFocus``.
+
+    Passive: it never consumes an event, and a failing restyle is swallowed the way every event filter
+    in this module swallows one - an exception here would escape into Qt's dispatch.
+    """
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+
+    @staticmethod
+    def _set(widget: QComboBox, name: str, value: bool) -> None:
+        try:
+            if bool(widget.property(name)) == value:
+                return
+            widget.setProperty(name, value)
+            style = widget.style()
+            if style is not None:
+                style.unpolish(widget)
+                style.polish(widget)
+        except Exception:  # noqa: BLE001 - see the class docstring
+            return
+
+    def eventFilter(self, obj, event) -> bool:
+        if not isinstance(obj, QComboBox):
+            return False
+        kind = event.type()
+        if kind == QEvent.Type.Show:
+            self._set(obj, "comboDisabled", not obj.isEnabled())
+            self._set(obj, "comboHover", obj.underMouse())
+        elif kind == QEvent.Type.EnabledChange:
+            self._set(obj, "comboDisabled", not obj.isEnabled())
+        elif kind == QEvent.Type.Enter:
+            self._set(obj, "comboHover", True)
+        elif kind == QEvent.Type.Leave:
+            self._set(obj, "comboHover", False)
+        return False

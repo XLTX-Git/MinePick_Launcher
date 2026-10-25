@@ -374,11 +374,22 @@ QComboBox::drop-down {
     border: none;
     background: transparent;
 }
+/* Lucide chevron-down at 16px, no box: one SVG per state because a QSS image cannot be tinted.
+   The focus state is gated on [keyboardFocus="true"], like every other focus cue in this sheet. */
 QComboBox::down-arrow {
-    image: url(__DOWN_ARROW__);
-    width: 10px;
-    height: 6px;
+    image: url(__CHEVRON_DOWN__);
+    width: 16px;
+    height: 16px;
     margin-right: 8px;
+}
+/* The state comes from a dynamic property, not :hover / :disabled: Qt 6.11 applies those two in front
+   of a subcontrol to every combo (see gui/widgets.py:ComboArrowState for the measured behaviour). */
+QComboBox[comboHover="true"]::down-arrow,
+QComboBox[keyboardFocus="true"]::down-arrow {
+    image: url(__CHEVRON_DOWN_ACTIVE__);
+}
+QComboBox[comboDisabled="true"]::down-arrow {
+    image: url(__CHEVRON_DOWN_DISABLED__);
 }
 QComboBox QAbstractItemView {
     background: __BG_LIST_2__;
@@ -424,40 +435,20 @@ QWidget#tooltipLayer {
     border-radius: __RADIUS_SM__;
 }
 
-/* ---------- spin box buttons: flat ---------- */
+/* ---------- spin box: no up/down buttons ---------- */
 
+/* Hide the two sub-controls but keep QSpinBox: typing and the Up/Down keys still change the value
+   (the keyboard path is the widget's own, not the buttons'), and NoWheelSpinBox keeps the wheel
+   behaviour unchanged. The 12px right padding is the room the text needs without the buttons. */
+QSpinBox, QDoubleSpinBox {
+    padding-right: 12px;
+}
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-    background: transparent;
+    width: 0;
+    height: 0;
     border: none;
-    width: 20px;
-}
-QSpinBox::up-button:hover, QSpinBox::down-button:hover,
-QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
-    background: __BG_SEPARATOR__;
-}
-QSpinBox::up-button, QDoubleSpinBox::up-button {
-    subcontrol-origin: border;
-    subcontrol-position: top right;
-    /* the image belongs on the arrow, not on the button: on the button Qt stretches an 8x5 bitmap to
-       fill the whole 20px-wide control, which is what made the arrows look the wrong size */
-    border-top-right-radius: __RADIUS_SM__;
-}
-QSpinBox::down-button, QDoubleSpinBox::down-button {
-    subcontrol-origin: border;
-    subcontrol-position: bottom right;
-    border-bottom-right-radius: __RADIUS_SM__;
-}
-
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-    image: url(__SPIN_UP__);
-    width: 8px;
-    height: 5px;
-}
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-    image: url(__SPIN_DOWN__);
-    width: 8px;
-    height: 5px;
+    background: transparent;
 }
 
 

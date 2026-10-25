@@ -641,7 +641,7 @@ def _width_probe() -> int:
 
 PLACEHOLDER = re.compile(r"__([A-Z0-9_]+)__")
 # substituted by apply_theme(), not palette entries
-NON_COLOUR_PLACEHOLDERS = {"FONT", "CHECK", "DOWN_ARROW", "SPIN_UP", "SPIN_DOWN", "RADIUS_XS", "RADIUS_SM", "RADIUS_LG"}
+NON_COLOUR_PLACEHOLDERS = {"FONT", "CHECK", "CHEVRON_DOWN", "CHEVRON_DOWN_ACTIVE", "CHEVRON_DOWN_DISABLED", "RADIUS_XS", "RADIUS_SM", "RADIUS_LG"}
 
 def check_token_usage() -> int:
     """Every colour token must be reachable from a rule in the sheets.

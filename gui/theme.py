@@ -353,20 +353,6 @@ def device_scale(app: QApplication) -> int:
     return max(1, min(3, round(ratio)))
 
 
-def glyph_path(name: str, scale: int) -> str:
-    """Absolute path of the crispest glyph for this screen.
-
-    The small geometric glyphs (combo arrow, spin arrows, checkbox tick) ship as @2x/@3x bitmaps that
-    tools/gen_ui_assets.py *draws* at that size. The stylesheet keeps the logical box, so on a 200%
-    screen the @2x bitmap maps 1:1 onto the device grid instead of a 10x6 bitmap being stretched.
-    """
-    if scale > 1:
-        candidate = paths.resource_path(f"gui/resources/{name}@{scale}x.png")
-        if candidate.exists():
-            return candidate.as_posix()
-    return paths.resource_path(f"gui/resources/{name}.png").as_posix()
-
-
 _applying = False
 _self_styling: weakref.WeakSet[object] = weakref.WeakSet()
 
@@ -422,14 +408,24 @@ def apply_theme(
     if not path.exists():
         return
     text = path.read_text(encoding="utf-8")
-    # url() in QSS cannot reliably resolve relative paths: replace with the image's absolute path when
-    # loading, choosing the bitmap that matches this screen's scaling (see glyph_path).
-    suffix = "_light" if theme == "light" else ""
-    # Rolled back at the user's request: pick the plain 1x bitmaps again. The @2x/@3x variants and their
-    # generator stay in the tree (tests/test_ui_assets.py still guards them), they are simply unused.
-    text = text.replace("__DOWN_ARROW__", paths.resource_path(f"gui/resources/down_arrow{suffix}.png").as_posix())
-    text = text.replace("__SPIN_UP__", paths.resource_path(f"gui/resources/spin_up{suffix}.png").as_posix())
-    text = text.replace("__SPIN_DOWN__", paths.resource_path(f"gui/resources/spin_down{suffix}.png").as_posix())
+    # url() in QSS cannot reliably resolve relative paths: replace the icon placeholders with the
+    # absolute path of the file that matches this theme. The combo chevron ships as one coloured SVG
+    # per state (normal / hover + keyboard focus / disabled) because a QSS image cannot be tinted; the
+    # active icon uses the default accent, since an SVG cannot follow the user's accent colour.
+    suffix = "-light" if theme == "light" else ""
+    icons = "gui/resources/icons/ui"
+    text = text.replace(
+        "__CHEVRON_DOWN_ACTIVE__",
+        paths.resource_path(f"{icons}/chevron-down{suffix}-active.svg").as_posix(),
+    )
+    text = text.replace(
+        "__CHEVRON_DOWN_DISABLED__",
+        paths.resource_path(f"{icons}/chevron-down{suffix}-disabled.svg").as_posix(),
+    )
+    text = text.replace(
+        "__CHEVRON_DOWN__",
+        paths.resource_path(f"{icons}/chevron-down{suffix}.svg").as_posix(),
+    )
     text = text.replace("__CHECK__", paths.resource_path("gui/resources/check.png").as_posix())
     text = text.replace("__FONT__", font_stack(font))
     palette = theme_palette(theme, accent)

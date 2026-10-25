@@ -405,6 +405,62 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
     window.close()
 
 
+def test_spin_boxes_keep_keyboard_steps_without_up_down_buttons(app):
+    """The sheet hides the up/down sub-controls; the widget's own key handling must survive."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QSpinBox
+
+    from gui import theme
+
+    theme.apply_theme("light", None, None, "default")
+    spin = QSpinBox()
+    spin.setRange(1, 64)
+    spin.setValue(4)
+    spin.show()
+    QApplication.processEvents()
+    spin.setFocus()
+    QApplication.processEvents()
+    try:
+        QTest.keyClick(spin, Qt.Key.Key_Up)
+        assert spin.value() == 5, "Up no longer steps the value once the buttons are hidden"
+        QTest.keyClick(spin, Qt.Key.Key_Down)
+        assert spin.value() == 4, "Down no longer steps the value once the buttons are hidden"
+        assert spin.prefix() == "" and spin.text() == "4"
+    finally:
+        spin.close()
+        QApplication.processEvents()
+
+
+def test_combo_chevron_state_follows_hover_and_disabled(app):
+    """The chevron's hover/disabled state comes from ComboArrowState (QSS cannot select it)."""
+    from PySide6.QtCore import QEvent
+
+    from gui.widgets import ComboArrowState
+
+    tracker = ComboArrowState(app)
+    app.installEventFilter(tracker)
+    combo = QComboBox()
+    combo.show()
+    QApplication.processEvents()
+    try:
+        assert not combo.property("comboDisabled")
+        combo.setEnabled(False)
+        QApplication.processEvents()
+        assert combo.property("comboDisabled") is True
+        combo.setEnabled(True)
+        QApplication.processEvents()
+        assert combo.property("comboDisabled") is False
+        QApplication.sendEvent(combo, QEvent(QEvent.Type.Enter))
+        assert combo.property("comboHover") is True
+        QApplication.sendEvent(combo, QEvent(QEvent.Type.Leave))
+        assert combo.property("comboHover") is False
+    finally:
+        app.removeEventFilter(tracker)
+        combo.close()
+        QApplication.processEvents()
+
+
 def test_instance_name_via_userrole(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data10"))
     import json
