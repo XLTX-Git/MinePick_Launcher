@@ -203,8 +203,15 @@ class _InstanceCard(QPushButton):
             nav_icons.nav_icon("instances", tokens["ACCENT"], 22).pixmap(22, 22)
         )
         icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # The card button is the one focus stop; its text is painted by child labels, not controls.
+        # ElidedLabel enables text selection, which also gives it ClickFocus - so each name/meta line
+        # entered the focus chain as a second stop with no :focus rule (the keyboard walkthrough
+        # flagged it). Mouse events already pass through to the card (WA_TransparentForMouseEvents),
+        # so selecting this text was unreachable anyway. Turn focus off on exactly these two card
+        # labels; keep the class default for the detail page's path/ID labels, which stay selectable.
         name = ElidedLabel(instance.name)
         name.setObjectName("instanceCardName")
+        name.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         top.addWidget(icon)
         top.addWidget(name, 1)
@@ -212,6 +219,7 @@ class _InstanceCard(QPushButton):
 
         meta_label = ElidedLabel(meta)
         meta_label.setObjectName("instanceCardMeta")
+        meta_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         meta_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(meta_label)
         layout.addStretch(1)
