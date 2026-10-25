@@ -646,9 +646,12 @@ QScrollArea#overlayScroll { background: transparent; }
 
 /* ---------- page header ---------- */
 
-QWidget#pageHeader { background: transparent; }
-QLabel#pageTitle { font-size: 18px; font-weight: 700; color: __FG_PAGE_TITLE__; }
-QLabel#pageSubtitle { color: __FG_HINT__; font-size: 11px; }
+/* One header for every page: a 20px near-black title over a 12px hint line, no surface of its own.
+   The 16px gap to the first block below is owned by gui/widgets.add_page_header(). The second-level
+   instance detail header shares the rule through its own object names. */
+QWidget#pageHeader { background: transparent; border: none; }
+QLabel#pageTitle, QLabel#instanceDetailTitle { color: __FG_PAGE_TITLE__; font-size: 20px; font-weight: 600; }
+QLabel#pageSubtitle, QLabel#instanceDetailHint { color: __FG_HINT__; font-size: 12px; }
 
 /* ---------- sidebar brand ---------- */
 

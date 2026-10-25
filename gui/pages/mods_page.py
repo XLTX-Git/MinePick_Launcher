@@ -59,9 +59,9 @@ from gui import i18n, paint_utils, theme
 from gui.errors import show_fatal
 from gui.widgets import (
     EmptyState,
+    add_page_header,
     add_search_icon,
     apply_no_focus_outline,
-    build_page_header,
     disable_keeping_focus,
     set_app_status,
     style_page_layout,
@@ -1440,7 +1440,7 @@ class ResourcesPage(QWidget):
 
         layout = QVBoxLayout(self)
         style_page_layout(layout)
-        layout.addWidget(build_page_header(tr("nav.mods"), tr("page.mods.desc")))
+        add_page_header(layout, tr("nav.mods"), tr("page.mods.desc"))
         chip_row = QHBoxLayout()
         chip_row.setSpacing(8)
         for chip in self.chips:

@@ -37,8 +37,8 @@ from gui.view_state import remember_column_widths
 from gui.widgets import (
     EmptyState,
     NumericTableItem,
+    add_page_header,
     apply_no_focus_outline,
-    build_page_header,
     disable_keeping_focus,
     set_app_status,
     style_page_layout,
@@ -128,7 +128,7 @@ class JavaPage(QWidget):
 
         layout = QVBoxLayout(self)
         style_page_layout(layout)
-        layout.addWidget(build_page_header(tr("nav.java"), tr("page.java.desc")))
+        add_page_header(layout, tr("nav.java"), tr("page.java.desc"))
         layout.addWidget(QLabel(tr("java.managed.label")))
         layout.addWidget(self.managed_table, 1)
         remember_column_widths(self.managed_table, "java_managed")

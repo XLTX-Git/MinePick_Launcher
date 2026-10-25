@@ -585,9 +585,12 @@ QScrollArea#overlayScroll { background: transparent; }
 
 /* ---------- page header ---------- */
 
-QWidget#pageHeader { background: transparent; }
-QLabel#pageTitle { font-size: 18px; font-weight: 700; color: __FG_PAGE_TITLE__; }
-QLabel#pageSubtitle { color: __FG_HINT__; font-size: 11px; }
+/* One header for every page: a 20px near-black title over a 12px hint line, no surface of its own.
+   The 16px gap to the first block below is owned by gui/widgets.add_page_header(). The second-level
+   instance detail header shares the rule through its own object names. */
+QWidget#pageHeader { background: transparent; border: none; }
+QLabel#pageTitle, QLabel#instanceDetailTitle { color: __FG_PAGE_TITLE__; font-size: 20px; font-weight: 600; }
+QLabel#pageSubtitle, QLabel#instanceDetailHint { color: __FG_HINT__; font-size: 12px; }
 
 /* ---------- sidebar brand ---------- */
 
@@ -734,35 +737,20 @@ QLabel#wizardBullet { color: __FG_OPTION__; font-size: 13px; }
 QDoubleSpinBox#wizardMemory { min-height: 30px; }
 
 /* ========================================================================== */
-/* Settings page mock-up (light only): PCL's three colour layers.             */
+/* Settings page mock-up (light only): PCL's paper + one white card.          */
 /*                                                                            */
 /* Everything here is scoped to QWidget#settingsPage / #settingsCard, so no   */
-/* other page moves. It deliberately adds no widget and no image: the blue     */
-/* banner is the existing pageHeader, the white layer is the existing scroll   */
-/* content, and the accent is the same user-chosen __ACCENT_BUTTON__ the rest  */
-/* of the app already uses.                                                   */
+/* other page moves. It deliberately adds no widget and no image: the white    */
+/* layer is the existing scroll content, and the accent is the same            */
+/* user-chosen __ACCENT_BUTTON__ the rest of the app already uses.             */
+/* The page header is the shared transparent one - it used to be a solid       */
+/* accent banner here, which is exactly the inconsistency this page must not   */
+/* reintroduce.                                                               */
 /* ========================================================================== */
 
 /* Layer 1 - the page paper behind the page, the same token every other page uses. */
 QWidget#settingsPage {
     background: __BG_PAGE__;
-}
-
-/* Layer 3 - the solid accent banner that replaces the old flat title strip. */
-QWidget#settingsPage QWidget#pageHeader {
-    background: __ACCENT_BUTTON__;
-    border: none;
-    border-radius: __RADIUS_LG__;
-}
-QWidget#settingsPage QWidget#pageHeader QLabel#pageTitle {
-    color: __FG_SELECTED__;
-    font-size: 19px;
-    font-weight: 700;
-}
-QWidget#settingsPage QWidget#pageHeader QLabel#pageSubtitle {
-    color: __FG_SELECTED__;
-    font-size: 12px;
-    font-weight: 500;
 }
 
 /* Layer 2 - one white card, no shadow and no second outline. */
@@ -1017,16 +1005,9 @@ QWidget#launchPage QWidget#launchPanel {
     border-bottom-right-radius: 10px;
 }
 
-/* The hero number is the page title: 24px, near-black, never a control. */
-QWidget#launchPage QLabel#pageTitle {
-    color: __FG_LAUNCH__;
-    font-size: 24px;
-    font-weight: 700;
-}
-QWidget#launchPage QLabel#pageSubtitle {
-    color: __FG_LAUNCH_HINT__;
-    font-size: 12px;
-}
+/* The version number doubles as this page's title, so it follows the shared pageTitle rule
+   (20px, near-black, 600) instead of inventing a second hero size. The panel is white, and the
+   shared header paints no surface, so nothing else moves. */
 QWidget#launchPage QLabel#accountName {
     color: __FG_LAUNCH__;
     font-size: 14px;

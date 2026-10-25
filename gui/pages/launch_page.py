@@ -44,6 +44,7 @@ from gui.accessibility_launch import (
 from gui.errors import show_fatal
 from gui.paint_utils import avatar_pixmap, block_pixmap
 from gui.widgets import (
+    PAGE_HEADER_GAP,
     disable_keeping_focus,
     set_app_status,
 )
@@ -283,7 +284,9 @@ class LaunchPage(QWidget):
         panel.setContentsMargins(20, 20, 20, 20)
         panel.setSpacing(0)
         panel.addWidget(self.version_block)
-        panel.addSpacing(24)
+        # The version block is this page's header (it carries pageTitle/pageSubtitle), so the gap to
+        # the account row below it is the same PAGE_HEADER_GAP every other page uses.
+        panel.addSpacing(PAGE_HEADER_GAP)
         panel.addLayout(account_row)
         panel.addStretch(1)
         panel.addWidget(self.launch_button)

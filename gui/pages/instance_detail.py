@@ -64,6 +64,7 @@ from gui.accessibility_launch import (
 from gui.errors import show_fatal
 from gui.view_state import remember_column_widths
 from gui.widgets import (
+    PAGE_HEADER_GAP,
     ElidedLabel,
     EmptyState,
     NoWheelDoubleSpinBox,
@@ -288,7 +289,9 @@ class InstanceDetail(QWidget):
         content.setObjectName("instanceContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(8)
+        # Exactly PAGE_HEADER_GAP below the header, like every top-level page: this layout holds only
+        # the header and the section stack, so its spacing is that one distance.
+        content_layout.setSpacing(PAGE_HEADER_GAP)
         content_layout.addWidget(self._build_header())
 
         self.stack = QStackedWidget()
@@ -457,14 +460,22 @@ class InstanceDetail(QWidget):
         self._show_section(index)
 
     def _build_header(self) -> QWidget:
+        """This page's header: the instance name over its id and directory.
+
+        The second level keeps the shared header type and surfaces: the name and the two hint lines
+        are styled by the same sheet rule as ``pageTitle`` / ``pageSubtitle`` (through their own
+        object names, so the top-level header gate still finds the instance grid's header), and the
+        header paints no coloured block and no card. The back control lives above it in
+        :class:`InstanceDetailPage`.
+        """
         box = QWidget()
         self.name_label = QLabel(tr("instances.detail.value.none"))
-        self.name_label.setObjectName("title")
+        self.name_label.setObjectName("instanceDetailTitle")
         self.id_label = QLabel("")
-        self.id_label.setObjectName("hint")
+        self.id_label.setObjectName("instanceDetailHint")
         # Paths read better elided on the left: the tail (folder name) is the informative part
         self.dir_label = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideLeft)
-        self.dir_label.setObjectName("hint")
+        self.dir_label.setObjectName("instanceDetailHint")
         self.launch_button = QPushButton(tr("instances.launch"))
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
@@ -475,7 +486,7 @@ class InstanceDetail(QWidget):
         row.addWidget(self.launch_button)
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
         layout.addLayout(row)
         layout.addWidget(self.dir_label)
         return box

@@ -671,13 +671,22 @@ def set_app_status(widget, text: str, level: str | None = None) -> None:
         return
 
 
+#: Distance between the shared page header and the first block below it, on every page.
+PAGE_HEADER_GAP = 16
+
+
 def build_page_header(title: str, subtitle: str) -> QWidget:
-    """Page header: a big title plus one line describing what the page is for."""
+    """Page header: one title plus one line describing what the page is for.
+
+    Structure only: the type and colour live in the sheets (``QLabel#pageTitle`` /
+    ``QLabel#pageSubtitle``), so every page gets the same 20px near-black title and 12px hint.
+    The header owns no surface of its own - no background, no border, no colour block.
+    """
     box = QWidget()
     box.setObjectName("pageHeader")
     layout = QVBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 2)
-    layout.setSpacing(1)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
     title_label = QLabel(title)
     title_label.setObjectName("pageTitle")
     subtitle_label = QLabel(subtitle)
@@ -686,6 +695,23 @@ def build_page_header(title: str, subtitle: str) -> QWidget:
     layout.addWidget(title_label)
     layout.addWidget(subtitle_label)
     return box
+
+
+def add_page_header(layout, title: str, subtitle: str) -> QWidget:
+    """Add the shared page header and leave exactly ``PAGE_HEADER_GAP`` px below it.
+
+    Page layouts use different spacing between their blocks (8px on most pages, 12px on the
+    instance grid), so the header absorbs the difference in its own bottom margin. The distance
+    from the hint line to the first block below is therefore 16px everywhere, instead of the
+    page's own rhythm plus the header's margin.
+    """
+    header = build_page_header(title, subtitle)
+    spacing = layout.spacing()
+    if spacing < 0:  # style default: assume the common 8px page rhythm
+        spacing = 8
+    header.layout().setContentsMargins(0, 0, 0, max(0, PAGE_HEADER_GAP - spacing))
+    layout.addWidget(header)
+    return header
 
 
 def style_page_layout(layout) -> None:

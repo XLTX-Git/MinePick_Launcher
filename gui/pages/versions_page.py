@@ -47,10 +47,10 @@ from gui.errors import show_fatal
 from gui.models.version_list_model import VersionListModel
 from gui.view_state import apply_current_sort, remember_column_widths
 from gui.widgets import (
+    add_page_header,
     add_search_icon,
     apply_no_focus_outline,
     build_download_progress,
-    build_page_header,
     disable_keeping_focus,
     set_app_status,
     style_page_layout,
@@ -240,7 +240,7 @@ class VersionsPage(QWidget):
 
         layout = QVBoxLayout(self)
         style_page_layout(layout)
-        layout.addWidget(build_page_header(tr("nav.versions"), tr("page.versions.desc")))
+        add_page_header(layout, tr("nav.versions"), tr("page.versions.desc"))
         layout.addLayout(top)
         layout.addLayout(tabs_row)
         layout.addLayout(latest_row)

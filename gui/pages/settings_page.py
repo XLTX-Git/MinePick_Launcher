@@ -46,7 +46,7 @@ from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve
 from gui.widgets import (
     AccessibilityPreferenceGroup,
     NoWheelSpinBox,
-    build_page_header,
+    add_page_header,
     set_app_status,
     style_form,
     style_page_layout,
@@ -461,13 +461,7 @@ class SettingsPage(QWidget):
         scroll.setWidget(inner)
         outer = QVBoxLayout(self)
         style_page_layout(outer)
-        # PCL leaves a 16px paper margin around the blue banner and the white card.
-        outer.setContentsMargins(16, 16, 16, 16)
-        outer.setSpacing(16)
-        header = build_page_header(tr("nav.settings"), tr("page.settings.desc"))
-        header.layout().setContentsMargins(20, 16, 20, 16)
-        header.layout().setSpacing(4)
-        outer.addWidget(header)
+        add_page_header(outer, tr("nav.settings"), tr("page.settings.desc"))
         outer.addWidget(scroll)
 
         self.browse_game.clicked.connect(self._browse_game)
