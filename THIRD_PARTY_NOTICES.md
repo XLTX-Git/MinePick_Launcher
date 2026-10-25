@@ -80,6 +80,10 @@ MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）�
   - mod search
   - 模组检索
   - <https://www.curseforge.com/minecraft>
+- **BMCLAPI**
+  - Minecraft resource mirror service (mainland-China acceleration)
+  - Minecraft 资源镜像服务（国内加速）
+  - <https://github.com/bangbang93/BMCLAPI>
 - **Fabric**
   - the Fabric loader and its metadata
   - Fabric 加载器与其元数据
