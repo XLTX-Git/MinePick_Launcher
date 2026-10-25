@@ -46,6 +46,12 @@ def test_search_parses_hits() -> None:
                 "summary": "A modern rendering engine",
                 "downloadCount": 142812847,
                 "logo": {"thumbnailUrl": "https://x/thumb.png"},
+                "dateModified": "2026-10-01T12:00:00Z",
+                "latestFilesIndexes": [
+                    {"modLoader": 4},  # Fabric
+                    {"modLoader": 6},  # NeoForge
+                    {"modLoader": 4},  # duplicate: the row lists each loader once
+                ],
             }
         ]
     }
@@ -57,6 +63,9 @@ def test_search_parses_hits() -> None:
     assert h.title == "Sodium"
     assert h.downloads == 142812847
     assert h.icon_url == "https://x/thumb.png"
+    # The card's "when was it updated" + "which loaders" segments come from these two fields.
+    assert h.updated == "2026-10-01T12:00:00Z"
+    assert h.loaders == ["fabric", "neoforge"]
 
 
 def test_search_params_include_filters() -> None:

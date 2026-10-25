@@ -42,6 +42,7 @@ from gui import theme
 #: Bumped whenever a cached pixmap would have to be redrawn; the cache key uses the colour anyway.
 _BLOCK_CACHE: dict[tuple[int, str], QPixmap] = {}
 _CHEVRON_CACHE: dict[tuple[bool, str], QPixmap] = {}
+_LETTER_CACHE: dict[tuple[str, int, str, str], QPixmap] = {}
 
 
 def _tokens() -> dict[str, str]:
@@ -161,6 +162,40 @@ def avatar_pixmap(username: str, size: int = 36) -> QPixmap | None:
     painter.setFont(font)
     painter.drawText(QRectF(0, 0, extent, extent), Qt.AlignmentFlag.AlignCenter, letter)
     painter.end()
+    return pixmap
+
+
+def letter_tile_pixmap(text: str, size: int = 48, radius: int = 8) -> QPixmap:
+    """A rounded-square placeholder icon carrying the first character of ``text``.
+
+    The resource list shows a project's real icon when the API returned an ``icon_url`` and falls back
+    to this otherwise. Like the version block and the avatar above, it is *drawn*: the launcher ships
+    no per-project artwork, and painting it means the tile follows the accent colour of the theme.
+    ``radius`` is a corner radius in logical pixels (the list asks for 8 on a 48px tile).
+    """
+    letter = (text.strip()[:1] or "?").upper()
+    tokens = _tokens()
+    background = tokens.get("ACCENT_TINT", "#e6f4ec")
+    foreground = tokens.get("ACCENT_BUTTON", tokens.get("ACCENT", "#2f9e6f"))
+    key = (letter, size, radius, background + foreground)
+    cached = _LETTER_CACHE.get(key)
+    if cached is not None:
+        return cached
+    pixmap, _ratio = _pixmap(size)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(background))
+    extent = pixmap.width() / pixmap.devicePixelRatio()
+    painter.drawRoundedRect(QRectF(0, 0, extent, extent), radius, radius)
+    font = QFont()
+    font.setPixelSize(max(12, round(extent * 0.42)))
+    font.setBold(True)
+    painter.setFont(font)
+    painter.setPen(QColor(foreground))
+    painter.drawText(QRectF(0, 0, extent, extent), Qt.AlignmentFlag.AlignCenter, letter)
+    painter.end()
+    _LETTER_CACHE[key] = pixmap
     return pixmap
 
 

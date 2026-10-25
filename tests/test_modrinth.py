@@ -138,6 +138,8 @@ SEARCH_RAW = {
             "description": "渲染优化",
             "downloads": 123456,
             "icon_url": "https://cdn.modrinth.com/data/AANobbMI/icon.png",
+            "date_modified": "2026-10-01T12:00:00Z",
+            "categories": ["fabric", "optimization"],
         }
     ]
 }
@@ -158,6 +160,9 @@ def test_search_projects():
     assert len(hits) == 1
     assert hits[0].slug == "sodium"
     assert hits[0].downloads == 123456
+    # The resource card's "updated" and "loader range" segments, parsed from the same search payload.
+    assert hits[0].updated == "2026-10-01T12:00:00Z"
+    assert hits[0].loaders == ["fabric"]  # "optimization" is a category, not a loader
 
 
 @respx.mock

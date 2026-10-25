@@ -20,13 +20,27 @@
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from typing import ClassVar
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -34,14 +48,14 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from gui import i18n
+from gui import i18n, paint_utils, theme
 from gui.errors import show_fatal
 from gui.widgets import (
     EmptyState,
@@ -76,6 +90,413 @@ from launcher.mods.models import ModInfo, ModSearchHit, ModVersion
 from launcher.mods.zh_names import has_cjk, search_local
 
 tr = i18n.tr
+
+
+# ---------- human-readable numbers for the result rows ----------
+
+#: Chinese counts read in 万 / 亿, the rest of the interface uses the SI K / M / B suffixes. The unit
+#: characters are part of the *number format* of those two languages, not translatable sentences, so
+#: they live here next to the formatter instead of in the nine language tables.
+_ZH_COUNT_UNITS: dict[str, tuple[str, str]] = {"zh_cn": ("万", "亿"), "zh_tw": ("萬", "億")}
+
+
+def _trim_number(value: float) -> str:
+    """Trim a formatted number to at most two decimals, without a trailing '.'."""
+    text = f"{value:.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def format_downloads(value: int, lang: str | None = None) -> str:
+    """A download count a person can read: 2.88 亿 / 9230 万 (zh) or 231.45M (the rest).
+
+    The list shows this instead of ``f"{value:,}"``; the exact number stays in the row's accessible
+    text and tooltip so nothing is lost.
+    """
+    language = lang or i18n.current_language()
+    count = max(0, int(value))
+    units = _ZH_COUNT_UNITS.get(language)
+    if units is not None:
+        wan, yi = units
+        if count >= 100_000_000:
+            return _trim_number(count / 100_000_000) + yi
+        if count >= 10_000:
+            return _trim_number(count / 10_000) + wan
+        return str(count)
+    for size, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+        if count >= size:
+            return _trim_number(count / size) + suffix
+    return str(count)
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    """Parse the ISO-8601 timestamp the mod APIs return; None when it is missing or malformed."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        # Python 3.11+ reads the trailing "Z" (both APIs use it) as UTC.
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment
+
+
+def _translate(lang: str, key: str, *args) -> str:
+    """Look a key up in ``lang`` (English fallback), without switching the process-wide language."""
+    table = i18n.TRANSLATIONS.get(lang) or i18n.TRANSLATIONS[i18n.EN]
+    template = table.get(key) or i18n.TRANSLATIONS[i18n.EN].get(key, key)
+    return template.format(*args) if args else template
+
+
+def format_updated(value: str, *, lang: str | None = None, now: datetime | None = None) -> str:
+    """Relative age of an ISO-8601 timestamp: "3 周前" / "3w ago"; "" when there is no timestamp.
+
+    ``value`` is what the API returned (``date_modified`` / ``dateModified``); ``now`` is injectable so
+    the function is deterministic in tests.
+    """
+    moment = _parse_timestamp(value)
+    if moment is None:
+        return ""
+    language = lang or i18n.current_language()
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    seconds = int((current - moment).total_seconds())
+    if seconds < 60:  # also covers a timestamp slightly in the future
+        return _translate(language, "mods.ago.now")
+    minutes = seconds // 60
+    if minutes < 60:
+        return _translate(language, "mods.ago.minutes", minutes)
+    hours = minutes // 60
+    if hours < 24:
+        return _translate(language, "mods.ago.hours", hours)
+    days = hours // 24
+    if days < 7:
+        return _translate(language, "mods.ago.days", days)
+    if days < 30:
+        return _translate(language, "mods.ago.weeks", days // 7)
+    if days < 365:
+        return _translate(language, "mods.ago.months", days // 30)
+    return _translate(language, "mods.ago.years", days // 365)
+
+
+def _tokens() -> dict[str, str]:
+    """The colour table in force; light theme before the first apply (same rule as paint_utils)."""
+    tokens = theme.current_tokens()
+    return tokens or theme.theme_palette("light")
+
+
+def _fetch_icon_bytes(url: str) -> bytes:
+    """Download one project icon (small, short timeout, capped) for the background worker."""
+    import httpx
+
+    with httpx.Client(timeout=8.0, follow_redirects=True) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        content = response.content
+    if len(content) > 2_000_000:  # a project icon is a few dozen KB; never hold a huge payload
+        raise ValueError("icon payload too large")
+    return content
+
+
+class _ResourceRow(QWidget):
+    """One dense resource result: 48px icon, name + type tag, one-line summary, meta line, install.
+
+    Everything except the install button is painted by hand. Two reasons: the summary must be elided
+    on one line (a QLabel would either wrap to several lines or report text wider than it paints, which
+    the text-overflow audit flags), and a list of a thousand widgets would make theme swaps crawl - one
+    widget plus one button per row is all Qt has to re-polish.
+    """
+
+    HEIGHT = 68
+    #: The list slot is the card plus the 8px gap below it. QListWidget::setSpacing offsets an item
+    #: widget by the spacing but does not shrink it, which clipped the install button at the viewport
+    #: edge; the gap therefore lives inside the slot and the card paints only its top 68px.
+    SLOT_HEIGHT = HEIGHT + 8
+    ICON = 48
+    PADDING = 12
+    GAP = 12
+    RADIUS = 8
+    TAG_HEIGHT = 18
+
+    def __init__(
+        self,
+        entry: object,
+        kind_label: str,
+        source_label: str,
+        *,
+        on_select,
+        on_install,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.entry = entry
+        self.icon_url = str(getattr(entry, "icon_url", "") or "").strip()
+        self.title = str(getattr(entry, "title", "") or getattr(entry, "slug", ""))
+        self.description = str(getattr(entry, "description", "") or "")
+        self._kind_label = kind_label
+        self._on_select = on_select
+        self._on_install = on_install
+        self._meta = self._build_meta(entry, source_label)
+        self._icon: QPixmap | None = None
+        self._fallback_icon = paint_utils.letter_tile_pixmap(self.title, self.ICON, self.RADIUS)
+        self._selected = False
+        self._hover = False
+
+        self.install = QPushButton(tr("mods.install"))
+        self.install.setObjectName("rowInstall")
+        self.install.setFixedHeight(32)
+        self.install.setCursor(Qt.CursorShape.PointingHandCursor)
+        # 30 buttons all reading "Install" would be useless with a screen reader; the row's title is
+        # what tells them apart.
+        self.install.setAccessibleName(tr("mods.install") + " · " + self.title)
+        self.install.clicked.connect(self._activate)
+        self.setFixedHeight(self.SLOT_HEIGHT)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, self.PADDING, self.SLOT_HEIGHT - self.HEIGHT)
+        row.setSpacing(0)
+        row.addStretch(1)
+        row.addWidget(self.install, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.setToolTip(self._tooltip_text())
+
+    # ---------- data ----------
+
+    def _build_meta(self, entry: object, source_label: str) -> list[tuple[str, str]]:
+        """(glyph, text) segments for the bottom line, in the order the design puts them."""
+        segments: list[tuple[str, str]] = []
+        loaders = [str(item) for item in (getattr(entry, "loaders", None) or [])]
+        if loaders:
+            segments.append(("loaders", " / ".join(display_loader_name(name) for name in loaders)))
+        segments.append(("downloads", format_downloads(int(getattr(entry, "downloads", 0) or 0))))
+        updated = format_updated(str(getattr(entry, "updated", "") or ""))
+        if updated:
+            segments.append(("updated", updated))
+        if source_label:
+            segments.append(("source", source_label))
+        return segments
+
+    def _tooltip_text(self) -> str:
+        lines = [self.title]
+        if self.description:
+            lines.append(self.description)
+        meta = " · ".join(text for _glyph, text in self._meta)
+        if meta:
+            lines.append(meta)
+        return "\n".join(lines)
+
+    def set_icon(self, pixmap: QPixmap) -> None:
+        self._icon = pixmap
+        self.update()
+
+    def set_selected(self, selected: bool) -> None:
+        if self._selected != selected:
+            self._selected = selected
+            self.update()
+        # Tab reaches the install button of the selected row only: thirty identical stops would make
+        # Tab unusable inside the list, and the arrow keys already move the selection to every row.
+        policy = Qt.FocusPolicy.StrongFocus if selected else Qt.FocusPolicy.ClickFocus
+        if self.install.focusPolicy() != policy:
+            self.install.setFocusPolicy(policy)
+
+    # ---------- interaction ----------
+
+    def _activate(self) -> None:
+        self._on_select()
+        self._on_install()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_select()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        # Moving onto the install button leaves the row's own rect; that is still "inside the card".
+        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            self._hover = False
+            self.update()
+        super().leaveEvent(event)
+
+    # ---------- painting ----------
+
+    def paintEvent(self, event) -> None:
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0, 0, self.width(), self.HEIGHT).adjusted(0.5, 0.5, -0.5, -0.5)
+        background = QColor(tokens.get("BG_LIST", "#ffffff"))
+        border = QColor(tokens.get("BORDER_TABLE", "#dfe4ea"))
+        if self._selected:
+            border = QColor(tokens.get("ACCENT", "#2f9e6f"))
+        elif self._hover:
+            background = QColor(tokens.get("ACCENT_TINT", background.name()))
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(background)
+        painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        icon_rect = QRectF(
+            self.PADDING, (self.HEIGHT - self.ICON) / 2.0, self.ICON, self.ICON
+        )
+        clip = QPainterPath()
+        clip.addRoundedRect(icon_rect, self.RADIUS, self.RADIUS)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.drawPixmap(icon_rect.toRect(), self._icon or self._fallback_icon)
+        painter.restore()
+
+        text_left = self.PADDING + self.ICON + self.GAP
+        text_right = max(text_left, self.install.x() - self.GAP)
+        width = text_right - text_left
+        if width <= 0:
+            painter.end()
+            return
+
+        text_color = QColor(tokens.get("FG_TEXT", "#1f2a36"))
+        hint_color = QColor(tokens.get("FG_HINT", "#4f6070"))
+        name_font = QFont(self.font())
+        name_font.setPixelSize(15)
+        name_font.setWeight(QFont.Weight.DemiBold)
+        name_metrics = QFontMetrics(name_font)
+        tag_font = QFont(self.font())
+        tag_font.setPixelSize(11)
+        tag_metrics = QFontMetrics(tag_font)
+        tag_width = min(width, tag_metrics.horizontalAdvance(self._kind_label) + 12)
+
+        painter.setFont(name_font)
+        painter.setPen(text_color)
+        name = name_metrics.elidedText(self.title, Qt.TextElideMode.ElideRight, max(0, width))
+        name_width = name_metrics.horizontalAdvance(name)
+        painter.drawText(
+            QRectF(text_left, 7, max(0, width), 20),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            name,
+        )
+        # The tag sits right after the name (not at the far edge); it disappears only when the name
+        # would have to be truncated to make room for it.
+        if text_left + name_width + 8 + tag_width <= text_right:
+            tag_rect = QRectF(text_left + name_width + 8, 8, tag_width, self.TAG_HEIGHT)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens.get("BG_SECTION", "#f1f3f6")))
+            painter.drawRoundedRect(tag_rect, 4, 4)
+            painter.setFont(tag_font)
+            painter.setPen(hint_color)
+            painter.drawText(
+                tag_rect,
+                int(Qt.AlignmentFlag.AlignCenter),
+                tag_metrics.elidedText(self._kind_label, Qt.TextElideMode.ElideRight, int(tag_width) - 12),
+            )
+
+        desc_font = QFont(self.font())
+        desc_font.setPixelSize(12)
+        painter.setFont(desc_font)
+        painter.setPen(hint_color)
+        desc_metrics = QFontMetrics(desc_font)
+        description = desc_metrics.elidedText(
+            self.description.replace("\n", " "), Qt.TextElideMode.ElideRight, int(width)
+        )
+        painter.drawText(
+            QRectF(text_left, 28, width, 16),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            description,
+        )
+
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(11)
+        meta_metrics = QFontMetrics(meta_font)
+        cursor = text_left
+        for glyph, text in self._meta:
+            text_width = meta_metrics.horizontalAdvance(text)
+            segment = 12 + 4 + text_width
+            if cursor + segment > text_right:
+                break
+            self._paint_glyph(
+                painter, glyph, QRectF(cursor, 47, 12, 12), hint_color
+            )
+            painter.setFont(meta_font)
+            painter.setPen(hint_color)
+            painter.drawText(
+                QRectF(cursor + 16, 45, text_width + 2, 16),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                text,
+            )
+            cursor += segment + 14
+        painter.end()
+
+    @staticmethod
+    def _paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor) -> None:
+        """Tiny vector glyphs for the meta segments (no icon font, no emoji, no image asset)."""
+        pen = QPen(color)
+        pen.setWidthF(1.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.save()
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+        if kind == "loaders":  # a 2x2 grid, "loaders / compatible range"
+            for fraction in (0.35, 0.65):
+                painter.drawLine(QPointF(x + w * fraction, y + 1), QPointF(x + w * fraction, y + h - 1))
+                painter.drawLine(QPointF(x + 1, y + h * fraction), QPointF(x + w - 1, y + h * fraction))
+        elif kind == "downloads":  # arrow into a tray
+            center = x + w / 2
+            painter.drawLine(QPointF(center, y + 1.5), QPointF(center, y + h - 4))
+            painter.drawLine(QPointF(center, y + h - 4), QPointF(center - w * 0.22, y + h * 0.55))
+            painter.drawLine(QPointF(center, y + h - 4), QPointF(center + w * 0.22, y + h * 0.55))
+            painter.drawLine(QPointF(x + 1.5, y + h - 1), QPointF(x + w - 1.5, y + h - 1))
+        elif kind == "updated":  # clock
+            painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+            painter.drawLine(QPointF(x + w / 2, y + h / 2), QPointF(x + w / 2, y + h * 0.28))
+            painter.drawLine(QPointF(x + w / 2, y + h / 2), QPointF(x + w * 0.70, y + h / 2))
+        else:  # source: a globe
+            painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+            painter.drawLine(QPointF(x + 1, y + h / 2), QPointF(x + w - 1, y + h / 2))
+            painter.drawEllipse(QRectF(x + w * 0.32, y + 1, w * 0.36, h - 2))
+        painter.restore()
+
+
+
+class _ResourceList(QListWidget):
+    """QListWidget whose item widgets always span the viewport.
+
+    Qt hands an item widget the item's visual rect when it is installed, but a list that is laid out
+    before its final width (or whose scrollbar appears later) leaves older widgets wider than the
+    viewport - the card then hangs over the right edge and its install button is clipped. Re-applying
+    the viewport width on every resize keeps the card and its button inside the list.
+
+    The empty-state label also lives here, as an overlay covering the viewport: the list's result area
+    is what the message is about, and centring it there makes "no matches" read as the state of the
+    list instead of a stray line under it.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._empty_overlay: QLabel | None = None
+
+    def attach_empty_overlay(self, label: QLabel) -> None:
+        self._empty_overlay = label
+        label.setParent(self.viewport())
+        label.setGeometry(self.viewport().rect())
+        label.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.sync_item_widths()
+        if self._empty_overlay is not None:
+            self._empty_overlay.setGeometry(self.viewport().rect())
+
+    def sync_item_widths(self) -> None:
+        width = self.viewport().width()
+        for index in range(self.count()):
+            widget = self.itemWidget(self.item(index))
+            if widget is not None and widget.width() != width:
+                widget.resize(width, widget.height())
 
 
 class _VersionPickerDialog(QDialog):
@@ -178,6 +599,9 @@ class _ContentTab(QWidget):
         super().__init__()
         self.kind = kind
         self._entries: list[object] = []  # ModSearchHit (search) or ModInfo (slug query)
+        self._rows: list[_ResourceRow] = []
+        self._icon_cache: dict[str, QPixmap] = {}
+        self._icon_pending: set[str] = set()
         self._hit: ModSearchHit | None = None
         self._current: ModInfo | None = None
         self._current_slug = ""
@@ -197,6 +621,7 @@ class _ContentTab(QWidget):
         self.slug_edit.setAccessibleName(tr("mods.picker.col.loaders"))  # WCAG 4.1.2
         self.slug_edit.setPlaceholderText(tr("mods.slug.placeholder"))
         self.query_button = QPushButton(tr("mods.query"))
+        self.query_button.setObjectName("queryButton")
         self.search_edit = QLineEdit()
         self.search_edit.setAccessibleName(tr("mods.query"))  # WCAG 4.1.2
         add_search_icon(self.search_edit)
@@ -214,17 +639,40 @@ class _ContentTab(QWidget):
         self.install_button = QPushButton(tr("mods.install"))
         self.open_folder_button = QPushButton(tr("mods.open_folder"))
         self.open_folder_button.setObjectName("secondaryButton")
-        self.list = QListWidget()
-        self.list.setAccessibleName(tr("nav.mods"))  # WCAG 4.1.2
+        # PCL metrics: 36px fields and buttons. The stylesheet owns radius/border/padding; the height
+        # is fixed here so it cannot drift with the font of a language.
+        for control in (
+            self.loader_combo,
+            self.game_version_edit,
+            self.slug_edit,
+            self.search_edit,
+            self.query_button,
+            self.search_button,
+            self.popular_button,
+        ):
+            control.setFixedHeight(36)
+        self.list = _ResourceList()
+        self.list.setObjectName("resourceList")
+        # WCAG 4.1.2: the list is a focus stop of its own; the category name tells the four lists apart.
+        self.list.setAccessibleName(tr("nav.mods") + " · " + tr(self.KIND_TITLE_KEY[kind]))
+        self.list.setUniformItemSizes(True)
+        # No setSpacing(): it offsets an item widget without shrinking it, which pushed the install
+        # button past the viewport edge. The 8px gap is part of the row slot instead (_ResourceRow).
+        self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         apply_no_focus_outline(self.list)
         self.title_label = QLabel(tr("mods.select"))
         self.title_label.setObjectName("title")
+        self.title_label.setWordWrap(True)
         self.desc_label = QLabel("")
         self.desc_label.setWordWrap(True)
         self.dep_required = QLabel("")
+        self.dep_required.setWordWrap(True)
         self.dep_optional = QLabel("")
+        self.dep_optional.setWordWrap(True)
 
         query_row = QHBoxLayout()
+        query_row.setSpacing(8)
         if kind == "mod":
             query_row.addWidget(QLabel(tr("mods.loader")))
             query_row.addWidget(self.loader_combo)
@@ -234,30 +682,46 @@ class _ContentTab(QWidget):
         query_row.addWidget(self.query_button)
 
         left = QVBoxLayout()
-        left.addWidget(QLabel(tr("mods.list.label")))
+        left.setSpacing(8)
         left.addWidget(self.list, 1)
-        self.empty_results = EmptyState(tr("empty.mods"))
-        left.addWidget(self.empty_results)
+        self.empty_results = EmptyState(tr("mods.empty.none"))
+        self.list.attach_empty_overlay(self.empty_results)
 
-        right = QVBoxLayout()
-        right.addWidget(self.title_label)
-        right.addWidget(self.desc_label)
-        right.addWidget(self.dep_required)
-        right.addWidget(self.dep_optional)
-        buttons_row = QHBoxLayout()
+        # Inspector for the selected entry: the full summary (the row elides it to one line), the
+        # dependency hints of a slug query, and the original install / open-folder actions. Keeping it
+        # is what lets the row itself stay one dense line per result without losing any function.
+        self.detail = QFrame()
+        self.detail.setObjectName("resourceDetail")
+        # 252px is the design width; the upper bound exists for languages whose "select version and
+        # install" button is longer than that (German 211px, French 205px, Japanese 208px at 13px), so
+        # the panel widens instead of clipping the label.
+        self.detail.setMinimumWidth(252)
+        self.detail.setMaximumWidth(320)
+        detail_layout = QVBoxLayout(self.detail)
+        detail_layout.setContentsMargins(12, 12, 12, 12)
+        detail_layout.setSpacing(8)
+        detail_layout.addWidget(self.title_label)
+        detail_layout.addWidget(self.desc_label)
+        detail_layout.addWidget(self.dep_required)
+        detail_layout.addWidget(self.dep_optional)
+        detail_layout.addStretch(1)
+        buttons_row = QVBoxLayout()
+        buttons_row.setSpacing(8)
         buttons_row.addWidget(self.install_button)
         if kind != "modpack":
             buttons_row.addWidget(self.open_folder_button)
-        buttons_row.addStretch(1)
-        right.addLayout(buttons_row)
-        right.addStretch(1)
+        detail_layout.addLayout(buttons_row)
 
         body = QHBoxLayout()
+        body.setSpacing(12)
         body.addLayout(left, 1)
-        body.addLayout(right, 2)
+        body.addWidget(self.detail, 0)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         self._search_row = QHBoxLayout()
+        self._search_row.setSpacing(8)
         self._search_row.addWidget(self.search_edit, 1)
         self._search_row.addWidget(self.search_button)
         self._search_row.addWidget(self.popular_button)
@@ -276,21 +740,101 @@ class _ContentTab(QWidget):
 
         self._update_install_button()
 
+    # ---------- Rows ----------
+
+    def _source_label(self) -> str:
+        page = getattr(self, "page", None)
+        return page.current_source_label() if page is not None else ""
+
+    def _install_from_row(self, index: int) -> None:
+        """Row install: select the row (the original selection handler fills _hit/_current), then run
+        the page's existing install callback - the flow below is untouched."""
+        self.list.setCurrentRow(index)
+        self._on_install_clicked()
+
+    def _sync_row_selection(self, index: int) -> None:
+        for row_index, row in enumerate(self._rows):
+            row.set_selected(row_index == index)
+
+    # ---------- Icons ----------
+
+    def _load_icon(self, entry: object, row: _ResourceRow) -> None:
+        """Show the project icon: synchronous for a local file (tests/preview), async for a URL."""
+        url = row.icon_url
+        if not url:
+            return
+        cached = self._icon_cache.get(url)
+        if cached is not None:
+            row.set_icon(cached)
+            return
+        local = QUrl(url).toLocalFile() if url.startswith("file:") else ("" if "://" in url else url)
+        if local:
+            pixmap = QPixmap(local)
+            if not pixmap.isNull():
+                self._icon_cache[url] = pixmap
+                row.set_icon(pixmap)
+                return
+        if url in self._icon_pending:
+            return
+        self._icon_pending.add(url)
+        run_in_background(
+            lambda: _fetch_icon_bytes(url),
+            on_result=lambda data: self._on_icon_ready(url, data),
+            on_error=lambda _message: self._icon_pending.discard(url),
+            on_finished=lambda: self._icon_pending.discard(url),
+        )
+
+    def _on_icon_ready(self, url: str, data: object) -> None:
+        self._icon_pending.discard(url)
+        if not isinstance(data, (bytes, bytearray)):
+            return
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(bytes(data)):
+            return
+        if len(self._icon_cache) >= 256:  # a long session cannot grow this without a bound
+            self._icon_cache.clear()
+        self._icon_cache[url] = pixmap
+        for row in self._rows:
+            if row.icon_url == url:
+                row.set_icon(pixmap)
+
     # ---------- List & details ----------
 
     def _set_entries(self, entries: list[object]) -> None:
         self._entries = entries
+        # Drop the Python references before clear(): clear() emits currentRowChanged(-1), whose handler
+        # walks the row list, and the C++ row widgets are already being destroyed at that point.
+        self._rows = []
         self.list.clear()
-        for entry in entries:
+        kind_label = tr(self.KIND_TITLE_KEY[self.kind])
+        source_label = self._source_label()
+        for index, entry in enumerate(entries):
+            # The item's own text is the accessible/testable representation and keeps the exact counts
+            # (the card paints the human-readable form on top). This is what test_e2e asserts on.
             text = getattr(entry, "title", "")
             if isinstance(entry, ModSearchHit) and entry.downloads:
                 text += "   | " + tr("mods.search.downloads", f"{entry.downloads:,}")
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, entry)
+            item.setSizeHint(QSize(0, _ResourceRow.SLOT_HEIGHT))
             self.list.addItem(item)
+            row = _ResourceRow(
+                entry,
+                kind_label,
+                source_label,
+                on_select=lambda row_index=index: self.list.setCurrentRow(row_index),
+                on_install=lambda row_index=index: self._install_from_row(row_index),
+            )
+            self.list.setItemWidget(item, row)
+            self._rows.append(row)
+            self._load_icon(entry, row)
         self.empty_results.update_for(len(entries))
         if entries:
             self.list.setCurrentRow(0)
+        self._sync_row_selection(self.list.currentRow())
+        # The page may still be inside its first layout pass here; re-apply the viewport width once the
+        # widget hierarchy has settled (see _ResourceList).
+        QTimer.singleShot(0, self.list.sync_item_widths)
 
     def _clear_entries(self) -> None:
         self._set_entries([])
@@ -303,6 +847,7 @@ class _ContentTab(QWidget):
         self._update_install_button()
 
     def _on_select(self, row: int) -> None:
+        self._sync_row_selection(row)
         if row < 0 or row >= len(self._entries):
             return
         entry = self._entries[row]
@@ -312,12 +857,18 @@ class _ContentTab(QWidget):
             self.title_label.setText(entry.title)
             self.desc_label.setText(entry.description)
             self.dep_required.setText("")
-            self.dep_optional.setText(tr("mods.search.downloads", f"{entry.downloads:,}"))
+            meta = " · ".join(text for _glyph, text in self._row_meta(row))
+            self.dep_optional.setText(meta)
             set_app_status(self, tr("mods.status.default"))
         elif isinstance(entry, ModInfo):
             self._hit = None
             self._show_mod(entry)
         self._update_install_button()
+
+    def _row_meta(self, row: int) -> list[tuple[str, str]]:
+        if 0 <= row < len(self._rows):
+            return self._rows[row]._meta
+        return []
 
     def _show_mod(self, mod: ModInfo) -> None:
         self._current = mod
@@ -392,6 +943,10 @@ class _ContentTab(QWidget):
                             description=p.get("description") or "",
                             downloads=int(p.get("downloads") or 0),
                             icon_url=p.get("icon_url") or "",
+                            # A project lookup carries both; passing them keeps a local Chinese hit's
+                            # row as informative as a Modrinth search row.
+                            updated=str(p.get("updated") or ""),
+                            loaders=[str(item) for item in (p.get("loaders") or [])],
                         )
                     )
                 seen = {h.slug for h in local_hits}
@@ -818,24 +1373,47 @@ class _ContentTab(QWidget):
 
 
 class ResourcesPage(QWidget):
+    """Search / browse Modrinth and CurseForge resources, one category per chip.
+
+    The four categories still live in a QStackedWidget - the tab widget was only ever the switch, and
+    the chips replace that switch without touching what each page does. ``self.tabs`` is the stack's
+    public name: the accessibility scope walker (tests/test_accessible_names.py) discovers the four
+    sub-pages through ``count()`` / ``widget()`` / ``currentWidget()``, which the stack provides too.
+    """
+
     def __init__(self) -> None:
         super().__init__()
-        self.tabs = QTabWidget()
-        # WCAG 4.1.2: the tab widget is keyboard focusable and its tab bar reports the selected tab as
-        # its own name, but the container itself had none. The page's own title names it.
-        self.tabs.setAccessibleName(tr("mods.page.title"))
-        # Remove the tab widget's built-in bottom baseline to stay fully flat
-        self.tabs.tabBar().setDrawBase(False)
-        self.tabs.tabBar().setFocusPolicy(Qt.NoFocus)  # remove the focus outline on the selected tab's text
+        self.setObjectName("resourcesPage")
         self.mods_tab = _ContentTab("mod")
         self.modpacks_tab = _ContentTab("modpack")
         self.resourcepacks_tab = _ContentTab("resourcepack")
         self.shaderpacks_tab = _ContentTab("shaderpack")
-        self.tabs.addTab(self.mods_tab, tr("mods.tab.mods"))
-        self.tabs.addTab(self.modpacks_tab, tr("mods.tab.modpacks"))
-        self.tabs.addTab(self.resourcepacks_tab, tr("mods.tab.resourcepacks"))
-        self.tabs.addTab(self.shaderpacks_tab, tr("mods.tab.shaderpacks"))
+        self.tabs = QStackedWidget()
+        self.tabs.setAccessibleName(tr("mods.page.title"))
+        self.chip_group = QButtonGroup(self)
+        self.chip_group.setExclusive(True)
+        self.chips: list[QPushButton] = []
+        for index, (tab, title_key) in enumerate(
+            (
+                (self.mods_tab, "mods.tab.mods"),
+                (self.modpacks_tab, "mods.tab.modpacks"),
+                (self.resourcepacks_tab, "mods.tab.resourcepacks"),
+                (self.shaderpacks_tab, "mods.tab.shaderpacks"),
+            )
+        ):
+            self.tabs.addWidget(tab)
+            chip = QPushButton(tr(title_key))
+            chip.setObjectName("resourceChip")
+            chip.setCheckable(True)
+            chip.setFixedHeight(32)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setAccessibleName(tr(title_key))
+            self.chip_group.addButton(chip, index)
+            self.chips.append(chip)
+        self.chips[0].setChecked(True)
+        self.chip_group.idClicked.connect(self._on_chip_clicked)
         self.tabs.currentChanged.connect(self._on_tab_changed)
+
         self.source_combos: list[QComboBox] = []
         for tab in (
             self.mods_tab,
@@ -854,6 +1432,7 @@ class ResourcesPage(QWidget):
             )
             # Wide enough for "CurseForge" plus the arrow and generous padding
             combo.setFixedWidth(combo.fontMetrics().horizontalAdvance("CurseForge") + 60)
+            combo.setFixedHeight(36)  # PCL field metric, same as the search field beside it
             combo.currentIndexChanged.connect(self._on_source_changed)
             tab._search_row.insertWidget(0, combo)
             self.source_combos.append(combo)
@@ -862,6 +1441,12 @@ class ResourcesPage(QWidget):
         layout = QVBoxLayout(self)
         style_page_layout(layout)
         layout.addWidget(build_page_header(tr("nav.mods"), tr("page.mods.desc")))
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+        for chip in self.chips:
+            chip_row.addWidget(chip)
+        chip_row.addStretch(1)
+        layout.addLayout(chip_row)
         layout.addWidget(self.tabs, 1)
 
     def showEvent(self, event) -> None:
@@ -871,6 +1456,14 @@ class ResourcesPage(QWidget):
 
     def current_source(self) -> str:
         return self.source_combo.currentData() or "modrinth"
+
+    def current_source_label(self) -> str:
+        """The display name of the active source ("Modrinth" / "CurseForge") for the result rows."""
+        return self.source_combos[0].currentText()
+
+    def _on_chip_clicked(self, index: int) -> None:
+        if self.tabs.currentIndex() != index:
+            self.tabs.setCurrentIndex(index)
 
     def _on_source_changed(self, _index: int) -> None:
         sender = self.sender()
@@ -893,6 +1486,10 @@ class ResourcesPage(QWidget):
         self._on_tab_changed(self.tabs.currentIndex())
 
     def _on_tab_changed(self, index: int) -> None:
+        # The stack can also be switched from outside the chip row (the accessibility scope walker
+        # does), so the chip's checked state follows the index rather than only the click.
+        if 0 <= index < len(self.chips) and not self.chips[index].isChecked():
+            self.chips[index].setChecked(True)
         tab = self.tabs.widget(index)
         if isinstance(tab, _ContentTab) and not tab._popular_loaded:
             tab.load_popular()

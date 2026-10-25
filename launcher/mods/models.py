@@ -80,7 +80,13 @@ class ModInfo(BaseModel):
 
 
 class ModSearchHit(BaseModel):
-    """A Modrinth search-result entry."""
+    """A Modrinth / CurseForge search-result entry.
+
+    ``updated`` and ``loaders`` are display-only metadata for the resource list: both APIs return them
+    in the search payload already, and a row can show "when was it last touched" and "which loaders it
+    supports" without a second request per result. They stay optional (empty = unknown): a project
+    lookup may not carry them, and a resource pack has no loader.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -89,6 +95,8 @@ class ModSearchHit(BaseModel):
     description: str = ""
     downloads: int = 0
     icon_url: str = ""
+    updated: str = ""  # ISO-8601 timestamp from the source API, "" when unknown
+    loaders: list[str] = []  # lowercase loader ids the project supports, [] when unknown / not a mod
 
 
 class InstalledContent(BaseModel):

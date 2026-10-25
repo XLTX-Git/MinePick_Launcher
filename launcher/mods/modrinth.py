@@ -41,6 +41,9 @@ from launcher.net.downloader import Downloader, DownloadProgress, DownloadTask
 
 MODRINTH_API = "https://api.modrinth.com/v2"
 USER_AGENT = "mclauncher/0.1.0 (modrinth downloader)"
+#: Loader ids as Modrinth spells them (Quilt included: ``launcher.mods.loaders.LOADERS`` is the
+#: installer's list of installable loaders and intentionally leaves Quilt out of the launch path).
+_LOADER_CATEGORIES = frozenset({"fabric", "forge", "neoforge", "quilt", "liteloader", "rift"})
 
 
 def _client() -> httpx.Client:
@@ -97,6 +100,12 @@ def search_projects(
     for entry in payload.get("hits", []):
         if not isinstance(entry, dict):
             continue
+        categories = entry.get("categories") or []
+        # Modrinth reports loader support as categories on a mod ("fabric"/"forge"/...); a resource pack
+        # or shader has none. A future API that returns a dedicated `loaders` field wins over that guess.
+        loaders = entry.get("loaders")
+        if not isinstance(loaders, list):
+            loaders = [item for item in categories if isinstance(item, str) and item in _LOADER_CATEGORIES]
         hits.append(
             ModSearchHit(
                 slug=entry.get("slug") or entry.get("project_id") or "",
@@ -104,6 +113,8 @@ def search_projects(
                 description=entry.get("description") or "",
                 downloads=int(entry.get("downloads") or 0),
                 icon_url=entry.get("icon_url") or "",
+                updated=str(entry.get("date_modified") or ""),
+                loaders=[str(item) for item in loaders],
             )
         )
     return hits

@@ -1069,3 +1069,95 @@ QWidget#launchPage QLabel#fieldLabel {
     color: __FG_LAUNCH_HINT__;
     font-size: 12px;
 }
+
+/* ---------- resources page: category chips + dense result cards ---------- */
+
+QWidget#resourcesPage { background: transparent; }
+
+/* The tab bar is gone: four checkable buttons switch the stacked pages. 32px tall, fully rounded,
+   8px apart (the HBox in code owns the gap). The unselected label uses ACCENT_BUTTON - the accent
+   shade this sheet also uses for filled buttons - because it clears 4.5:1 as text on the page
+   paper, which the pure ACCENT does not (3.4:1). The checked chip already carries white text; where
+   FOCUS_RING equals its own fill, the ring switches to that same white so the focus stays visible. */
+QPushButton#resourceChip {
+    background: transparent;
+    color: __ACCENT_BUTTON__;
+    border: 1px solid transparent;
+    border-radius: 16px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+}
+QPushButton#resourceChip:hover { background: __ACCENT_TINT__; }
+QPushButton#resourceChip:checked {
+    background: __ACCENT_BUTTON__;
+    color: __FG_SELECTED__;
+    border-color: __ACCENT_BUTTON__;
+}
+QPushButton#resourceChip[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+QPushButton#resourceChip:checked[keyboardFocus="true"]:focus { border-color: __FG_SELECTED__; }
+
+/* PCL field metrics: 36px tall (fixed in code), 6px radius, 1px border, 12px left padding, 13px text. */
+QWidget#resourcesPage QLineEdit {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: 6px;
+    padding: 0 12px;
+    font-size: 13px;
+}
+QWidget#resourcesPage QComboBox {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: 6px;
+    padding: 0 24px 0 12px;
+    font-size: 13px;
+}
+QWidget#resourcesPage QLineEdit:hover,
+QWidget#resourcesPage QComboBox:hover { border-color: __BORDER_HOVER__; }
+QWidget#resourcesPage QLineEdit[keyboardFocus="true"],
+QWidget#resourcesPage QComboBox[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+/* Result list: the cards are painted by _ResourceRow, the view only scrolls (8px item spacing). */
+QListWidget#resourceList {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    outline: none;
+}
+QListWidget#resourceList::item {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QListWidget#resourceList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+/* Install button inside a card: secondary look, compact. */
+QPushButton#rowInstall {
+    background: transparent;
+    color: __FG_BUTTON_SECONDARY__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: 6px;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#rowInstall:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QPushButton#rowInstall:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#rowInstall:disabled {
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QPushButton#rowInstall[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
+/* Inspector beside the list: full summary, dependency hints and the original actions. */
+QFrame#resourceDetail {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+    border-radius: __RADIUS_LG__;
+}
+QFrame#resourceDetail QLabel#title { font-size: 15px; font-weight: 600; color: __FG_TEXT__; }

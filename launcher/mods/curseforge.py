@@ -41,6 +41,7 @@ GAME_ID = 432  # Minecraft
 CLASS_IDS = {"mod": 6, "resourcepack": 12, "shaderpack": 6552, "modpack": 4471}
 # modLoaderType: Forge 1 / Fabric 4 / NeoForge 6 (mods only)
 LOADER_IDS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
+_LOADER_NAMES = {value: key for key, value in LOADER_IDS.items()}
 
 
 @dataclass
@@ -130,6 +131,15 @@ def search_projects(
         if not isinstance(m, dict):
             continue
         logo = m.get("logo") or {}
+        # `latestFilesIndexes` carries the game version / loader of each recent file; the distinct loader
+        # ids are what the row shows as "loader range". A resource pack has no loader here.
+        loaders: list[str] = []
+        for item in m.get("latestFilesIndexes") or []:
+            if not isinstance(item, dict):
+                continue
+            name = _LOADER_NAMES.get(item.get("modLoader"))
+            if name and name not in loaders:
+                loaders.append(name)
         hits.append(
             ModSearchHit(
                 slug=str(m.get("id") or ""),  # the slug slot stores the CF project id
@@ -137,6 +147,8 @@ def search_projects(
                 description=m.get("summary") or "",
                 downloads=int(m.get("downloadCount") or 0),
                 icon_url=logo.get("thumbnailUrl") or "",
+                updated=str(m.get("dateModified") or ""),
+                loaders=loaders,
             )
         )
     return hits
