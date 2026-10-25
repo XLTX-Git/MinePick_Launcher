@@ -164,7 +164,7 @@ def test_launch_instance_buttons_navigate(app, ws_tmp, monkeypatch):
     try:
         window = MainWindow()
         launch = window.pages["launch"]
-        launch.version_combo.setEditText(version_id)
+        launch.set_version_id(version_id)
         instances = window.pages["instances"]
 
         launch.select_instance_button.click()

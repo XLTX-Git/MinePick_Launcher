@@ -823,3 +823,171 @@ QWidget#settingsPage QGroupBox::title {
     font-size: 16px;
     font-weight: 700;
 }
+
+/* ========================================================================== */
+/* Launch page, final: cool paper + one white side panel flush to the edge.     */
+/*                                                                            */
+/* Everything is scoped to #launchPage / #launchPanel, so no other page moves. */
+/* The right half is deliberately blank paper: no artwork, no widgets. The     */
+/* launch_visuals.py artwork stays in the tree but this page no longer mounts  */
+/* it. No rule here reaches the dark sheet.                                    */
+/* ========================================================================== */
+
+QWidget#launchPage {
+    background: __BG_LAUNCH__;
+}
+
+/* Flush left, full height, 360px (set in code). Only the two right corners are rounded: the panel
+   grows out of the window edge, and a rounded left corner would expose paper behind it. */
+QWidget#launchPage QWidget#launchPanel {
+    background: __BG_LIST__;
+    border: none;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+}
+
+/* The hero number is the page title: 24px, near-black, never a control. */
+QWidget#launchPage QLabel#pageTitle {
+    color: __FG_LAUNCH__;
+    font-size: 24px;
+    font-weight: 700;
+}
+QWidget#launchPage QLabel#pageSubtitle {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 12px;
+}
+QWidget#launchPage QLabel#launchHint {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 12px;
+}
+QWidget#launchPage QLabel#accountName {
+    color: __FG_LAUNCH__;
+    font-size: 14px;
+    font-weight: 600;
+}
+QWidget#launchPage QLabel#launchStats,
+QWidget#launchPage QLabel#launchLast {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 11px;
+}
+
+/* Inline account switch (24px, on the name row): a quiet icon, not a second row. */
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"] {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 0;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:hover {
+    background: __BG_HOVER__;
+    border-color: transparent;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"][keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* The one filled control. Its green fill and white text come from the base QPushButton rule; the
+   two labels inside it keep the PCL-style second line at 11px. */
+QWidget#launchPage QPushButton#launchButton {
+    padding: 0;
+}
+QWidget#launchPage QPushButton#launchButton QLabel#launchActionTitle {
+    background: transparent;
+    color: __FG_SELECTED__;
+    font-size: 16px;
+    font-weight: 700;
+}
+QWidget#launchPage QPushButton#launchButton QLabel#launchActionHint {
+    background: transparent;
+    color: __FG_SELECTED__;
+    font-size: 11px;
+}
+
+/* Two equal secondary actions: white face, 1px neutral border, dark label. 12px type and 8px side
+   padding are what keep the longest German/Russian label on one line inside a 154px half. */
+QWidget#launchPage QPushButton#secondaryButton {
+    background: __BG_LIST__;
+    color: __FG_LAUNCH__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    padding: 8px 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QWidget#launchPage QPushButton#secondaryButton:hover {
+    background: __BG_HOVER__;
+    border-color: __ACCENT__;
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton:disabled {
+    background: __BG_LIST__;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[keyboardFocus="true"]:disabled {
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* Advanced disclosure: a secondary button that reads as a quiet text row. It keeps the
+   #secondaryButton object name on purpose - that is the selector the focus ring is attached to in
+   BOTH sheets, so the keyboard cue exists in the dark theme too without editing style.qss. */
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"] {
+    background: transparent;
+    border-color: transparent;
+    color: __FG_LAUNCH_HINT__;
+    padding: 4px 8px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:hover {
+    background: __BG_HOVER__;
+    border-color: transparent;
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:checked {
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"][keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* PCL form metrics: 40px field, 6px radius, 1px #c5d5e8 border, 12px left padding, 15px text;
+   focus turns the border into the accent, disabled greys the whole field. The label column and the
+   56px row are set in code. */
+QWidget#launchPage QLineEdit {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: 6px;
+    padding: 0 12px;
+    min-height: 38px;
+    color: __FG_LAUNCH__;
+    font-size: 15px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}
+QWidget#launchPage QLineEdit:hover {
+    border-color: __BORDER_HOVER__;
+}
+QWidget#launchPage QLineEdit:disabled {
+    background: __BG_LAUNCH_FIELD_DISABLED__;
+    color: __FG_DISABLED__;
+}
+QWidget#launchPage QLineEdit[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+QWidget#launchPage QLabel#fieldLabel {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 12px;
+}

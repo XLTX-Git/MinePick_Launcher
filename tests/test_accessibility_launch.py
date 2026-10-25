@@ -222,7 +222,7 @@ def test_mouse_state_reaches_the_gate_as_mouse(app, monkeypatch, env):
     monkeypatch.setattr(app, "_focus_tracker", _Tracker(), raising=False)
     page = LaunchPage()
     try:
-        page.version_combo.setEditText("1.20.1")
+        page.set_version_id("1.20.1")
         page._on_launch_clicked()
         assert seen["trigger_source"] is TriggerSource.MOUSE
     finally:
@@ -249,7 +249,7 @@ def test_space_reaches_the_gate_as_keyboard(app, monkeypatch, env):
     monkeypatch.setattr(app, "_focus_tracker", _Tracker(), raising=False)
     page = LaunchPage()
     try:
-        page.version_combo.setEditText("1.20.1")
+        page.set_version_id("1.20.1")
         page._on_launch_clicked()
         assert seen["trigger_source"] is TriggerSource.KEYBOARD
     finally:

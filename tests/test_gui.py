@@ -22,7 +22,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication, QLabel, QStackedWidget, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QStackedWidget, QWidget
 
 from launcher import config as config_mod
 
@@ -338,11 +338,17 @@ def test_batch1_widgets_exist(app, monkeypatch, ws_tmp):
     assert versions.model.columnCount() == 4
     # launch page: the main page keeps only what a normal launch needs
     launch = window.pages["launch"]
-    assert launch.version_combo is not None
-    assert launch.account_button is not None  # icon-only button that jumps to the account page
+    # The version number is a QLabel hero, not a dropdown: the launch page owns no QComboBox at all.
+    assert launch.version_label is not None
+    assert not hasattr(launch, "version_combo")
+    assert launch.findChildren(QComboBox) == []
+    assert launch.account_button is not None  # inline icon-only button that jumps to the account page
     assert not hasattr(launch, "account_combo")  # accounts are switched on the account page now
-    assert launch.memory_spin is not None
+    # Memory moved to the settings page and the per-instance settings; the launch page no longer
+    # keeps a third copy of the value (it reads cfg.memory_gb when it launches).
+    assert not hasattr(launch, "memory_spin")
     assert launch.server_edit is not None
+    assert launch.advanced_panel.isVisibleTo(launch) is False  # the server field starts collapsed
     # trimmed in 0.3.0: duplicated settings or details with a sane default
     assert not hasattr(launch, "jvm_args_edit")
     assert not hasattr(launch, "language_combo")
@@ -918,7 +924,7 @@ def test_loader_prompt_dialog(app, monkeypatch, ws_tmp):
     assert dialog.selected_loader() == "forge"
     dialog.close()
 
-def test_launch_version_combo_installed_only(app, monkeypatch, ws_tmp):
+def test_launch_version_choices_installed_only(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data18"))
     from launcher import config as config_mod
 
@@ -937,8 +943,51 @@ def test_launch_version_combo_installed_only(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["launch"]
         page._populate_versions()
-        items = [page.version_combo.itemText(i) for i in range(page.version_combo.count())]
-        assert items == ["1.20.1", "1.8.9"]  # only installed versions, not the full manifest
+        # The label-only hero still offers exactly the installed versions, not the full manifest.
+        assert page.installed_versions == ["1.20.1", "1.8.9"]
+        assert [label for label, _id in page.version_choices] == ["1.20.1", "1.8.9"]
+        page.set_version_id("1.8.9")
+        assert page.version_label.text() == "1.8.9"
+        assert page._current_version_id() == "1.8.9"
+    finally:
+        if window is not None:
+            window.close()
+            app.processEvents()
+
+
+def test_launch_stats_hide_a_zero_line(app, monkeypatch, ws_tmp):
+    """The bottom counts are honest: no fake zeros, and an all-zero line hides itself."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_stats"))
+    from gui import i18n
+    from launcher import config as config_mod
+
+    i18n.set_language("zh_cn")
+    game = ws_tmp / "mc_stats"
+    version_dir = game / "versions" / "1.20.1"
+    version_dir.mkdir(parents=True)
+    (version_dir / "1.20.1.json").write_text("{}", encoding="utf-8")
+    _cfg, _p = config_mod.load()
+    _cfg.game_dir = game
+    config_mod.save(_cfg, _p)
+
+    from gui.main_window import MainWindow
+
+    window = None
+    try:
+        window = MainWindow()
+        page = window.pages["launch"]
+        page._populate_versions()
+        page.set_version_id("1.20.1")
+        assert page.stats_label.isHidden(), "a profile with no mods and no worlds showed a zero line"
+
+        (version_dir / "mods").mkdir()
+        (version_dir / "mods" / "demo.jar").write_bytes(b"PK")
+        world = version_dir / "saves" / "world"
+        world.mkdir(parents=True)
+        (world / "level.dat").write_bytes(b"level")
+        page._refresh_stats()
+        assert not page.stats_label.isHidden()
+        assert page.stats_label.text() == "Mod 1 · 世界 1"
     finally:
         if window is not None:
             window.close()
@@ -1580,7 +1629,7 @@ def test_display_version_name_normalizes_loaders():
     assert display_version_name("quilt-loader-0.24.0-1.20.1") == "Quilt 0.24.0-1.20.1"
 
 
-def test_launch_combo_normalizes_and_keeps_real_id(app, monkeypatch, ws_tmp):
+def test_launch_hero_normalizes_and_keeps_real_id(app, monkeypatch, ws_tmp):
     """The launch page shows normalized names but launches with the real profile id."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_norm"))
     from launcher import config as config_mod
@@ -1600,11 +1649,11 @@ def test_launch_combo_normalizes_and_keeps_real_id(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["launch"]
         page._populate_versions()
-        labels = [page.version_combo.itemText(i) for i in range(page.version_combo.count())]
+        labels = [label for label, _id in page.version_choices]
         assert "Fabric 0.15.11-1.20.1" in labels
-        page.version_combo.setCurrentIndex(page.version_combo.findData("fabric-loader-0.15.11-1.20.1"))
-        real_id = page.version_combo.currentData() or page.version_combo.currentText()
-        assert real_id == "fabric-loader-0.15.11-1.20.1"
+        page.set_version_id("fabric-loader-0.15.11-1.20.1")
+        assert page.version_label.text() == "Fabric 0.15.11-1.20.1"
+        assert page._current_version_id() == "fabric-loader-0.15.11-1.20.1"
     finally:
         if window is not None:
             window.close()

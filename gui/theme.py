@@ -157,6 +157,11 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     # dark rows hover with this; the light sheet uses ACCENT_TINT instead, so the light value
     # was a copy of the dark one that no rule could reach (FG_TEXT on it read 1.06:1).
     "BG_HOVER": {"dark": "#1c2531", "light": "#e6eaf0"},
+    # Launch page mock-up: the cool paper the white side panel sits on (verified against
+    # launch_cool.png: the page measured #edf2f8 there). Dark keeps the window colour; the
+    # launch panel tokens are referenced by style_light.qss only.
+    "BG_LAUNCH": {"dark": "#0f141b", "light": "#edf2f8"},
+    "BG_LAUNCH_FIELD_DISABLED": {"dark": "#232c39", "light": "#e9edf2"},
     "BG_LIST": {"dark": "#161d27", "light": "#ffffff"},
     "BG_LIST_2": {"dark": "#1c2531", "light": "#ffffff"},
     "BG_OPTION": {"dark": "#161d27", "light": "#f1f3f6"},
@@ -177,6 +182,7 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BORDER_BUTTON_SECONDARY": {"dark": "#33404f", "light": "#b6c1cd"},
     "BORDER_BUTTON_SECONDARY_2": {"dark": "#232c39", "light": "#d8dee6"},
     "BORDER_HOVER": {"dark": "#33404f", "light": "#a7b4c2"},
+    "BORDER_LAUNCH_FIELD": {"dark": "#33404f", "light": "#c5d5e8"},
     "BORDER_LIST": {"dark": "#27303d", "light": "#c9d2dc"},
     "BORDER_OVERLAY_CODE": {"dark": "#e5787f", "light": "#e5787f"},
     "BORDER_SWATCH": {"dark": "#3a4757", "light": "#b6c1cd"},
@@ -194,6 +200,9 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "FG_DISABLED_2": {"dark": "#6b7c92", "light": "#78838f"},
     "FG_EMPTY_STATE": {"dark": "#7b8ca3", "light": "#677585"},
     "FG_HINT": {"dark": "#8fa2b8", "light": "#4f6070"},
+    # Launch page hero and quiet lines (verified cool version: #1f2328 body, #6b7280 hints).
+    "FG_LAUNCH": {"dark": "#e6ecf5", "light": "#1f2328"},
+    "FG_LAUNCH_HINT": {"dark": "#8fa2b8", "light": "#6b7280"},
     "FG_OPTION": {"dark": "#d8dee9", "light": "#26313d"},
     "FG_OPTION_2": {"dark": "#ffffff", "light": "#14503a"},
     "FG_OVERLAY_BODY": {"dark": "#d7e0ec", "light": "#1f2a36"},

@@ -252,7 +252,7 @@ def test_e2e_launch_uses_configured_jvm_args(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["launch"]
-        page.version_combo.setEditText("1.20.1")
+        page.set_version_id("1.20.1")
         page.launch()
         app.processEvents()
         assert _wait_until(app, lambda: "已取消" in window.status_label.text())
@@ -315,7 +315,7 @@ def test_e2e_launch_flow_runs_and_reports_exit(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["launch"]
-        page.version_combo.setEditText("1.20.1")
+        page.set_version_id("1.20.1")
         page.launch()
         # the prepared command really reaches the process runner
         assert _wait_until(app, lambda: bool(run_calls))

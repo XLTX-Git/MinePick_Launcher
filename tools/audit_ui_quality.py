@@ -78,6 +78,11 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     ("FG_TEXT", "BG_LIST_2", 4.5, True),
     ("FG_TEXT", "BG_SIDEBAR", 4.5, True),
     ("FG_TEXT", "BG_SECTION", 4.5, True),
+    # Launch page mock-up: the cool paper, the white side panel, its two text roles.
+    ("FG_LAUNCH", "BG_LAUNCH", 4.5, True),
+    ("FG_LAUNCH", "BG_LIST", 4.5, True),
+    ("FG_LAUNCH_HINT", "BG_LIST", 4.5, True),
+    ("FG_DISABLED", "BG_LAUNCH_FIELD_DISABLED", 3.0, False),
     # Settings mock-up: the page's pale-blue gradient stops.
     ("FG_TEXT", "BG_SETTINGS_TOP", 4.5, True),
     ("FG_TEXT", "BG_SETTINGS_BOTTOM", 4.5, True),
@@ -150,6 +155,7 @@ NON_TEXT_PAIRS: tuple[Pair, ...] = (
     ("BORDER_BUTTON_SECONDARY_2", "BG_BUTTON_SECONDARY_2", 3.0, False),
     ("BORDER_HOVER", "BG_LIST", 3.0, False),
     ("BORDER_HOVER", "BG_OPTION", 3.0, False),
+    ("BORDER_LAUNCH_FIELD", "BG_LIST", 3.0, False),
     ("BORDER_TABLE", "BG_LIST", 3.0, False),  # token currently unused by the sheets
     ("BORDER_SWATCH", "BG_OPTION", 3.0, False),
     ("BORDER_OVERLAY_CODE", "BG_OVERLAY_CODE", 3.0, False),

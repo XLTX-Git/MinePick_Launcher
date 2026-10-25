@@ -165,12 +165,20 @@ class MainWindow(QMainWindow):
         apply_no_focus_outline(self.sidebar)  # remove focus outline from the selected item's text
 
         nav = QWidget()
-        nav.setFixedWidth(150)
+        # The content margin is zero now so the launch page's white panel can reach the window edge.
+        # The nav keeps its own 12px inset (and its 150px rail), so every other page looks unchanged.
+        nav.setFixedWidth(162)
         nav_layout = QVBoxLayout(nav)
-        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setContentsMargins(12, 12, 0, 12)
         nav_layout.addWidget(self.sidebar, 1)
 
         self.stack = QStackedWidget()
+        # The stack carries the 12px inset for every page except the launch page (which goes
+        # edge-to-edge). Applying it here rather than on each page keeps the other seven pages
+        # pixel-identical after the window margin change: their own layouts are untouched.
+        stack_layout = self.stack.layout()
+        if stack_layout is not None:
+            stack_layout.setContentsMargins(12, 12, 12, 12)
         # The window's height must not depend on which pages happen to be built. A stacked widget
         # reports the largest minimum of its children, so with lazy construction a tall page would
         # change the floor the moment it was first visited. Ignoring the height stops that; the width
@@ -180,7 +188,8 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content.setObjectName("appContent")
         layout = QHBoxLayout(content)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(nav)
         layout.addWidget(self.stack, 1)
 
@@ -297,6 +306,19 @@ class MainWindow(QMainWindow):
         self.sidebar.blockSignals(False)
         self._on_nav_changed(0)  # blocks were held, so the first page is shown explicitly
 
+    def _apply_page_inset(self, key: str) -> None:
+        """Give the launch page the full content area; keep the 12px frame on every other page.
+
+        The content layout's margin is zero so the launch panel can touch the window edge. The other
+        pages used to get their 12px frame from that margin; moving the same inset onto the stack for
+        them keeps their geometry - and therefore every screenshot and width measurement - unchanged.
+        """
+        stack_layout = self.stack.layout()
+        if stack_layout is None:
+            return
+        inset = 0 if key == "launch" else 12
+        stack_layout.setContentsMargins(inset, inset, inset, inset)
+
     def _on_nav_changed(self, row: int) -> None:
         """Show the page for ``row`` - building it on first visit - then refresh and fade it in."""
         if not 0 <= row < len(NAV_KEYS):
@@ -304,6 +326,7 @@ class MainWindow(QMainWindow):
         key = NAV_KEYS[row]
         page = self.pages[key]  # first visit to a page is what constructs it
         self.stack.setCurrentWidget(page)
+        self._apply_page_inset(key)
         if key == "launch":
             # auto-syncs the version dropdown after a loader/modpack install
             page.refresh_versions()
