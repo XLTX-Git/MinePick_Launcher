@@ -43,11 +43,7 @@ from gui.accessibility_launch import (
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
-from gui.pages.launch_visuals import (
-    avatar_pixmap,
-    block_pixmap,
-    chevron_pixmap,
-)
+from gui.paint_utils import avatar_pixmap, block_pixmap, chevron_pixmap
 from gui.widgets import (
     disable_keeping_focus,
     set_app_status,
@@ -121,17 +117,16 @@ def _guessed_version_type(version_id: str) -> str:
 
 
 class _LaunchActionButton(QPushButton):
-    """The primary action, optionally carrying the version on a small second line.
+    """The primary action, painting its 16px title through a child label.
 
-    A QPushButton paints one font size, and the PCL-style variant puts the version inside the button.
-    Two child labels give that second line without turning the action into a compound widget: they are
-    transparent for the mouse and take no focus, so the button stays one keyboard stop and one click.
+    A QPushButton paints one font size; the launch sheet wants the click target and its text to have
+    separate metrics, so the title lives in a transparent label that takes no focus and no mouse.
+    The button stays one keyboard stop and one click.
     """
 
-    def __init__(self, title: str, subtitle: str = "") -> None:
+    def __init__(self, title: str) -> None:
         super().__init__()
         self._title = title
-        self._subtitle = subtitle
         self.setObjectName("launchButton")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -139,25 +134,17 @@ class _LaunchActionButton(QPushButton):
         self._layout.setContentsMargins(0, 4, 0, 4)
         self._layout.setSpacing(0)
         self._layout.addStretch(1)
-        self._title_label = self._line(title, "launchActionTitle")
-        self._hint_label = self._line(subtitle, "launchActionHint")
+        self._title_label = QLabel(title)
+        self._title_label.setObjectName("launchActionTitle")
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._title_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # The dark sheet has no rule for this label; ButtonText is the button's own white there.
+        self._title_label.setForegroundRole(QPalette.ColorRole.ButtonText)
         self._layout.addWidget(self._title_label)
-        self._layout.addWidget(self._hint_label)
         self._layout.addStretch(1)
-        self._hint_label.setVisible(bool(subtitle))
-        self.setFixedHeight(56 if subtitle else 40)
+        self.setFixedHeight(40)
         self._sync_accessible_name()
-
-    @staticmethod
-    def _line(text: str, object_name: str) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName(object_name)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        # The dark sheet has no rule for these labels; ButtonText is the button's own white there.
-        label.setForegroundRole(QPalette.ColorRole.ButtonText)
-        return label
 
     def text(self) -> str:  # QPushButton.text() is not virtual; callers and tests use this
         return self._title
@@ -167,16 +154,8 @@ class _LaunchActionButton(QPushButton):
         self._title_label.setText(text)
         self._sync_accessible_name()
 
-    def set_subtitle(self, text: str) -> None:
-        """Second line: the version in the compact variant, empty in the hero variant."""
-        self._subtitle = text
-        self._hint_label.setText(text)
-        self._hint_label.setVisible(bool(text))
-        self.setFixedHeight(56 if text else 40)
-        self._sync_accessible_name()
-
     def _sync_accessible_name(self) -> None:
-        self.setAccessibleName(" ".join(part for part in (self._title, self._subtitle) if part))
+        self.setAccessibleName(self._title)
 
 
 def _count_worlds(saves_dir: Path) -> int:
@@ -197,11 +176,8 @@ class LaunchPage(QWidget):
     instance_settings_requested = Signal(str)  # ... and open its per-instance settings
     account_requested = Signal()  # the account button jumps to the account page
 
-    def __init__(self, *, hero: bool = True) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        # ``hero`` picks the two mocks the user asked to compare: the big version number at the top
-        # (True, the shipped default) or the PCL-style version line inside the launch button (False).
-        self._hero = hero
         self._version_id = ""
         self._version_choices: list[tuple[str, str]] = []
         self.setObjectName("launchPage")
@@ -213,8 +189,8 @@ class LaunchPage(QWidget):
         self.version_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.version_icon.setPixmap(block_pixmap(30))
         # The big version number *is* the page title. The shared header gate expects a pageTitle /
-        # pageSubtitle pair on every page, and a separate "Launch" heading above the mock-up's hero
-        # would be exactly the extra chrome the panel design removes.
+        # pageSubtitle pair on every page, and a separate "Launch" heading above the mock-up's big
+        # version number would be exactly the extra chrome the panel design removes.
         self.version_label = QLabel(tr("launch.version.none"))
         self.version_label.setObjectName("pageTitle")
         self.version_label.setProperty("versionHero", True)
@@ -242,9 +218,6 @@ class LaunchPage(QWidget):
 
         self.version_block = QWidget()
         self.version_block.setLayout(version_row)
-        # The compact variant keeps the meta line and the hint but drops the big number: the version
-        # lives in the launch button there.
-        self.version_label.setVisible(hero)
 
         # ---- account block: one inline row, the switch button on its right ----
         self.avatar_label = QLabel()
@@ -273,8 +246,7 @@ class LaunchPage(QWidget):
         account_row.addWidget(self.account_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ---- the one primary action and its two equal secondary siblings ----
-        subtitle = "" if hero else self._version_label_text()
-        self.launch_button = _LaunchActionButton(tr("launch.button"), subtitle)
+        self.launch_button = _LaunchActionButton(tr("launch.button"))
         self.select_instance_button = QPushButton(tr("launch.instances.select"))
         self.instance_settings_button = QPushButton(tr("launch.instances.settings"))
         for button in (self.select_instance_button, self.instance_settings_button):
@@ -450,12 +422,9 @@ class LaunchPage(QWidget):
         self.advanced_button.setIcon(QIcon(chevron_pixmap(expanded)))
 
     def _refresh_version_block(self) -> None:
-        """Update the hero number, the meta line, the counts and the last-launch line."""
-        label = self._version_label_text()
-        self.version_label.setText(label)
+        """Update the version number, the meta line, the counts and the last-launch line."""
+        self.version_label.setText(self._version_label_text())
         self.version_meta.setText(self._version_meta_text())
-        if not self._hero:
-            self.launch_button.set_subtitle(label)
         self._refresh_last_launch()
         self._refresh_stats()
 

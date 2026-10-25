@@ -829,9 +829,8 @@ QWidget#settingsPage QGroupBox::title {
 /* Launch page, final: cool paper + one white side panel flush to the edge.     */
 /*                                                                            */
 /* Everything is scoped to #launchPage / #launchPanel, so no other page moves. */
-/* The right half is deliberately blank paper: no artwork, no widgets. The     */
-/* launch_visuals.py artwork stays in the tree but this page no longer mounts  */
-/* it. No rule here reaches the dark sheet.                                    */
+/* The right half is deliberately blank paper: no artwork, no widgets.        */
+/* No rule here reaches the dark sheet.                                       */
 /* ========================================================================== */
 
 QWidget#launchPage {
@@ -891,7 +890,7 @@ QWidget#launchPage QPushButton#iconButton[accountSwitch="true"][keyboardFocus="t
 }
 
 /* The one filled control. Its green fill and white text come from the base QPushButton rule; the
-   two labels inside it keep the PCL-style second line at 11px. */
+   16px title label is the only text inside it. */
 QWidget#launchPage QPushButton#launchButton {
     padding: 0;
 }
@@ -900,11 +899,6 @@ QWidget#launchPage QPushButton#launchButton QLabel#launchActionTitle {
     color: __FG_SELECTED__;
     font-size: 16px;
     font-weight: 700;
-}
-QWidget#launchPage QPushButton#launchButton QLabel#launchActionHint {
-    background: transparent;
-    color: __FG_SELECTED__;
-    font-size: 11px;
 }
 
 /* Two equal secondary actions: white face, 1px neutral border, dark label. 12px type and 8px side
