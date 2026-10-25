@@ -78,14 +78,24 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     ("FG_TEXT", "BG_LIST_2", 4.5, True),
     ("FG_TEXT", "BG_SIDEBAR", 4.5, True),
     ("FG_TEXT", "BG_SECTION", 4.5, True),
-    # Launch page mock-up: the cool paper, the white side panel, its two text roles.
-    ("FG_LAUNCH", "BG_LAUNCH", 4.5, True),
+    # The page paper: every page's labels, titles and hints that are not inside a white card sit on it.
+    ("FG_TEXT", "BG_PAGE", 4.5, True),
+    ("FG_PAGE_TITLE", "BG_PAGE", 4.5, True),
+    ("FG_HINT", "BG_PAGE", 4.5, True),
+    ("FG_EMPTY_STATE", "BG_PAGE", 4.5, True),
+    ("FG_BUTTON_SECONDARY", "BG_PAGE", 4.5, True),
+    ("FG_LAUNCH", "BG_PAGE", 4.5, True),
+    ("FG_LAUNCH_HINT", "BG_PAGE", 4.5, True),
+    # The navigation rail: its item labels, their hover colour and the accent text the light sheet puts
+    # on a chip that sits on the paper (ACCENT_TEXT is derived against the paper and the chip's tint).
+    ("FG_HINT", "BG_NAV", 4.5, True),
+    ("FG_TEXT", "BG_NAV", 4.5, True),
+    ("ACCENT_TEXT", "BG_PAGE", 4.5, True, ("light",)),
+    ("ACCENT_TEXT", "ACCENT_TINT", 4.5, True, ("light",)),
+    # Launch page mock-up: the white side panel and its two text roles.
     ("FG_LAUNCH", "BG_LIST", 4.5, True),
     ("FG_LAUNCH_HINT", "BG_LIST", 4.5, True),
     ("FG_DISABLED", "BG_LAUNCH_FIELD_DISABLED", 3.0, False),
-    # Settings mock-up: the page's pale-blue gradient stops.
-    ("FG_TEXT", "BG_SETTINGS_TOP", 4.5, True),
-    ("FG_TEXT", "BG_SETTINGS_BOTTOM", 4.5, True),
     ("FG_TEXT", "BG_BUTTON_ICON", 4.5, True),
     ("FG_TEXT", "BG_HOVER", 4.5, True),
     ("FG_TEXT", "BG_DISABLED_2", 4.5, True),
@@ -107,7 +117,9 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     ("FG_OVERLAY_CODE", "BG_OVERLAY_CODE", 4.5, True),
     ("DANGER_FG", "BG_WINDOW", 4.5, True),
     ("DANGER_FG", "BG_LIST", 4.5, True),
+    ("DANGER_FG", "BG_PAGE", 4.5, True),
     ("FG_STATUS_WARNING", "BG_WINDOW", 4.5, True),
+    ("FG_STATUS_WARNING", "BG_PAGE", 4.5, True),
     # Inactive components are exempt from the contrast rules (WCAG 1.4.3 / 1.4.11), so these are
     # reported for the record and never fail.
     ("FG_DISABLED", "BG_DISABLED", 3.0, False),
@@ -141,6 +153,10 @@ NON_TEXT_PAIRS: tuple[Pair, ...] = (
     ("FOCUS_RING", "BG_WINDOW", 3.0, True),  # keyboard focus ring
     ("FOCUS_RING", "BG_LIST", 3.0, True),
     ("FOCUS_RING", "BG_SIDEBAR", 3.0, True),
+    # The paper and the rail are focus-ring surfaces too: controls sit directly on them (secondary
+    # buttons, chips, the navigation rail), so the ring has to stay visible on both.
+    ("FOCUS_RING", "BG_PAGE", 3.0, True),
+    ("FOCUS_RING", "BG_NAV", 3.0, True),
     ("BG_SCROLLBAR", "BG_LIST", 3.0, True),  # slim overlay handle, drawn only while scrolling
     ("DANGER_BORDER", "DANGER_BG", 3.0, False),
     ("DANGER_BORDER_2", "DANGER_BG", 3.0, False),
@@ -161,6 +177,10 @@ NON_TEXT_PAIRS: tuple[Pair, ...] = (
     ("BORDER_OVERLAY_CODE", "BG_OVERLAY_CODE", 3.0, False),
     ("BG_SEPARATOR", "BG_WINDOW", 3.0, False),
     ("BG_SEPARATOR", "BG_SECTION", 3.0, False),
+    # The one hairline between the rail and the paper: decoration, not a control boundary, so 1.4.11
+    # does not require a ratio - it is recorded so a future change has a number to compare against.
+    ("BORDER_NAV", "BG_NAV", 3.0, False),
+    ("BORDER_NAV", "BG_PAGE", 3.0, False),
     ("BG_RAIL_DOT", "BG_WINDOW", 3.0, False),
 )
 

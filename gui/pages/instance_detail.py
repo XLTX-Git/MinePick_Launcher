@@ -204,6 +204,10 @@ class InstanceDetail(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # Scopes the light sheet's paper-painted scroll viewport to this panel. The panel itself stays
+        # transparent on purpose: it is a tabbed inspector, not a card, so its tables keep being the
+        # white surfaces floating on the page paper.
+        self.setObjectName("instanceDetail")
         self.instance_id: str | None = None
         self.instance = None  # launcher.instances.Instance
         self.resolved = None  # launcher.instances.ResolvedInstance

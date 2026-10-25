@@ -634,9 +634,33 @@ QPushButton#titleBarMinimize:hover {
 }
 QPushButton#titleBarClose:hover { background: __BG_TITLEBAR_CLOSE__; color: __FG_SELECTED__; }
 
-/* ---------- frameless window: root and content keep the window background ---------- */
+/* ---------- frameless window: chrome, paper and the navigation rail ---------- */
 
-QWidget#appRoot, QWidget#appContent { background: __BG_WINDOW__; }
+/* Two explicit layers below the title bar. appRoot is the window chrome (one step lighter than the
+   paper); appContent and the page stack carry the page paper. The stack must paint it, not only the
+   page widget: QStackedLayout lays its child out inside the stack's contents rect, so the 6/12/12/12
+   inset around the pages would otherwise show the chrome colour as a frame. */
+QWidget#appRoot { background: __BG_WINDOW__; }
+QWidget#appContent { background: __BG_PAGE__; }
+QStackedWidget#pageStack { background: __BG_PAGE__; }
+
+/* The navigation rail is the one surface darker and bluer than the paper, so the cards in the content
+   area are the brightest thing on screen. The 1px right border is the only line between the two; it
+   sits inside the rail's fixed 162px width, so nothing in the window layout moves. */
+QWidget#navRail {
+    background: __BG_NAV__;
+    border-right: 1px solid __BORDER_NAV__;
+}
+
+/* Page-level scroll viewports paint the paper themselves. Setting it only on the page container is not
+   enough: the viewport is the widget that scrolls, and a transparent viewport falls back to the
+   platform's white Base - the white streak that appears when a long page is scrolled to its end.
+   Scoped by page, so the white overlay card and the first-run wizard keep their own surface. */
+QWidget#settingsPage QScrollArea > QWidget#qt_scrollarea_viewport,
+QWidget#aboutPage QScrollArea > QWidget#qt_scrollarea_viewport,
+QWidget#instanceDetail QScrollArea > QWidget#qt_scrollarea_viewport {
+    background: __BG_PAGE__;
+}
 
 /* ---------- first-run wizard overlay ---------- */
 
@@ -696,13 +720,9 @@ QDoubleSpinBox#wizardMemory { min-height: 30px; }
 /* of the app already uses.                                                   */
 /* ========================================================================== */
 
-/* Layer 1 - the pale blue "paper" behind the page. */
+/* Layer 1 - the page paper behind the page, the same token every other page uses. */
 QWidget#settingsPage {
-    background: qlineargradient(
-        x1: 0, y1: 0, x2: 0, y2: 1,
-        stop: 0 __BG_SETTINGS_TOP__,
-        stop: 1 __BG_SETTINGS_BOTTOM__
-    );
+    background: __BG_PAGE__;
 }
 
 /* Layer 3 - the solid accent banner that replaces the old flat title strip. */
@@ -919,15 +939,31 @@ QWidget#settingsPage QGroupBox::title {
 }
 
 /* ========================================================================== */
-/* Launch page, final: cool paper + one white side panel flush to the edge.     */
+/* About page: each section becomes a white card on the paper.                */
+/*                                                                            */
+/* The three blocks (information / updates / credits) already are QGroupBoxes */
+/* with a 1px border and 12px of padding, so this is only a fill and a border  */
+/* colour: no widget, no spacing and no size hint changes. The page had no    */
+/* card at all before - it read as one flat sheet of legal text.              */
+/* ========================================================================== */
+
+QWidget#aboutPage QGroupBox {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+}
+
+/* ========================================================================== */
+/* Launch page: the shared page paper + one white side panel flush to the     */
+/* edge.                                                                      */
 /*                                                                            */
 /* Everything is scoped to #launchPage / #launchPanel, so no other page moves. */
 /* The right half is deliberately blank paper: no artwork, no widgets.        */
-/* No rule here reaches the dark sheet.                                       */
+/* The paper is the same __BG_PAGE__ every other page paints - it is not a    */
+/* second, slightly different blue. No rule here reaches the dark sheet.      */
 /* ========================================================================== */
 
 QWidget#launchPage {
-    background: __BG_LAUNCH__;
+    background: __BG_PAGE__;
 }
 
 /* Flush left, full height, 360px (set in code). Only the two right corners are rounded: the panel
@@ -1085,13 +1121,15 @@ QWidget#launchPage QLabel#fieldLabel {
 QWidget#resourcesPage { background: transparent; }
 
 /* The tab bar is gone: four checkable buttons switch the stacked pages. 32px tall, fully rounded,
-   8px apart (the HBox in code owns the gap). The unselected label uses ACCENT_BUTTON - the accent
-   shade this sheet also uses for filled buttons - because it clears 4.5:1 as text on the page
-   paper, which the pure ACCENT does not (3.4:1). The checked chip already carries white text; where
-   FOCUS_RING equals its own fill, the ring switches to that same white so the focus stays visible. */
+   8px apart (the HBox in code owns the gap). The unselected label uses ACCENT_TEXT: the shade derived
+   against both the page paper and this chip's own tinted hover fill, because the button fill shade
+   (ACCENT_BUTTON) only guarantees WHITE text on itself and measured 4.3:1 as text on the paper. The
+   pure ACCENT does not reach 4.5 either (3.0-3.7:1 there). The checked chip already carries white
+   text; where FOCUS_RING equals its own fill, the ring switches to that same white so the focus stays
+   visible. */
 QPushButton#resourceChip {
     background: transparent;
-    color: __ACCENT_BUTTON__;
+    color: __ACCENT_TEXT__;
     border: 1px solid transparent;
     border-radius: 16px;
     padding: 0 16px;

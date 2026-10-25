@@ -169,12 +169,21 @@ class MainWindow(QMainWindow):
         nav = QWidget()
         # The content margin is zero now so the launch page's white panel can reach the window edge.
         # The nav keeps its own 12px inset (and its 150px rail), so every other page looks unchanged.
+        # The object name is what the light sheet paints the rail with; WA_StyledBackground is required
+        # for a plain QWidget to honour a QSS background at all (the settings page needs the same
+        # attribute for its paper). Neither changes the layout: the rail keeps its 162px and the 1px
+        # separator on its right edge is drawn inside that width.
+        nav.setObjectName("navRail")
+        nav.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         nav.setFixedWidth(162)
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(12, 12, 0, 12)
         nav_layout.addWidget(self.sidebar, 1)
 
         self.stack = QStackedWidget()
+        # The page paper is painted on the stack itself (see QStackedWidget#pageStack in the light
+        # sheet): pages are transparent, and the stack's own margins would otherwise show the chrome.
+        self.stack.setObjectName("pageStack")
         # The stack carries the old 12/6/12/12 frame for every page except the launch page (which
         # goes edge-to-edge). QStackedLayout lays its child out in the *widget's* contents rect, so
         # the margin is set on the stack itself; this keeps the other seven pages pixel-identical.

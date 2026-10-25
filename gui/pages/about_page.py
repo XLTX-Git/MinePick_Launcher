@@ -78,6 +78,8 @@ class AboutPage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        # Scopes the light sheet's "each section is a white card on the paper" rule to this page.
+        self.setObjectName("aboutPage")
         self._release: updates.ReleaseInfo | None = None
         self._pending: Path | None = None
         self._pending_version = ""
