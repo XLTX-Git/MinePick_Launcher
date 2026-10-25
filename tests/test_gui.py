@@ -392,10 +392,14 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
     assert settings.after_launch_combo.count() == 3
     assert settings.trim_memory_check is not None
     assert not hasattr(settings, "blur_check")  # the backdrop blur is unconditional now, not a setting
-    # Spin boxes ignore the mouse wheel to avoid accidental value changes
-    from gui.widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
+    # Spin boxes ignore the mouse wheel to avoid accidental value changes. Memory is a slider now:
+    # the number beside it is a read-out, so there is no third spin box to keep in step.
+    from PySide6.QtWidgets import QSlider
 
-    assert isinstance(settings.memory_spin, NoWheelDoubleSpinBox)
+    from gui.widgets import NoWheelSpinBox
+
+    assert isinstance(settings.memory_slider, QSlider)
+    assert not hasattr(settings, "memory_spin")
     assert isinstance(settings.concurrency_spin, NoWheelSpinBox)
     # The three-state description label must stay visible next to the combo
     labels = [lbl.text() for lbl in settings.findChildren(QLabel)]
@@ -403,6 +407,61 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
     account = window.pages["account"]
     assert account.avatar_label is not None
     window.close()
+
+
+def test_settings_memory_slider_keeps_an_above_range_value(app, monkeypatch, ws_tmp):
+    """The thumb clamps to the device range; the stored GB value is never rewritten on load."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "memory_slider"))
+    monkeypatch.setattr("launcher.memory.system_memory_gb", lambda: (16.0, 12.0))
+    monkeypatch.setattr("launcher.java.locate.selected_java_bits", lambda *a, **k: 64)
+
+    from gui.pages.settings_page import SettingsPage
+    from launcher import config
+
+    cfg, cfg_path = config.load()
+    cfg.memory_gb = 32.0
+    cfg.memory_auto = False
+    config.save(cfg, cfg_path)
+
+    page = SettingsPage()
+    try:
+        assert page.memory_slider.maximum() == 14  # 1.0 .. 8.0 in 0.5 GB steps
+        assert page.memory_slider.value() == 14  # thumb parked at max, not at 32 GB
+        assert page.memory_value_label.text().startswith("32.0")
+        assert page.memory_warning_label.text()
+        page.save()
+        stored, _ = config.load()
+        assert stored.memory_gb == 32.0  # opening/saving the page did not clamp the file
+    finally:
+        page.close()
+        page.deleteLater()
+        QApplication.processEvents()
+
+
+def test_settings_memory_slider_caps_32bit_java(app, monkeypatch, ws_tmp):
+    """A 32-bit JVM lowers the slider ceiling to 1.5 GB and says why."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "memory_slider_32"))
+    monkeypatch.setattr("launcher.memory.system_memory_gb", lambda: (16.0, 12.0))
+    monkeypatch.setattr("launcher.java.locate.selected_java_bits", lambda *a, **k: 32)
+
+    from gui.pages.settings_page import SettingsPage
+    from launcher import config
+
+    cfg, cfg_path = config.load()
+    cfg.memory_gb = 8.0
+    cfg.memory_auto = False
+    config.save(cfg, cfg_path)
+
+    page = SettingsPage()
+    try:
+        assert page.memory_slider.maximum() == 1  # 1.0 .. 1.5 in 0.5 GB steps
+        assert page.memory_slider.value() == 1
+        assert "1.5" in page.memory_recommend_label.text()
+        assert "32" in page.memory_warning_label.text()
+    finally:
+        page.close()
+        page.deleteLater()
+        QApplication.processEvents()
 
 
 def test_spin_boxes_keep_keyboard_steps_without_up_down_buttons(app):

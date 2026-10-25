@@ -15,16 +15,19 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Generate (and check) the small UI glyphs at 2x and 3x.
+"""Generate (and check) the checkbox tick at 2x and 3x.
 
-The combo arrow, the spin arrows and the checkbox tick are plain geometric shapes. The shipped 1x
-bitmaps are hard-edged, so at 150% scaling Qt has to stretch a 10x6 bitmap to 15x9 and the arrow goes
-soft with bitten edges. The fix is not a bigger interpolated bitmap but the same shape *drawn* at the
-target size: gui/theme.py picks `@2x`/`@3x` by the screen's device pixel ratio and the stylesheets keep
-the logical box (10x6 / 8x5 / 16x16), so the extra pixels land on the device grid 1:1.
+The tick is a plain geometric shape. The shipped 1x bitmap is hard-edged, so at 150%
+scaling Qt has to stretch a 16x16 bitmap to 24x24 and the stroke goes soft with bitten
+edges. The fix is not a bigger interpolated bitmap but the same shape *drawn* at the
+target size: gui/theme.py picks `@2x`/`@3x` by the screen's device pixel ratio and the
+stylesheets keep the logical box (16x16), so the extra pixels land on the device grid 1:1.
 
-The 1x files are never rewritten here: they are what a 100% display still uses, and redrawing them
-would change the look at the most common scaling.
+The 1x file is never rewritten here: it is what a 100% display still uses, and redrawing
+it would change the look at the most common scaling.
+
+The old combo-arrow and spin-arrow bitmaps were retired when the sheets moved to SVG
+chevrons and hid the spin sub-controls; only the checkbox tick is generated now.
 
     python tools/gen_ui_assets.py           # write the @2x/@3x files
     python tools/gen_ui_assets.py --check   # verify they exist at the exact multiples (gate)
@@ -45,11 +48,10 @@ SCALES = (2, 3)
 class Glyph:
     """One logical-size glyph, described by the shape that has to be drawn at any scale."""
 
-    def __init__(self, stem: str, width: int, height: int, shape: str, colour: str) -> None:
+    def __init__(self, stem: str, width: int, height: int, colour: str) -> None:
         self.stem = stem
         self.width = width
         self.height = height
-        self.shape = shape
         self.colour = colour
 
     def path(self, scale: int) -> Path:
@@ -59,19 +61,11 @@ class Glyph:
         return ASSET_DIR / f"{self.stem}.png"
 
 
-GLYPHS = (
-    Glyph("down_arrow", 10, 6, "triangle_down", "#8b9bb4"),
-    Glyph("down_arrow_light", 10, 6, "triangle_down", "#5f6b7a"),
-    Glyph("spin_up", 8, 5, "triangle_up", "#8a9ab3"),
-    Glyph("spin_up_light", 8, 5, "triangle_up", "#5f6b7a"),
-    Glyph("spin_down", 8, 5, "triangle_down", "#8a9ab3"),
-    Glyph("spin_down_light", 8, 5, "triangle_down", "#5f6a79"),
-    Glyph("check", 16, 16, "check", "#ffffff"),
-)
+GLYPHS = (Glyph("check", 16, 16, "#ffffff"),)
 
 
 def render(glyph: Glyph, scale: int) -> None:
-    """Draw the shape at `scale` x the logical size, antialiased, on transparency."""
+    """Draw the tick at `scale` x the logical size, antialiased, on transparency."""
     from PySide6.QtCore import QPointF, Qt
     from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 
@@ -81,33 +75,14 @@ def render(glyph: Glyph, scale: int) -> None:
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.scale(scale, scale)
-    colour = QColor(glyph.colour)
-
-    if glyph.shape == "check":
-        pen = QPen(colour, 2.0)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        path = QPainterPath(QPointF(3.5, 8.5))
-        path.lineTo(6.5, 11.5)
-        path.lineTo(13.0, 4.0)
-        painter.drawPath(path)
-    else:
-        path = QPainterPath()
-        width, height = float(glyph.width), float(glyph.height)
-        if glyph.shape == "triangle_down":
-            path.moveTo(0.0, 0.0)
-            path.lineTo(width, 0.0)
-            path.lineTo(width / 2.0, height)
-        else:  # triangle_up
-            path.moveTo(0.0, height)
-            path.lineTo(width, height)
-            path.lineTo(width / 2.0, 0.0)
-        path.closeSubpath()
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(colour)
-        painter.drawPath(path)
-
+    pen = QPen(QColor(glyph.colour), 2.0)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    path = QPainterPath(QPointF(3.5, 8.5))
+    path.lineTo(6.5, 11.5)
+    path.lineTo(13.0, 4.0)
+    painter.drawPath(path)
     painter.end()
     image.save(str(glyph.path(scale)))
 

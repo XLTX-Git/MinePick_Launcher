@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,16 @@ from launcher import paths
 
 VERSION_RE = re.compile(r'version "([^"]+)"')
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # don't pop a console window when probing from the GUI
+
+_PE_MACHINE_BITS = {
+    0x014C: 32,  # IMAGE_FILE_MACHINE_I386
+    0x01C4: 32,  # IMAGE_FILE_MACHINE_ARMNT
+    0x8664: 64,  # IMAGE_FILE_MACHINE_AMD64
+    0xAA64: 64,  # IMAGE_FILE_MACHINE_ARM64
+}
+_ELF_CLASS_BITS = {1: 32, 2: 64}
+_MACHO_32_MAGIC = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe"}
+_MACHO_64_MAGIC = {b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"}
 
 
 class JavaError(Exception):
@@ -119,6 +130,73 @@ def probe_java_major(
         return None
     first_line = output.strip().splitlines()[0] if output.strip() else ""
     return JavaRuntime(path=java_path, major=major, provider="unknown", version=first_line)
+
+
+def executable_bits(path: Path) -> int | None:
+    """Return 32 or 64 for a native executable, or None when the format is unknown.
+
+    Read from the file header instead of ``java -version``: the settings page asks this
+    question while the user types a Java path, and spawning a JVM there would make the
+    form wait on a subprocess for a value that is already written in the file. PE
+    (Windows), ELF (Linux) and Mach-O (macOS) are covered; a symlink is followed by
+    ``open``, so a distro's ``/usr/bin/java`` still reports its target's class.
+    """
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(64)
+            if len(header) < 6:
+                return None
+            if header[:2] == b"MZ":
+                if len(header) < 0x40:
+                    return None
+                pe_offset = int.from_bytes(header[0x3C:0x40], "little")
+                handle.seek(pe_offset)
+                signature = handle.read(6)
+                if signature[:4] != b"PE\0\0":
+                    return None
+                return _PE_MACHINE_BITS.get(int.from_bytes(signature[4:6], "little"))
+            if header[:4] == b"\x7fELF":
+                return _ELF_CLASS_BITS.get(header[4])
+            magic = header[:4]
+            if magic in _MACHO_32_MAGIC:
+                return 32
+            if magic in _MACHO_64_MAGIC:
+                return 64
+    except OSError:
+        return None
+    return None
+
+
+def selected_java_bits(configured: str | Path | None = None) -> int | None:
+    """Bitness of the Java the launcher would use, without starting it.
+
+    ``configured`` is the explicit path from the settings page. When it is empty the
+    launcher auto-detects, so the same two places the detector itself consults first
+    (``JAVA_HOME`` and ``PATH``) are inspected here. A 32-bit OS can only run a 32-bit
+    JVM, so that case answers 32 even when no executable is found; otherwise an unknown
+    runtime answers None and the caller keeps its normal upper bound.
+    """
+    candidate: Path | None = None
+    raw = str(configured).strip() if configured is not None else ""
+    if raw:
+        candidate = Path(raw)
+    if candidate is None:
+        java_home = os.environ.get("JAVA_HOME")
+        if java_home:
+            exe = Path(java_home) / "bin" / ("java.exe" if os.name == "nt" else "java")
+            if exe.is_file():
+                candidate = exe
+    if candidate is None:
+        which = shutil.which("java")
+        if which:
+            candidate = Path(which)
+    if candidate is not None:
+        bits = executable_bits(candidate)
+        if bits is not None:
+            return bits
+    # Same test as launcher.diagnostics.facts.os_arch_text(): a 32-bit OS cannot run a
+    # 64-bit JVM, so the cap applies even when no executable could be inspected.
+    return 32 if sys.maxsize <= 2**32 else None
 
 
 def _managed_runtime_dirs() -> list[Path]:

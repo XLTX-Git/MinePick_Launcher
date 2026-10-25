@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -43,7 +45,6 @@ from gui import i18n
 from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve_theme
 from gui.widgets import (
     AccessibilityPreferenceGroup,
-    NoWheelDoubleSpinBox,
     NoWheelSpinBox,
     build_page_header,
     set_app_status,
@@ -56,6 +57,42 @@ tr = i18n.tr
 
 # One-click accent colours offered next to the hex field
 ACCENT_PRESETS = ("#35a06a", "#3b82f6", "#a855f7", "#e0703a", "#e05a5a", "#14b8a6", "#ec4899", "#f59e0b")
+
+# PCL's form metrics, applied to every settings field: a 40px control in a 56px row, a fixed
+# label column, and one 16px gutter between the two. The sheet carries the colours and the radius.
+FIELD_HEIGHT = 40
+FIELD_LABEL_WIDTH = 220
+ROW_SPACING = 16
+
+
+def _wrap_checkbox_text(checkbox: QCheckBox, text: str, width: int) -> str:
+    """Insert the line breaks a QCheckBox cannot compute for itself.
+
+    QCheckBox draws its label on one line, so a long sentence - the isolation policy is
+    ~900px in English - used to force the whole settings card wider than the viewport,
+    which pushed every field's right edge off-screen. QCheckBox does honour explicit
+    newlines (measured: its size hint grows in height and shrinks to the longest line),
+    so the label is laid out here at the card's text width and the resulting lines are
+    joined with ``\\n``. Languages whose sentence already fits are returned untouched.
+    """
+    if checkbox.fontMetrics().horizontalAdvance(text) <= width:
+        return text
+    layout = QTextLayout(text, checkbox.font())
+    option = QTextOption()
+    option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    layout.setTextOption(option)
+    layout.beginLayout()
+    lines: list[str] = []
+    while True:
+        line = layout.createLine()
+        if not line.isValid():
+            break
+        line.setLineWidth(width)
+        start = line.textStart()
+        lines.append(text[start : start + line.textLength()].rstrip())
+    layout.endLayout()
+    return "\n".join(line for line in lines if line)
+
 
 # Pinned to the top of the font list when installed
 COMMON_FONTS = (
@@ -128,21 +165,58 @@ class SettingsPage(QWidget):
         self.java_path_edit.setAccessibleName(tr("settings.java"))  # WCAG 4.1.2
         self.browse_java = QPushButton(tr("settings.browse"))
         self.browse_java.setObjectName("secondaryButton")
-        self.memory_spin = NoWheelDoubleSpinBox()
-        self.memory_spin.setRange(0.5, 64.0)
-        self.memory_spin.setSingleStep(0.5)
-        self.memory_spin.setSuffix(" " + tr("unit.gb"))
+        # Memory: a slider plus a live read-out (PCL's shape). The slider is the control; the
+        # number is text, so a value stored outside the device range stays visible instead of
+        # being silently rounded into the slider's range.
+        self.memory_slider = QSlider(Qt.Orientation.Horizontal)
+        self.memory_slider.setObjectName("memorySlider")
+        self.memory_slider.setAccessibleName(tr("settings.memory"))
+        self.memory_slider.setSingleStep(1)
+        self.memory_slider.setPageStep(2)
+        # The handle is a 16px circle: give the widget room for it instead of letting the
+        # default 15px size hint clip it into an oval.
+        self.memory_slider.setFixedHeight(20)
+        self.memory_value_label = QLabel("")
+        self.memory_value_label.setObjectName("memoryValue")
+        self.memory_recommend_label = QLabel("")
+        self.memory_recommend_label.setObjectName("hint")
+        self.memory_warning_label = QLabel("")
+        self.memory_warning_label.setObjectName("hint")
+        self.memory_warning_label.setWordWrap(True)
+        self.memory_warning_label.setVisible(False)
+        self._memory_value = 4.0
+        self._memory_min_gb = 1.0
+        self._memory_max_gb = 8.0
+        self._memory_java_32bit = False
+        self._updating_memory_slider = False
+        memory_row = QWidget()
+        memory_row_layout = QHBoxLayout(memory_row)
+        memory_row_layout.setContentsMargins(0, 0, 0, 0)
+        memory_row_layout.setSpacing(12)
+        memory_row_layout.addWidget(self.memory_slider, 1)
+        memory_row_layout.addWidget(self.memory_value_label, 0)
+        memory_row.setFixedHeight(FIELD_HEIGHT)
+        self.memory_box = QWidget()
+        memory_box_layout = QVBoxLayout(self.memory_box)
+        memory_box_layout.setContentsMargins(0, 0, 0, 0)
+        memory_box_layout.setSpacing(4)
+        memory_box_layout.addWidget(memory_row)
+        memory_box_layout.addWidget(self.memory_recommend_label)
+        memory_box_layout.addWidget(self.memory_warning_label)
         self.memory_auto_check = QCheckBox(tr("settings.memory_auto"))
         self.memory_auto_check.toggled.connect(self._on_memory_auto_toggled)
-        self.memory_suggest_label = QLabel("")
-        self.memory_suggest_label.setObjectName("hint")
         self.concurrency_spin = NoWheelSpinBox()
         self.concurrency_spin.setRange(1, 32)
         self.download_segments_spin = NoWheelSpinBox()
         self.download_segments_spin.setRange(1, 16)
         self.download_segments_spin.setSpecialValueText(tr("settings.download_segments.single"))
         self.download_segments_spin.setToolTip(tr("settings.download_segments.hint"))
-        self.isolation_check = QCheckBox(tr("settings.isolation"))
+        self.isolation_check = QCheckBox()
+        # 620px keeps this sentence from driving the card width; it is the longest plain
+        # checkbox label and would otherwise run past the viewport in English.
+        self.isolation_check.setText(
+            _wrap_checkbox_text(self.isolation_check, tr("settings.isolation"), 620)
+        )
         self.demo_check = QCheckBox(tr("launch.demo"))
         self.after_launch_combo = QComboBox()
         for code, label in (
@@ -166,7 +240,12 @@ class SettingsPage(QWidget):
         accessibility_layout.setSpacing(8)
         accessibility_layout.addWidget(self.accessibility_hint)
         accessibility_layout.addWidget(self.accessibility_group)
-        self.encrypt_check = QCheckBox(tr("settings.encrypt_tokens"))
+        self.encrypt_check = QCheckBox()
+        # This row also holds the password button: wrap the label at 500px so text + button
+        # together stay below the card width in German, where the sentence is the longest.
+        self.encrypt_check.setText(
+            _wrap_checkbox_text(self.encrypt_check, tr("settings.encrypt_tokens"), 500)
+        )
         self.encrypt_button = QPushButton(tr("settings.encrypt_set"))
         self.encrypt_button.setObjectName("secondaryButton")
         self.language_combo = QComboBox()
@@ -256,9 +335,9 @@ class SettingsPage(QWidget):
 
         form = QFormLayout()
         style_form(form)
-        # The sheet gives a field 30px of content + 8px padding + 1px border on each side = 48px;
-        # with this 4px gap the row pitch is the 52px PCL's settings use.
-        form.setVerticalSpacing(4)
+        # PCL's settings row: a 40px field plus this 16px gap is the 56px row pitch. The label
+        # column is fixed in _apply_form_metrics() so every field starts on the same vertical line.
+        form.setVerticalSpacing(ROW_SPACING)
         # WCAG 4.1.2: a control added straight to a row *is* the row's field, so QFormLayout hands it the
         # label text as its accessible name. Wrapping a control in a layout instead (the three rows
         # below) breaks that association - the form sees a layout, not a field - which left the game
@@ -275,9 +354,8 @@ class SettingsPage(QWidget):
         java_row.addWidget(self.browse_java)
         form.addRow(tr("settings.game_dir"), game_row)
         form.addRow(tr("settings.java"), java_row)
-        form.addRow(tr("settings.memory"), self.memory_spin)
+        form.addRow(tr("settings.memory"), self.memory_box)
         form.addRow("", self.memory_auto_check)
-        form.addRow("", self.memory_suggest_label)
         form.addRow(tr("settings.concurrency"), self.concurrency_spin)
         form.addRow(tr("settings.download_segments"), self.download_segments_spin)
         form.addRow(tr("settings.speed_limit"), self.speed_limit_spin)
@@ -302,6 +380,7 @@ class SettingsPage(QWidget):
         form.addRow(tr("settings.game_language"), self.language_combo)
         form.addRow(tr("settings.ui_language"), self.ui_language_combo)
         form.addRow(tr("settings.after_launch"), self.after_launch_combo)
+        self._apply_form_metrics(form)
 
         encrypt_row = QHBoxLayout()
         encrypt_row.addWidget(self.encrypt_check, 1)
@@ -383,7 +462,6 @@ class SettingsPage(QWidget):
             on_change(check.toggled)
         on_change(self.accessibility_group.changed)
         for spin in (
-            self.memory_spin,
             self.concurrency_spin,
             self.download_segments_spin,
             self.speed_limit_spin,
@@ -401,14 +479,78 @@ class SettingsPage(QWidget):
         if font_line is not None:
             on_change(font_line.editingFinished)
         self.accent_default_button.clicked.connect(lambda *_: self.save())
+        # Drag updates the read-out on every step but writes once, on release; a keyboard step
+        # (not sliderDown) still saves immediately, like every other control on the page.
+        self.memory_slider.valueChanged.connect(self._on_memory_slider_changed)
+        self.memory_slider.sliderReleased.connect(self.save)
+        # A different Java can change the upper bound (a 32-bit JVM caps it at 1.5 GB).
+        self.java_path_edit.editingFinished.connect(self._refresh_memory_bounds)
+
+    def _apply_form_metrics(self, form: QFormLayout) -> None:
+        """PCL's settings metrics: fixed left-aligned label column, 40px fields, 56px rows.
+
+        Done after the rows exist because QFormLayout builds the label widget itself when a
+        plain string is passed. Rows whose field is a layout (game directory, Java path,
+        accent) are measured through the layout's child widgets; the two browse buttons and
+        the three spin boxes get the same height as a text field.
+        """
+        fields = (
+            self.game_dir_edit,
+            self.java_path_edit,
+            self.proxy_edit,
+            self.cf_key_edit,
+            self.accent_edit,
+            self.concurrency_spin,
+            self.download_segments_spin,
+            self.speed_limit_spin,
+            self.window_mode_combo,
+            self.theme_combo,
+            self.radius_combo,
+            self.font_combo,
+            self.language_combo,
+            self.ui_language_combo,
+            self.after_launch_combo,
+        )
+        for widget in fields:
+            widget.setFixedHeight(FIELD_HEIGHT)
+            # The path text otherwise becomes the card's minimum width, which is wider than
+            # the window at the 930px floor; the field may shrink and scroll its text instead.
+            widget.setMinimumWidth(0)
+            widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        for button in (self.browse_game, self.browse_java):
+            button.setFixedHeight(FIELD_HEIGHT)
+            button.setMinimumWidth(0)
+        for row in range(form.rowCount()):
+            label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            if label_item is not None and label_item.widget() is not None:
+                label = label_item.widget()
+                label.setObjectName("settingsFieldLabel")
+                label.setFixedWidth(FIELD_LABEL_WIDTH)
+                label.setAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
+                label.setWordWrap(True)
+            field_item = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+            if field_item is not None and field_item.layout() is not None:
+                layout = field_item.layout()
+                for index in range(layout.count()):
+                    child = layout.itemAt(index).widget()
+                    is_field = isinstance(child, (QLineEdit, QComboBox))
+                    is_browse = child is self.browse_game or child is self.browse_java
+                    if is_field or is_browse:
+                        child.setFixedHeight(FIELD_HEIGHT)
 
     def load(self) -> None:
         cfg, _ = config.load()
         self.game_dir_edit.setText(str(cfg.game_dir) if cfg.game_dir else "")
+        # Long paths otherwise scroll to their tail the moment the page opens; showing the drive
+        # letter is what tells the user which folder this is.
+        self.game_dir_edit.setCursorPosition(0)
         self.java_path_edit.setText(str(cfg.java_path) if cfg.java_path else "")
-        self.memory_spin.setValue(cfg.memory_gb)
+        self.java_path_edit.setCursorPosition(0)
+        self._memory_value = float(cfg.memory_gb)
+        self._refresh_memory_bounds()
         self.memory_auto_check.setChecked(cfg.memory_auto)
-        self._refresh_memory_suggestion()
         self.concurrency_spin.setValue(cfg.max_concurrent_downloads)
         self.download_segments_spin.setValue(cfg.download_segments)
         self.isolation_check.setChecked(cfg.default_isolation)
@@ -490,7 +632,7 @@ class SettingsPage(QWidget):
             cfg, cfg_path = config.load()
         cfg.game_dir = self.game_dir_edit.text().strip() or None
         cfg.java_path = self.java_path_edit.text().strip() or None
-        cfg.memory_gb = self.memory_spin.value()
+        cfg.memory_gb = float(self._memory_value)
         cfg.memory_auto = self.memory_auto_check.isChecked()
         cfg.max_concurrent_downloads = self.concurrency_spin.value()
         cfg.download_segments = self.download_segments_spin.value()
@@ -534,22 +676,91 @@ class SettingsPage(QWidget):
         self.settings_changed.emit()
 
     def _on_memory_auto_toggled(self, checked: bool) -> None:
-        self.memory_spin.setEnabled(not checked)
-        if checked:
-            self._refresh_memory_suggestion()
+        """Auto mode owns the value; the slider and its read-out go quiet, not away."""
+        self.memory_slider.setEnabled(not checked)
+        self.memory_value_label.setEnabled(not checked)
 
-    def _refresh_memory_suggestion(self) -> None:
-        """Show the suggested heap size for the current game directory."""
+    def _refresh_memory_bounds(self) -> None:
+        """Recompute the device range (and the 32-bit ceiling) and clamp the thumb, not the value.
+
+        ``_memory_value`` is deliberately left alone when it sits outside ``[min, max]``: the
+        config may hold a larger heap from another machine, and opening this page must not
+        rewrite it. The thumb parks at the nearest end and a grey line says what was stored.
+        """
+        from launcher.java.locate import selected_java_bits
+        from launcher.memory import HEAP_STEP_GB, MIN_HEAP_GB, maximum_heap_gb, system_memory_gb
+
+        total_gb, _available = system_memory_gb()
+        self._memory_java_32bit = (
+            selected_java_bits(self.java_path_edit.text().strip() or None) == 32
+        )
+        self._memory_min_gb = MIN_HEAP_GB
+        self._memory_max_gb = maximum_heap_gb(
+            total_gb,
+            java_32bit=self._memory_java_32bit,
+            minimum_gb=self._memory_min_gb,
+        )
+        ticks = max(1, round((self._memory_max_gb - self._memory_min_gb) / HEAP_STEP_GB))
+        self._updating_memory_slider = True
         try:
-            from launcher.memory import count_mods, suggest_memory_gb
+            self.memory_slider.setRange(0, ticks)
+            self._position_memory_slider()
+        finally:
+            self._updating_memory_slider = False
+        self._update_memory_labels()
 
-            cfg, _ = config.load()
-            game_dir = cfg.game_dir or paths.default_game_dir()
-            mod_count = count_mods(game_dir / "mods")
-            suggestion = suggest_memory_gb(mod_count)
-            self.memory_suggest_label.setText(tr("settings.memory_suggest", f"{suggestion:.1f}"))
-        except OSError:  # probe failures are non-fatal
-            self.memory_suggest_label.setText("")
+    def _position_memory_slider(self) -> None:
+        """Park the thumb at the closest legal step to the stored value (guarded against save)."""
+        from launcher.memory import HEAP_STEP_GB
+
+        tick = round((self._memory_value - self._memory_min_gb) / HEAP_STEP_GB)
+        tick = max(0, min(int(tick), self.memory_slider.maximum()))
+        self._updating_memory_slider = True
+        try:
+            self.memory_slider.setValue(tick)
+        finally:
+            self._updating_memory_slider = False
+
+    def _on_memory_slider_changed(self, tick: int) -> None:
+        """Live read-out while dragging; save once on release or immediately for a key step."""
+        if self._updating_memory_slider:
+            return
+        from launcher.memory import HEAP_STEP_GB
+
+        self._memory_value = round(
+            self._memory_min_gb + tick * HEAP_STEP_GB, 2
+        )
+        self._update_memory_labels()
+        if not self.memory_slider.isSliderDown():
+            self.save()
+
+    def _update_memory_labels(self) -> None:
+        """Paint the GB read-out, the device recommendation and any non-blocking warning."""
+        value_text = f"{self._memory_value:.1f} " + tr("unit.gb")
+        self.memory_value_label.setText(value_text)
+        self.memory_recommend_label.setText(
+            tr("settings.memory_recommend", f"{self._memory_max_gb:g}")
+        )
+        warnings: list[str] = []
+        if self._memory_java_32bit:
+            from launcher.memory import JAVA_32BIT_HEAP_LIMIT_GB
+
+            cap = min(self._memory_max_gb, JAVA_32BIT_HEAP_LIMIT_GB)
+            warnings.append(tr("settings.memory_java32", f"{cap:g}"))
+        if self._memory_value > self._memory_max_gb + 1e-9:
+            warnings.append(
+                tr(
+                    "settings.memory_over_limit",
+                    f"{self._memory_value:g}",
+                    f"{self._memory_max_gb:g}",
+                )
+            )
+        self.memory_warning_label.setText("\n".join(warnings))
+        self.memory_warning_label.setVisible(bool(warnings))
+        description = value_text + " · " + self.memory_recommend_label.text()
+        if warnings:
+            description += " · " + " ".join(warnings)
+        self.memory_slider.setAccessibleDescription(description)
 
     def _update_encrypt_button(self) -> None:
         cfg, _ = config.load()
@@ -686,3 +897,4 @@ class SettingsPage(QWidget):
         if chosen:
             self.java_path_edit.setText(chosen)
             self.save()
+            self._refresh_memory_bounds()

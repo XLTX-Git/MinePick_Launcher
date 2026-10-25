@@ -729,18 +729,32 @@ QWidget#settingsPage QWidget#settingsCard {
     border-radius: __RADIUS_LG__;
 }
 
-/* Controls inside the card: neutral 1px outline, white field, 52px row rhythm
-   (30px content + 8px padding + 1px border, twice; the form adds a 4px gap). */
+/* PCL form metrics, the same ones the launch page's server field uses: 40px field,
+   6px radius, 1px #c5d5e8 border, 12px left padding, 15px text. The label column and
+   the 56px row pitch are layout values in settings_page.py. */
 QWidget#settingsPage QLineEdit,
 QWidget#settingsPage QComboBox,
 QWidget#settingsPage QSpinBox,
 QWidget#settingsPage QDoubleSpinBox {
     background: __BG_LIST__;
     color: __FG_TEXT__;
-    border: 1px solid __BORDER_LIST__;
-    border-radius: __RADIUS_SM__;
-    padding: 8px 12px;
-    min-height: 30px;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: 6px;
+    padding: 0 12px;
+    min-height: 38px;
+    font-size: 15px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}
+/* A combo/spin box already draws its own frame; the internal editor must not draw a
+   second one inside it. */
+QWidget#settingsPage QComboBox QLineEdit,
+QWidget#settingsPage QSpinBox QLineEdit,
+QWidget#settingsPage QDoubleSpinBox QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: 0;
 }
 QWidget#settingsPage QLineEdit:hover,
 QWidget#settingsPage QComboBox:hover,
@@ -752,8 +766,9 @@ QWidget#settingsPage QLineEdit:disabled,
 QWidget#settingsPage QComboBox:disabled,
 QWidget#settingsPage QSpinBox:disabled,
 QWidget#settingsPage QDoubleSpinBox:disabled {
-    background: __BG_DISABLED__;
+    background: __BG_LAUNCH_FIELD_DISABLED__;
     color: __FG_DISABLED_2__;
+    border-color: __BG_LAUNCH_FIELD_DISABLED__;
 }
 /* Keep the keyboard-only contract: id-scoped rules above would otherwise win
    over the generic [keyboardFocus="true"] ring at the end of the base sheet. */
@@ -764,15 +779,90 @@ QWidget#settingsPage QDoubleSpinBox[keyboardFocus="true"]:focus {
     border: 1px solid __FOCUS_RING__;
 }
 
+/* The fixed label column: left aligned like PCL, never re-centred per row. */
+QWidget#settingsPage QLabel#settingsFieldLabel {
+    color: __FG_TEXT__;
+    font-size: 14px;
+}
+QWidget#settingsPage QLabel#hint {
+    font-size: 12px;
+}
+
+/* Memory slider: a 4px track with the accent on the filled side, and a white 16px
+   handle with an accent ring. The groove is drawn 16px tall with the line in its middle
+   band because a negative handle margin would be off the spacing ladder; the handle then
+   needs no margin at all. Disabled follows the field treatment above. */
+QWidget#settingsPage QSlider::groove:horizontal {
+    height: 16px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 transparent,
+        stop: 0.375 transparent,
+        stop: 0.375 __BORDER_LIST__,
+        stop: 0.625 __BORDER_LIST__,
+        stop: 0.625 transparent
+    );
+    border-radius: 8px;
+}
+QWidget#settingsPage QSlider::sub-page:horizontal {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 transparent,
+        stop: 0.375 transparent,
+        stop: 0.375 __ACCENT_BUTTON__,
+        stop: 0.625 __ACCENT_BUTTON__,
+        stop: 0.625 transparent
+    );
+    border-radius: 8px;
+}
+QWidget#settingsPage QSlider::handle:horizontal {
+    width: 16px;
+    height: 16px;
+    margin: 0 0;
+    border-radius: 8px;
+    background: __BG_LIST__;
+    border: 2px solid __ACCENT_BUTTON__;
+}
+QWidget#settingsPage QSlider::handle:horizontal:hover {
+    background: __BG_HOVER__;
+}
+QWidget#settingsPage QSlider::sub-page:horizontal:disabled {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 transparent,
+        stop: 0.375 transparent,
+        stop: 0.375 __BG_DISABLED_2__,
+        stop: 0.625 __BG_DISABLED_2__,
+        stop: 0.625 transparent
+    );
+}
+QWidget#settingsPage QSlider::handle:horizontal:disabled {
+    border-color: __BORDER_LIST__;
+    background: __BG_DISABLED__;
+}
+QSlider#memorySlider[keyboardFocus="true"]:focus::handle:horizontal {
+    border-color: __FOCUS_RING__;
+    background: __ACCENT_SOFT__;
+}
+QWidget#settingsPage QLabel#memoryValue {
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 600;
+    padding-left: 12px;
+}
+QWidget#settingsPage QLabel#memoryValue:disabled {
+    color: __FG_DISABLED_2__;
+}
+
 /* Secondary buttons: white fill, one neutral outline, dark label. The accent is
    not used as a hover colour here - only the keyboard ring keeps it. */
 QWidget#settingsPage QPushButton#secondaryButton {
     background: __BG_LIST__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
-    border-radius: __RADIUS_SM__;
-    padding: 8px 16px;
-    min-height: 30px;
+    border-radius: 6px;
+    padding: 0 16px;
+    min-height: 38px;
     font-weight: 600;
 }
 QWidget#settingsPage QPushButton#secondaryButton:hover {
