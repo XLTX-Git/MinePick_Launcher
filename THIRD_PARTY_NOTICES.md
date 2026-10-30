@@ -1,6 +1,6 @@
 # Third-party notices / 第三方许可声明
 
-MinePick Launcher 0.4.2 — <https://github.com/xltxdocs/MinePick_Launcher>
+MinePick Launcher 0.4.2 — <https://github.com/XLTX-Git/MinePick_Launcher>
 
 MinePick Launcher itself is released under **GPL-3.0-only** (see [LICENSE](LICENSE)). It uses the third-party components and services listed below; their own licences and terms apply to those parts. Versions are read from the installed distribution metadata.
 
@@ -118,7 +118,7 @@ MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）�
 - **MinePick Launcher Classic**
   - the predecessor of this launcher, archived.
   - 本启动器的前身，已归档。
-  - <https://github.com/xltxdocs/MinePick_Launcher_Classic>
+  - <https://github.com/XLTX-Git/MinePick_Launcher_Classic>
 - **TheDarkLord234**
   - community member and author of MinePick Launcher Revision — thanks for exploring this space together.
   - 社区伙伴，《MinePick Launcher Revision》的作者，感谢在生态探索上的并肩前行。

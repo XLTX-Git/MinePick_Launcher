@@ -155,5 +155,5 @@ GPL 소스 배포 요구 사항을 충족합니다.
 
 ## 관련 프로젝트
 
-- [MinePick Launcher Classic](https://github.com/xltxdocs/MinePick_Launcher_Classic) — 이 프로젝트의 전신(보관됨, GUI + CLI)
+- [MinePick Launcher Classic](https://github.com/XLTX-Git/MinePick_Launcher_Classic) — 이 프로젝트의 전신(보관됨, GUI + CLI)
 - [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) — 커뮤니티 동료가 만든 개정판

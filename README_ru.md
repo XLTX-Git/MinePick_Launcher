@@ -164,5 +164,5 @@ GPL-3.0-only — см. [LICENSE](LICENSE). Пакет исходного код�
 
 ## Связанные проекты
 
-- [MinePick Launcher Classic](https://github.com/xltxdocs/MinePick_Launcher_Classic) — предшественник этого проекта (архивирован, GUI + CLI)
+- [MinePick Launcher Classic](https://github.com/XLTX-Git/MinePick_Launcher_Classic) — предшественник этого проекта (архивирован, GUI + CLI)
 - [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) — переработанная версия от участника сообщества

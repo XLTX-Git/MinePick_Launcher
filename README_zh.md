@@ -135,5 +135,5 @@ GPL-3.0-only —— 见 [LICENSE](LICENSE)。每次发布附带的源码包（`S
 
 ## 相关项目
 
-- [MinePick Launcher Classic](https://github.com/xltxdocs/MinePick_Launcher_Classic) —— 本项目的前身，已归档（GUI + CLI）
+- [MinePick Launcher Classic](https://github.com/XLTX-Git/MinePick_Launcher_Classic) —— 本项目的前身，已归档（GUI + CLI）
 - [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) —— 由社区成员基于主线改制的修订版

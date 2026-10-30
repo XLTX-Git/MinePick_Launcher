@@ -157,5 +157,5 @@ GPL のソース配布要件を満たします。
 
 ## 関連プロジェクト
 
-- [MinePick Launcher Classic](https://github.com/xltxdocs/MinePick_Launcher_Classic) — 本プロジェクトの前身（アーカイブ済み、GUI + CLI）
+- [MinePick Launcher Classic](https://github.com/XLTX-Git/MinePick_Launcher_Classic) — 本プロジェクトの前身（アーカイブ済み、GUI + CLI）
 - [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) — コミュニティメンバーによる改訂版

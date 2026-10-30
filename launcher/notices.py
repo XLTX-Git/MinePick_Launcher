@@ -99,7 +99,7 @@ COMMUNITY: tuple[Credit, ...] = (
     Credit(
         "MinePick Launcher Classic",
         "about.credit.classic",
-        url="https://github.com/xltxdocs/MinePick_Launcher_Classic",
+        url="https://github.com/XLTX-Git/MinePick_Launcher_Classic",
     ),
     Credit(
         "TheDarkLord234",

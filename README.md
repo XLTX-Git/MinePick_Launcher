@@ -160,5 +160,5 @@ satisfies the GPL source-distribution requirement.
 
 ## Related projects
 
-- [MinePick Launcher Classic](https://github.com/xltxdocs/MinePick_Launcher_Classic) — the archived predecessor of this launcher (GUI + CLI)
+- [MinePick Launcher Classic](https://github.com/XLTX-Git/MinePick_Launcher_Classic) — the archived predecessor of this launcher (GUI + CLI)
 - [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) — a revised edition maintained by a community member
