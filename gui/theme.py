@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 WDNDXLTX
+﻿# SPDX-FileCopyrightText: 2026 WDNDXLTX
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # This file is part of MinePick Launcher.
@@ -213,7 +213,7 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     # reads as the launcher's frame rather than a theme surface; #1e6fd9 gives white text 4.85:1
     # (the PCL blue #2078da only reaches 4.41:1 and would fail AA). The hover token is the same
     # blue one step deeper, used behind the minimize glyph; close keeps its red.
-    "BG_TOPBAR": {"dark": "#1e6fd9", "light": "#1e6fd9"},
+    "BG_TOPBAR": {"dark": "#1a4e8c", "light": "#1e6fd9"},
     "BG_TITLEBAR_CLOSE": {"dark": "#cf3f3f", "light": "#cf3f3f"},
     "BG_TITLEBAR_MINIMIZE": {"dark": "#1a63c4", "light": "#1a63c4"},
     # Window chrome used below the title bar: the status bar and native dialogs. One step lighter
