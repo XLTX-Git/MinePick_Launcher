@@ -36,6 +36,7 @@ from launcher.mods.models import (
     ModInfo,
     ModSearchHit,
     ModVersion,
+    SearchHits,
 )
 from launcher.net.downloader import Downloader, DownloadProgress, DownloadTask
 
@@ -68,21 +69,39 @@ def fetch_project(slug: str, *, client: httpx.Client | None = None) -> dict:
             client.close()
 
 
+#: The dropdown's semantic sort keys mapped to Modrinth's ``index`` values (all documented).
+SORT_INDEXES = {
+    "relevance": "relevance",
+    "downloads": "downloads",
+    "updated": "updated",
+    "newest": "newest",
+}
+
+
 def search_projects(
     query: str,
     *,
     limit: int = 20,
+    offset: int = 0,
+    sort: str = "relevance",
     project_type: str = "mod",
     client: httpx.Client | None = None,
-) -> list[ModSearchHit]:
-    """Search Modrinth projects by keyword (project_type: mod/resourcepack/shader, sorted by downloads)."""
+) -> SearchHits:
+    """Search Modrinth projects by keyword (project_type: mod/resourcepack/shader).
+
+    ``sort`` is one of :data:`SORT_INDEXES`' keys; the default is relevance, so a keyword no longer
+    surfaces the biggest projects first. ``offset``/``limit`` page the results, and the returned
+    :class:`~launcher.mods.models.SearchHits` carries Modrinth's ``total_hits`` for the next-page
+    decision.
+    """
     own = client is None
     if own:
         client = _client()
     params = {
         "query": query,
         "limit": str(limit),
-        "index": "downloads",
+        "offset": str(max(0, offset)),
+        "index": SORT_INDEXES.get(sort, SORT_INDEXES["relevance"]),
         "facets": json.dumps([["project_type:" + project_type]]),
     }
     try:
@@ -115,9 +134,10 @@ def search_projects(
                 icon_url=entry.get("icon_url") or "",
                 updated=str(entry.get("date_modified") or ""),
                 loaders=[str(item) for item in loaders],
+                source="modrinth",
             )
         )
-    return hits
+    return SearchHits(hits, total=int(payload.get("total_hits") or 0))
 
 
 def list_installed_content(

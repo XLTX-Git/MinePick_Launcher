@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -97,6 +99,23 @@ class ModSearchHit(BaseModel):
     icon_url: str = ""
     updated: str = ""  # ISO-8601 timestamp from the source API, "" when unknown
     loaders: list[str] = []  # lowercase loader ids the project supports, [] when unknown / not a mod
+    #: Where the hit came from ("modrinth" / "curseforge"). The "All" source merges both lists
+    #: without de-duplicating them, so every row has to carry its own source label.
+    source: str = ""
+
+
+class SearchHits(list[ModSearchHit]):
+    """One page of hits plus the source's total match count (0 when the source does not report it).
+
+    A list subclass keeps every existing caller working (the resource list, the preview tools and
+    the old tests all iterate or compare it as a list) while paging can ask ``total`` to decide
+    whether a next page exists. The tools stub ``mods_page.search_projects`` with a plain list, so
+    readers must treat ``total = 0`` as "unknown" rather than "no matches".
+    """
+
+    def __init__(self, hits: Iterable[ModSearchHit] = (), total: int = 0) -> None:
+        super().__init__(hits)
+        self.total = int(total or 0)
 
 
 class InstalledContent(BaseModel):

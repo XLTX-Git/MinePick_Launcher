@@ -33,7 +33,7 @@ from launcher import config, paths
 from launcher.i18n import describe_network_error, tr_core
 from launcher.meta.manifest import _new_client
 from launcher.mods.loaders import ModsError
-from launcher.mods.models import ModSearchHit
+from launcher.mods.models import ModSearchHit, SearchHits
 
 CURSEFORGE_API = "https://api.curseforge.com"
 GAME_ID = 432  # Minecraft
@@ -42,6 +42,18 @@ CLASS_IDS = {"mod": 6, "resourcepack": 12, "shaderpack": 6552, "modpack": 4471}
 # modLoaderType: Forge 1 / Fabric 4 / NeoForge 6 (mods only)
 LOADER_IDS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
 _LOADER_NAMES = {value: key for key, value in LOADER_IDS.items()}
+#: The dropdown's semantic sort keys mapped to CurseForge's ``ModsSearchSortField`` values.
+#:
+#: CurseForge has no relevance field. For "relevance" the parameter is omitted on purpose: the API
+#: then answers in its own match order (measured 2026-10-31: searching "entity rendering" returns the
+#: two projects whose names contain both words first), while ``Popularity`` pushes unrelated popular
+#: mods to the top. The other three map to the documented enum values.
+SORT_FIELDS = {
+    "relevance": None,
+    "downloads": "TotalDownloads",
+    "updated": "LastUpdated",
+    "newest": "ReleasedDate",
+}
 
 
 @dataclass
@@ -86,8 +98,12 @@ def _client() -> httpx.Client:
 
 
 def _check(resp: httpx.Response, message: str) -> dict:
-    if resp.status_code == 403:
+    # 403 is the key the API rejects; 401 is a missing key. Both need the same advice, so one
+    # message names the fix ("enter your own key in Settings") instead of only the HTTP status.
+    if resp.status_code in (401, 403):
         raise ModsError(tr_core("mods.cf_key_invalid"))
+    if resp.status_code == 429:
+        raise ModsError(tr_core("mods.cf_rate_limited"))
     if resp.status_code >= 400:
         raise ModsError(message + tr_core("mods.cf_http_error", resp.status_code))
     return resp.json()
@@ -97,23 +113,33 @@ def search_projects(
     query: str,
     *,
     limit: int = 30,
+    offset: int = 0,
+    sort: str = "relevance",
     kind: str = "mod",
     game_version: str = "",
     loader: str = "",
     client: httpx.Client | None = None,
-) -> list[ModSearchHit]:
-    """Search CurseForge projects by keyword (sorted by total downloads)."""
+) -> SearchHits:
+    """Search CurseForge projects by keyword.
+
+    ``sort`` is one of :data:`SORT_FIELDS`' keys (see that table for the relevance approximation),
+    ``offset``/``limit`` page the results, and the returned ``SearchHits`` carries ``totalCount``
+    from the pagination block for the next-page decision.
+    """
     own = client is None
     if own:
         client = _client()
+    sort_field = SORT_FIELDS.get(sort, SORT_FIELDS["relevance"])
     params = {
         "gameId": str(GAME_ID),
         "classId": str(CLASS_IDS.get(kind, 6)),
         "searchFilter": query,
-        "sortField": "TotalDownloads",
-        "sortOrder": "desc",
         "pageSize": str(min(limit, 50)),
+        "index": str(max(0, offset)),
     }
+    if sort_field:
+        params["sortField"] = sort_field
+        params["sortOrder"] = "desc"
     if game_version:
         params["gameVersion"] = game_version
     if loader and kind == "mod":
@@ -149,9 +175,11 @@ def search_projects(
                 icon_url=logo.get("thumbnailUrl") or "",
                 updated=str(m.get("dateModified") or ""),
                 loaders=loaders,
+                source="curseforge",
             )
         )
-    return hits
+    total = int((payload.get("pagination") or {}).get("totalCount") or 0)
+    return SearchHits(hits, total=total)
 
 
 def list_files(
