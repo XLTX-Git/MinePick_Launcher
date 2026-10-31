@@ -89,6 +89,9 @@ class AboutPage(QWidget):
         inner = QWidget()
         layout = QVBoxLayout(inner)
         style_page_layout(layout)
+        # The outer page layout already owns the 16px top inset; a 12px inner margin here would
+        # put the first card 28px below the page top, visibly emptier than every other page.
+        layout.setContentsMargins(14, 0, 14, 6)
         layout.addWidget(self._build_information())
         layout.addWidget(self._build_updates())
         layout.addWidget(self._build_credits())

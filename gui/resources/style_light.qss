@@ -1145,8 +1145,8 @@ QWidget#launchPage {
 QWidget#launchPage QWidget#launchPanel {
     background: __BG_LIST__;
     border: none;
-    border-top-right-radius: 10px;
-    border-bottom-right-radius: 10px;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
 }
 
 /* The account name is the panel's own 14px label; the version block above it is the page's

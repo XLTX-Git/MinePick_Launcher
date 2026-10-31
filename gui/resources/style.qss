@@ -860,9 +860,323 @@ QPushButton#titleBarMinimize:hover {
 }
 QPushButton#titleBarClose:hover { background: __BG_TITLEBAR_CLOSE__; color: __FG_TOPBAR__; }
 
-/* ---------- frameless window: root and content keep the window background ---------- */
+/* ---------- frameless window: chrome, paper and the navigation rail ---------- */
 
-QWidget#appRoot, QWidget#appContent { background: __BG_WINDOW__; }
+/* The same two explicit layers the light sheet uses, with this theme's values. appRoot is the
+   window chrome; appContent and the page stack carry the page paper. The stack must paint it,
+   not only the page widget: QStackedLayout lays its child out inside the stack's contents rect,
+   so the 6/12/12/12 inset would otherwise show the chrome colour as a frame. */
+QWidget#appRoot { background: __BG_WINDOW__; }
+QWidget#appContent { background: __BG_PAGE__; }
+QStackedWidget#pageStack { background: __BG_PAGE__; }
+
+/* The rail is one step darker/bluer than the paper so the cards stay the brightest surface. The
+   1px right border sits inside the rail's fixed 162px width, so no window layout moves. */
+QWidget#navRail {
+    background: __BG_NAV__;
+    border-right: 1px solid __BORDER_NAV__;
+}
+
+/* Page-level scroll viewports paint the paper themselves; otherwise the viewport falls back to
+   the platform Base and a white streak appears when a long page is scrolled to its end. */
+QWidget#settingsPage QScrollArea > QWidget#qt_scrollarea_viewport,
+QWidget#aboutPage QScrollArea > QWidget#qt_scrollarea_viewport,
+QWidget#instanceDetail QScrollArea > QWidget#qt_scrollarea_viewport {
+    background: __BG_PAGE__;
+}
+
+/* ========================================================================== */
+/* Settings page: the same paper + card structure as the light sheet, in this  */
+/* theme's palette. Only structure is aligned here - the dark colours above    */
+/* are reused as-is (BG_PAGE / BG_LIST / BORDER_LAUNCH_FIELD / FG_TEXT).      */
+/* ========================================================================== */
+
+QWidget#settingsPage {
+    background: __BG_PAGE__;
+}
+
+QWidget#settingsPage QWidget#settingsCard {
+    background: __BG_LIST__;
+    border: none;
+    border-radius: __RADIUS_LG__;
+}
+
+/* 32px field in a 38px row (6px gutter), 6px radius, 1px border, 12px left padding, 15px text.
+   The min-heights differ by control because Qt adds a different frame allowance: a plain
+   QLineEdit/QComboBox needs 30 (30+2), a spin box already carries 4px of frame (28+4); both land
+   on the 32px height the page measures. */
+QWidget#settingsPage QLineEdit,
+QWidget#settingsPage QComboBox,
+QWidget#settingsPage QSpinBox,
+QWidget#settingsPage QDoubleSpinBox {
+    background: __BG_LIST__;
+    color: __FG_TEXT__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: 6px;
+    padding: 0 12px;
+    font-size: 15px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}
+QWidget#settingsPage QLineEdit,
+QWidget#settingsPage QComboBox {
+    min-height: 30px;
+}
+QWidget#settingsPage QSpinBox,
+QWidget#settingsPage QDoubleSpinBox {
+    min-height: 28px;
+}
+/* A combo/spin box already draws its own frame; the internal editor must not draw a second one. */
+QWidget#settingsPage QComboBox QLineEdit,
+QWidget#settingsPage QSpinBox QLineEdit,
+QWidget#settingsPage QDoubleSpinBox QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: 0;
+}
+QWidget#settingsPage QLineEdit:hover,
+QWidget#settingsPage QComboBox:hover,
+QWidget#settingsPage QSpinBox:hover,
+QWidget#settingsPage QDoubleSpinBox:hover {
+    border-color: __BORDER_HOVER__;
+}
+QWidget#settingsPage QLineEdit:disabled,
+QWidget#settingsPage QComboBox:disabled,
+QWidget#settingsPage QSpinBox:disabled,
+QWidget#settingsPage QDoubleSpinBox:disabled {
+    background: __BG_LAUNCH_FIELD_DISABLED__;
+    color: __FG_DISABLED_2__;
+    border-color: __BG_LAUNCH_FIELD_DISABLED__;
+}
+/* Keep the keyboard-only contract: id-scoped rules above would otherwise win over the generic
+   [keyboardFocus="true"] ring at the end of the sheet. */
+QWidget#settingsPage QLineEdit[keyboardFocus="true"]:focus,
+QWidget#settingsPage QComboBox[keyboardFocus="true"]:focus,
+QWidget#settingsPage QSpinBox[keyboardFocus="true"]:focus,
+QWidget#settingsPage QDoubleSpinBox[keyboardFocus="true"]:focus {
+    border: 1px solid __FOCUS_RING__;
+}
+
+/* The fixed label column: left aligned, never re-centred per row. 12px keeps wrapped long labels
+   at two lines of 16px inside the 32px row. */
+QWidget#settingsPage QLabel#settingsFieldLabel {
+    color: __FG_TEXT__;
+    font-size: 12px;
+}
+QWidget#settingsPage QLabel#hint {
+    font-size: 12px;
+}
+QWidget#settingsPage QLabel#memoryValue {
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 600;
+    padding-left: 12px;
+}
+QWidget#settingsPage QLabel#memoryValue:disabled {
+    color: __FG_DISABLED_2__;
+}
+
+/* Secondary buttons: card fill, one neutral outline, body label; the accent stays for the ring. */
+QWidget#settingsPage QPushButton#secondaryButton {
+    background: __BG_LIST__;
+    color: __FG_TEXT__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: 6px;
+    padding: 0 16px;
+    min-height: 30px;
+    font-weight: 600;
+}
+QWidget#settingsPage QPushButton#secondaryButton:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __BORDER_HOVER__;
+    color: __FG_TEXT__;
+}
+QWidget#settingsPage QPushButton#secondaryButton:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#settingsPage QPushButton#secondaryButton:disabled {
+    background: __BG_LIST__;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#settingsPage QPushButton#secondaryButton[keyboardFocus="true"] {
+    background: __BG_LIST__;
+    border-color: __FOCUS_RING__;
+}
+QWidget#settingsPage QPushButton#secondaryButton[keyboardFocus="true"]:disabled {
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+
+/* The accessibility QGroupBox is a quiet section: a hairline and a 16px heading, no framed card. */
+QWidget#settingsPage QGroupBox {
+    background: transparent;
+    border: none;
+    border-top: 1px solid __BG_SEPARATOR__;
+    border-radius: 0;
+    margin-top: 24px;
+    padding: 16px 0 0 0;
+}
+QWidget#settingsPage QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 0;
+    padding: 0 4px 12px 0;
+    color: __FG_TEXT__;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* ========================================================================== */
+/* About page: the same three cards as the light sheet, using this theme's    */
+/* card fill and border tokens. No widget, spacing or size hint changes.      */
+/* ========================================================================== */
+
+QWidget#aboutPage QGroupBox {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+}
+QWidget#aboutPage QLabel#hint { font-size: 12px; }
+QWidget#aboutPage QLabel#aboutLink { font-size: 12px; color: __FG_HINT__; }
+
+/* ========================================================================== */
+/* Launch page: the same paper + side-panel structure as the light sheet.     */
+/* Scoped to #launchPage / #launchPanel; the right half stays blank paper.    */
+/* ========================================================================== */
+
+QWidget#launchPage {
+    background: __BG_PAGE__;
+}
+
+/* Flush left, full height: only the two right corners are rounded, because the panel grows out
+   of the window edge and a rounded left corner would expose paper behind it. */
+QWidget#launchPage QWidget#launchPanel {
+    background: __BG_LIST__;
+    border: none;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+
+QWidget#launchPage QLabel#accountName {
+    color: __FG_LAUNCH__;
+    font-size: 14px;
+    font-weight: 600;
+}
+QWidget#launchPage QLabel#launchStats,
+QWidget#launchPage QLabel#launchLast {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 11px;
+}
+
+/* Inline account switch (24px, on the name row): a quiet icon, not a second row. */
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"] {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 0;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:hover {
+    background: __BG_HOVER__;
+    border-color: transparent;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"][keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+QWidget#launchPage QPushButton#launchButton {
+    padding: 0;
+}
+QWidget#launchPage QPushButton#launchButton QLabel#launchActionTitle {
+    background: transparent;
+    color: __FG_SELECTED__;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* Two equal secondary actions: card face, 1px neutral border, body label. 12px type and 8px side
+   padding keep the longest German/Russian label on one line inside a 154px half. */
+QWidget#launchPage QPushButton#secondaryButton {
+    background: __BG_LIST__;
+    color: __FG_LAUNCH__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    padding: 8px 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QWidget#launchPage QPushButton#secondaryButton:hover {
+    background: __BG_HOVER__;
+    border-color: __ACCENT__;
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton:disabled {
+    background: __BG_LIST__;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[keyboardFocus="true"]:disabled {
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* Advanced disclosure: a secondary button that reads as a quiet text row. */
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"] {
+    background: transparent;
+    border-color: transparent;
+    color: __FG_LAUNCH_HINT__;
+    padding: 4px 8px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:hover {
+    background: __BG_HOVER__;
+    border-color: transparent;
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:checked {
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"][keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* 40px field, 6px radius, 1px border, 12px left padding, 15px text. */
+QWidget#launchPage QLineEdit {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: 6px;
+    padding: 0 12px;
+    min-height: 38px;
+    color: __FG_LAUNCH__;
+    font-size: 15px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}
+QWidget#launchPage QLineEdit:hover {
+    border-color: __BORDER_HOVER__;
+}
+QWidget#launchPage QLineEdit:disabled {
+    background: __BG_LAUNCH_FIELD_DISABLED__;
+    color: __FG_DISABLED__;
+}
+QWidget#launchPage QLineEdit[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+QWidget#launchPage QLabel#fieldLabel {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 12px;
+}
 
 /* ---------- first-run wizard overlay ---------- */
 

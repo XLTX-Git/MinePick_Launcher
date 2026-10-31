@@ -22,7 +22,15 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QStackedWidget, QWidget
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QGroupBox,
+    QLabel,
+    QStackedWidget,
+    QWidget,
+)
 
 from launcher import config as config_mod
 
@@ -291,6 +299,13 @@ def test_no_top_level_page_draws_a_page_header_and_all_keep_16px(app, monkeypatc
         else:
             margins = page.layout().contentsMargins()
         assert margins.top() == 16, f"{key}: top inset is {margins.top()}px, expected 16px"
+        if key == "about":
+            # The scroll content has its own 14/6 side margins; its top must not add a second
+            # inset on top of the page's 16px (the card border starts one pixel in).
+            first_card = page.findChildren(QGroupBox)[0]
+            assert first_card.mapTo(page, QPoint(0, 0)).y() <= 18, (
+                f"about: first card starts {first_card.mapTo(page, QPoint(0, 0)).y()}px below the page top"
+            )
     window.close()
 
 
