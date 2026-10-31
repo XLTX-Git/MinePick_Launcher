@@ -1461,13 +1461,15 @@ QPushButton#instanceNavItem {
     background: transparent;
     border: none;
     border-left: 3px solid transparent;
-    border-radius: __RADIUS_SM__;
+    /* Square: the selected row is a 3px accent bar plus a very pale accent wash, not a rounded pill.
+       Same language as the main rail's selection, without the pill silhouette. */
+    border-radius: 0;
     padding: 0;
     text-align: left;
 }
 QPushButton#instanceNavItem:hover { background: __BG_SIDEBAR__; }
 QPushButton#instanceNavItem:checked {
-    background: __ACCENT_SOFT__;
+    background: __ACCENT_TINT__;
     border-left: 3px solid __ACCENT__;
 }
 QPushButton#instanceNavItem[keyboardFocus="true"]:focus {
@@ -1482,7 +1484,7 @@ QLabel#instanceNavLabel {
     font-weight: 400;
 }
 QLabel#instanceNavLabel[active="true"] {
-    color: __ACCENT_SEL_TEXT__;
+    color: __ACCENT_TEXT__;
     font-weight: 400;
 }
 QLabel#instanceNavIcon { background: transparent; }
@@ -1494,8 +1496,8 @@ QLabel#instanceNavBadge {
     padding: 0 4px;
 }
 QLabel#instanceNavBadge[active="true"] {
-    background: __ACCENT_TINT__;
-    color: __ACCENT_SEL_TEXT__;
+    background: __ACCENT_SOFT__;
+    color: __ACCENT_TEXT__;
 }
 QLabel#instanceNavGroup {
     color: __FG_HINT__;
