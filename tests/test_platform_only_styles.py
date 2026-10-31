@@ -56,6 +56,7 @@ def themed(app):
 def test_the_tokens_are_published_for_self_styling(themed):
     assert themed, "apply_theme must publish the token table widgets can style themselves from"
     assert themed["BG_WINDOW"] and themed["BG_TITLEBAR_CLOSE"]
+    assert themed["BG_TOPBAR"] and themed["FG_TOPBAR"]
 
 
 def test_wizard_overlay_is_opaque(app, themed):
@@ -103,7 +104,7 @@ def test_title_bar_buttons_render_as_the_bar_not_as_accent(app, themed):
         QApplication.processEvents()
         image = bar.grab().toImage()
         accent = themed["ACCENT_BUTTON"].lower()
-        window_colour = themed["BG_WINDOW"].lower()
+        window_colour = themed["BG_TOPBAR"].lower()
         accent_pixels = 0
         window_pixels = 0
         for y in range(image.height()):

@@ -128,10 +128,11 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     # selected text: the dark sheet uses FG_SELECTED on ACCENT_SEL, the light sheet ACCENT_SEL_TEXT
     ("FG_SELECTED", "ACCENT_SEL", 3.0, True, ("dark",)),
     ("ACCENT_SEL_TEXT", "ACCENT_SEL", 4.5, True, ("light",)),
-    # the title bar buttons draw FG_HINT; the close button flips to FG_SELECTED on hover
-    ("FG_HINT", "BG_TITLEBAR_MINIMIZE", 4.5, True),
-    ("FG_SELECTED", "BG_TITLEBAR_CLOSE", 4.5, True),
-    ("FG_HINT", "BG_TITLEBAR_CLOSE", 4.5, False),
+    # The title bar is the one blue band in both themes. Every glyph and label on it is white;
+    # the close button's red hover fill is the only other surface it lands on.
+    ("FG_TOPBAR", "BG_TOPBAR", 4.5, True),
+    ("FG_TOPBAR", "BG_TITLEBAR_MINIMIZE", 4.5, True),
+    ("FG_TOPBAR", "BG_TITLEBAR_CLOSE", 4.5, True),
     # hover/press fills carry the same text as their rest state
     ("FG_TEXT", "BG_BUTTON_ICON_2", 4.5, True),
     ("DANGER_FG", "DANGER_BG_2", 4.5, True),

@@ -202,10 +202,15 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_SECTION": {"dark": "#1c2531", "light": "#f1f3f6"},
     "BG_SEPARATOR": {"dark": "#27303d", "light": "#dfe4ea"},
     "BG_SIDEBAR": {"dark": "#1c2531", "light": "#e7ebf0"},
+    # The one blue band at the top of the window. Both themes use the same shade so the chrome
+    # reads as the launcher's frame rather than a theme surface; #1e6fd9 gives white text 4.85:1
+    # (the PCL blue #2078da only reaches 4.41:1 and would fail AA). The hover token is the same
+    # blue one step deeper, used behind the minimize glyph; close keeps its red.
+    "BG_TOPBAR": {"dark": "#1e6fd9", "light": "#1e6fd9"},
     "BG_TITLEBAR_CLOSE": {"dark": "#cf3f3f", "light": "#cf3f3f"},
-    "BG_TITLEBAR_MINIMIZE": {"dark": "#1c2531", "light": "#dfe4ea"},
-    # Window chrome - the title bar, the status bar and native dialogs. One step lighter than the page
-    # paper and one below the cards: near the cards, but it never reads as a second white surface.
+    "BG_TITLEBAR_MINIMIZE": {"dark": "#1a63c4", "light": "#1a63c4"},
+    # Window chrome used below the title bar: the status bar and native dialogs. One step lighter
+    # than the page paper and one below the cards: near the cards, but never a second white surface.
     "BG_WINDOW": {"dark": "#0f141b", "light": "#f9fafc"},
     "BORDER_BUTTON_ICON": {"dark": "#27303d", "light": "#c9d2dc"},
     "BORDER_BUTTON_SECONDARY": {"dark": "#33404f", "light": "#b6c1cd"},
@@ -246,6 +251,8 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "FG_SELECTED": {"dark": "#ffffff", "light": "#ffffff"},
     "FG_STATUS_WARNING": {"dark": "#e5c07b", "light": "#87691b"},
     "FG_TEXT": {"dark": "#e6ecf5", "light": "#1f2a36"},
+    # White text on the one blue title bar; see BG_TOPBAR for the 4.85:1 measurement.
+    "FG_TOPBAR": {"dark": "#ffffff", "light": "#ffffff"},
 }
 
 

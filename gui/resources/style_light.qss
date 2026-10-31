@@ -774,24 +774,24 @@ QTabWidget[keyboardFocus="true"]::pane {
 /* ---------- custom title bar (frameless window) ---------- */
 
 QWidget#titleBar {
-    background: __BG_WINDOW__;
-    border-bottom: 1px solid __BORDER_LIST__;
+    background: __BG_TOPBAR__;
+    border-bottom: none;
 }
-QLabel#titleBarTitle { color: __FG_TEXT__; font-size: 13px; font-weight: 600; }
+QLabel#titleBarTitle { color: __FG_TOPBAR__; font-size: 13px; font-weight: 600; }
 
 QPushButton#titleBarMinimize, QPushButton#titleBarClose {
     background: transparent;
     border: none;
     border-radius: __RADIUS_SM__;
-    color: __FG_HINT__;
+    color: __FG_TOPBAR__;
     font-size: 13px;
     padding: 0;
 }
 QPushButton#titleBarMinimize:hover {
     background: __BG_TITLEBAR_MINIMIZE__;
-    color: __FG_TEXT__;
+    color: __FG_TOPBAR__;
 }
-QPushButton#titleBarClose:hover { background: __BG_TITLEBAR_CLOSE__; color: __FG_SELECTED__; }
+QPushButton#titleBarClose:hover { background: __BG_TITLEBAR_CLOSE__; color: __FG_TOPBAR__; }
 
 /* ---------- frameless window: chrome, paper and the navigation rail ---------- */
 
