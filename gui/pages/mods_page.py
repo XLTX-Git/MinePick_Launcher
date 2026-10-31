@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime
 from typing import ClassVar
 
@@ -86,7 +85,16 @@ from launcher.mods import (
     search_projects,
 )
 from launcher.mods.loaders import display_loader_name
-from launcher.mods.models import ModInfo, ModSearchHit, ModVersion
+from launcher.mods.models import ModInfo, ModSearchHit, ModVersion, SearchHits
+from launcher.mods.search import (
+    ALL_PAGE_SIZE,
+    PAGE_SIZE,
+    PageOutcome,
+    collect_all_sources,
+    merge_same_titles,
+    page_offset,
+    source_has_next,
+)
 from launcher.mods.zh_names import has_cjk, search_local
 
 tr = i18n.tr
@@ -576,6 +584,42 @@ class _VersionPickerDialog(QDialog):
         return self._versions[row]
 
 
+class _PopupFitCombo(QComboBox):
+    """Combo box whose popup reserves the stylesheet's list padding.
+
+    The resource sheet gives the popup list 4px of padding on each side but sizes item rows
+    independently; Qt computes the popup height from the rows alone, so the two or three rows of
+    these dropdowns lost their last row and grew a vertical scrollbar. Setting a minimum height on
+    the view before the popup is shown adds that padding back; it is recomputed on every show, so a
+    font or language change cannot leave a stale height behind.
+    """
+
+    #: 4px top + 4px bottom of list padding, plus two pixels of rounding slack.
+    _VIEW_PADDING = 10
+    #: The PCL field metric shared with the search field beside these combos.
+    FIELD_HEIGHT = 36
+
+    def sizeHint(self) -> QSize:
+        """Keep the 36px field metric even when the sheet's ``min-height`` rule re-polishes.
+
+        The sheet applies its own minimum (26px after border/padding) on every polish, so a
+        ``setMinimumHeight(36)`` alone loses the race after a theme swap. The size hint is what the
+        row layout asks for, and it is not reset by a style change.
+        """
+        hint = super().sizeHint()
+        if hint.height() < self.FIELD_HEIGHT:
+            hint.setHeight(self.FIELD_HEIGHT)
+        return hint
+
+    def showPopup(self) -> None:
+        view = self.view()
+        rows = min(self.count(), self.maxVisibleItems())
+        if rows > 0:
+            rows_height = sum(view.sizeHintForRow(index) for index in range(rows))
+            view.setMinimumHeight(rows_height + self._VIEW_PADDING)
+        super().showPopup()
+
+
 class _ContentTab(QWidget):
     """Generic resource tab. kind: mod / modpack / resourcepack / shaderpack"""
 
@@ -608,6 +652,14 @@ class _ContentTab(QWidget):
         self._current_mod_version_id = ""
         self._current_loader = ""
         self._current_game_version = ""
+        # Paging state: _query "" means the initial browse list (no keyword), otherwise the last
+        # submitted search. _request_id discards a result whose source/page/sort has been changed
+        # while its request was still in flight.
+        self._page = 1
+        self._has_next = False
+        self._query = ""
+        self._request_id = 0
+        self._initial_loaded = False
 
         self.loader_combo = QComboBox()
         for name in ("fabric", "forge", "neoforge", "quilt"):
@@ -632,10 +684,29 @@ class _ContentTab(QWidget):
         }.get(kind, "mods.search.placeholder")
         self.search_edit.setPlaceholderText(tr(placeholder_key))
         self.search_button = QPushButton(tr("mods.search.button"))
-        self.popular_button = QPushButton(tr("mods.popular"))
-        self.popular_button.setObjectName("secondaryButton")
-        self._popular_loaded = False
-        self._popular_cache: tuple[str, float, list] | None = None
+        self.sort_combo = _PopupFitCombo()
+        for key, label_key in (
+            ("relevance", "mods.sort.relevance"),
+            ("downloads", "mods.sort.downloads"),
+            ("updated", "mods.sort.updated"),
+            ("newest", "mods.sort.newest"),
+        ):
+            self.sort_combo.addItem(tr(label_key), key)
+        # WCAG 4.1.2: one sort combo per tab, so the name says which tab it belongs to.
+        self.sort_combo.setAccessibleName(
+            tr("mods.sort") + " · " + tr(self.KIND_TITLE_KEY[kind])
+        )
+        # Minimum, not fixed: a pinned height made the popup size its list from the closed field.
+        # ensurePolished() first: the sheet's own min-height would otherwise win over this one.
+        self.sort_combo.ensurePolished()
+        self.sort_combo.setMinimumHeight(36)
+        self.sort_combo.setMinimumWidth(
+            max(
+                self.sort_combo.fontMetrics().horizontalAdvance(self.sort_combo.itemText(index))
+                for index in range(self.sort_combo.count())
+            )
+            + 60
+        )
         self.install_button = QPushButton(tr("mods.install"))
         self.open_folder_button = QPushButton(tr("mods.open_folder"))
         self.open_folder_button.setObjectName("secondaryButton")
@@ -648,7 +719,6 @@ class _ContentTab(QWidget):
             self.search_edit,
             self.query_button,
             self.search_button,
-            self.popular_button,
         ):
             control.setFixedHeight(36)
         self.list = _ResourceList()
@@ -681,9 +751,29 @@ class _ContentTab(QWidget):
         query_row.addWidget(self.slug_edit, 1)
         query_row.addWidget(self.query_button)
 
+        self.pager = QWidget()
+        pager_row = QHBoxLayout(self.pager)
+        pager_row.setContentsMargins(0, 0, 0, 0)
+        pager_row.setSpacing(8)
+        self.prev_page_button = QPushButton(tr("mods.page.prev"))
+        self.next_page_button = QPushButton(tr("mods.page.next"))
+        for button in (self.prev_page_button, self.next_page_button):
+            button.setObjectName("secondaryButton")
+            button.setFixedHeight(32)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.page_label = QLabel("")
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pager_row.addStretch(1)
+        pager_row.addWidget(self.prev_page_button)
+        pager_row.addWidget(self.page_label)
+        pager_row.addWidget(self.next_page_button)
+        pager_row.addStretch(1)
+        self.pager.setVisible(False)
+
         left = QVBoxLayout()
         left.setSpacing(8)
         left.addWidget(self.list, 1)
+        left.addWidget(self.pager)
         self.empty_results = EmptyState(tr("mods.empty.none"))
         self.list.attach_empty_overlay(self.empty_results)
 
@@ -722,9 +812,9 @@ class _ContentTab(QWidget):
         layout.setSpacing(8)
         self._search_row = QHBoxLayout()
         self._search_row.setSpacing(8)
+        self._search_row.addWidget(self.sort_combo)
         self._search_row.addWidget(self.search_edit, 1)
         self._search_row.addWidget(self.search_button)
-        self._search_row.addWidget(self.popular_button)
         layout.addLayout(self._search_row)
         layout.addLayout(query_row)
         layout.addLayout(body, 1)
@@ -733,7 +823,9 @@ class _ContentTab(QWidget):
         self.query_button.clicked.connect(self.query)
         self.search_button.clicked.connect(self._search)
         self.search_edit.returnPressed.connect(self._search)
-        self.popular_button.clicked.connect(self.load_popular)
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        self.prev_page_button.clicked.connect(lambda: self._go_to_page(self._page - 1))
+        self.next_page_button.clicked.connect(lambda: self._go_to_page(self._page + 1))
         self.install_button.clicked.connect(self._on_install_clicked)
         if kind != "modpack":
             self.open_folder_button.clicked.connect(self._open_content_folder)
@@ -745,6 +837,20 @@ class _ContentTab(QWidget):
     def _source_label(self) -> str:
         page = getattr(self, "page", None)
         return page.current_source_label() if page is not None else ""
+
+    def _entry_source_label(self, entry: object) -> str:
+        """The row's own source label.
+
+        In the "All" source the page-level label would read "All" on every row, which is exactly the
+        information the two same-named rows need to differ by, so each hit carries its API source.
+        """
+        source = str(getattr(entry, "source", "") or "")
+        if source in ("modrinth", "curseforge"):
+            return tr("mods.source." + source)
+        if isinstance(entry, ModInfo):
+            # A slug query always goes through Modrinth's project/version API.
+            return tr("mods.source.modrinth")
+        return self._source_label()
 
     def _install_from_row(self, index: int) -> None:
         """Row install: select the row (the original selection handler fills _hit/_current), then run
@@ -807,7 +913,6 @@ class _ContentTab(QWidget):
         self._rows = []
         self.list.clear()
         kind_label = tr(self.KIND_TITLE_KEY[self.kind])
-        source_label = self._source_label()
         for index, entry in enumerate(entries):
             # The item's own text is the accessible/testable representation and keeps the exact counts
             # (the card paints the human-readable form on top). This is what test_e2e asserts on.
@@ -821,7 +926,7 @@ class _ContentTab(QWidget):
             row = _ResourceRow(
                 entry,
                 kind_label,
-                source_label,
+                self._entry_source_label(entry),
                 on_select=lambda row_index=index: self.list.setCurrentRow(row_index),
                 on_install=lambda row_index=index: self._install_from_row(row_index),
             )
@@ -832,12 +937,13 @@ class _ContentTab(QWidget):
         if entries:
             self.list.setCurrentRow(0)
         self._sync_row_selection(self.list.currentRow())
+        self._update_pager()
         # The page may still be inside its first layout pass here; re-apply the viewport width once the
         # widget hierarchy has settled (see _ResourceList).
         QTimer.singleShot(0, self.list.sync_item_widths)
 
-    def _clear_entries(self) -> None:
-        self._set_entries([])
+    def _clear_selection(self) -> None:
+        """Forget the selected hit and reset the inspector, without touching the list."""
         self._hit = None
         self._current = None
         self.title_label.setText(tr("mods.select"))
@@ -845,6 +951,23 @@ class _ContentTab(QWidget):
         self.dep_required.setText("")
         self.dep_optional.setText("")
         self._update_install_button()
+
+    def _clear_entries(self) -> None:
+        """Empty the list and restart paging: a source change invalidates page 1 of the old source."""
+        self._set_entries([])
+        self._clear_selection()
+        self._query = ""
+        self._page = 1
+        self._has_next = False
+        self._update_pager()
+
+    def _update_pager(self) -> None:
+        self.page_label.setText(tr("mods.page.label", self._page))
+        self.prev_page_button.setEnabled(self._page > 1)
+        self.next_page_button.setEnabled(self._has_next)
+        # A page past the end can be empty (a source without a total count): keep the pager so the
+        # user can still go back instead of being stranded on an empty page.
+        self.pager.setVisible(bool(self._entries) or self._page > 1)
 
     def _on_select(self, row: int) -> None:
         self._sync_row_selection(row)
@@ -903,113 +1026,204 @@ class _ContentTab(QWidget):
             self.install_button.setText(tr("mods.install"))
             self.install_button.setEnabled(self._current is not None)
 
-    # ---------- Search ----------
+    # ---------- Search & paging ----------
+
+    def _project_type(self) -> str:
+        return {"resourcepack": "resourcepack", "shaderpack": "shader", "modpack": "modpack"}.get(
+            self.kind, "mod"
+        )
+
+    def _source_mode(self) -> str:
+        page = getattr(self, "page", None)
+        return page.current_source() if page is not None else "modrinth"
+
+    def _sort_key(self) -> str:
+        return self.sort_combo.currentData() or "relevance"
+
+    def _on_sort_changed(self, _index: int) -> None:
+        # The sort is part of the query: page 1 of the new order, not page 2 of the old one.
+        if not self._initial_loaded:
+            return
+        self._page = 1
+        self._load_page()
+
+    def _go_to_page(self, page: int) -> None:
+        page = max(1, int(page))
+        if page == self._page:
+            return
+        self._page = page
+        self._load_page()
 
     def _search(self) -> None:
         query = self.search_edit.text().strip()
         if not query:
             return
+        self._query = query
+        self._page = 1
+        self._load_page()
+
+    def load_initial(self) -> None:
+        """First content for this tab: page 1 of the current source/sort, no keyword."""
+        self._initial_loaded = True
+        self._query = ""
+        self._page = 1
+        self._load_page()
+
+    def _load_page(self) -> None:
+        source = self._source_mode()
+        query = self._query
+        sort = self._sort_key()
+        page = self._page
+        project_type = self._project_type()
+        game_version = self.game_version_edit.text().strip()
+        loader = self.loader_combo.currentData() if self.kind == "mod" else ""
+        self._request_id += 1
+        request_id = self._request_id
+        self._has_next = False
+        self._update_pager()
         disable_keeping_focus(self.search_button)
-        set_app_status(self, tr("mods.search.msg.searching", query))
+        if query:
+            set_app_status(self, tr("mods.search.msg.searching", query))
+        else:
+            set_app_status(self, tr("mods.browse.loading"))
 
-        project_type = {"resourcepack": "resourcepack", "shaderpack": "shader", "modpack": "modpack"}.get(
-            self.kind, "mod"
-        )
-
-        def do_search() -> object:
-            if self.page.current_source() == "curseforge":
+        def do_page() -> object:
+            if source == "all":
                 from launcher.mods import curseforge as cf
 
-                return cf.search_projects(
-                    query,
-                    limit=30,
-                    kind=self.kind,
-                    game_version=self.game_version_edit.text().strip(),
-                    loader=self.loader_combo.currentData() if self.kind == "mod" else "",
+                # Each source keeps its own offset; the merged page is still one page of rows.
+                offset = page_offset(page, ALL_PAGE_SIZE)
+                sources = [
+                    (
+                        tr("mods.source.modrinth"),
+                        lambda: self._modrinth_page(
+                            query, offset, ALL_PAGE_SIZE, sort, project_type
+                        ),
+                    ),
+                    (
+                        tr("mods.source.curseforge"),
+                        lambda: cf.search_projects(
+                            query,
+                            limit=ALL_PAGE_SIZE,
+                            offset=offset,
+                            sort=sort,
+                            kind=self.kind,
+                            game_version=game_version,
+                            loader=loader,
+                        ),
+                    ),
+                ]
+                pages, errors = collect_all_sources(sources)
+                # Deliberately no de-duplication: "Sodium" from both sources stays two rows, and the
+                # merge puts them next to each other with Modrinth first.
+                merged = merge_same_titles(hit for source_page in pages for hit in source_page)
+                has_next = any(
+                    source_has_next(source_page, offset, ALL_PAGE_SIZE) for source_page in pages
                 )
-            hits = search_projects(query, limit=30, project_type=project_type)
-            if has_cjk(query):
-                # Chinese query: pin local Chinese-name table matches to the top, then merge Modrinth results
-                local_hits = []
-                for slug in search_local(query)[:10]:
-                    try:
-                        p = fetch_project(slug)
-                    except ModsError:
-                        continue
-                    local_hits.append(
-                        ModSearchHit(
-                            slug=p.get("slug") or slug,
-                            title=p.get("title") or slug,
-                            description=p.get("description") or "",
-                            downloads=int(p.get("downloads") or 0),
-                            icon_url=p.get("icon_url") or "",
-                            # A project lookup carries both; passing them keeps a local Chinese hit's
-                            # row as informative as a Modrinth search row.
-                            updated=str(p.get("updated") or ""),
-                            loaders=[str(item) for item in (p.get("loaders") or [])],
-                        )
-                    )
-                seen = {h.slug for h in local_hits}
-                hits = local_hits + [h for h in hits if h.slug not in seen]
-            return hits
+                return PageOutcome(merged, has_next, errors)
 
-        run_in_background(
-            do_search,
-            on_result=lambda hits: self._on_search_ok(hits, query),
-            on_error=lambda m: set_app_status(self, tr("mods.search.msg.fail", m), "error"),
-            on_finished=lambda: self.search_button.setEnabled(True),
-        )
-
-    def _on_search_ok(self, hits: list[ModSearchHit], query: str) -> None:
-        if not hits:
-            self._set_entries([])
-            self._hit = None
-            self._current = None
-            self.title_label.setText(tr("mods.select"))
-            self.desc_label.setText("")
-            self.dep_required.setText("")
-            self.dep_optional.setText("")
-            set_app_status(self, tr("mods.search.msg.none", query))
-            self._update_install_button()
-            return
-        self._set_entries(list(hits))
-        set_app_status(self, "")
-
-    # ---------- Popular Top 30 (by downloads) ----------
-
-    def load_popular(self) -> None:
-        """Load this type's top 30 by downloads; cached for 10 minutes per source."""
-        self._popular_loaded = True
-        source = self.page.current_source()
-        if self._popular_cache is not None:
-            cached_source, cached_at, cached_hits = self._popular_cache
-            if cached_source == source and time.monotonic() - cached_at < 600:
-                self._on_popular_ok(cached_hits)
-                return
-        disable_keeping_focus(self.popular_button)
-        set_app_status(self, tr("mods.search.msg.searching", tr("mods.popular")))
-        project_type = {"resourcepack": "resourcepack", "shaderpack": "shader", "modpack": "modpack"}.get(
-            self.kind, "mod"
-        )
-
-        def do_fetch() -> object:
-            if self.page.current_source() == "curseforge":
+            offset = page_offset(page, PAGE_SIZE)
+            if source == "curseforge":
                 from launcher.mods import curseforge as cf
 
-                return cf.search_projects("", limit=30, kind=self.kind)
-            return search_projects("", limit=30, project_type=project_type)
+                hits = cf.search_projects(
+                    query,
+                    limit=PAGE_SIZE,
+                    offset=offset,
+                    sort=sort,
+                    kind=self.kind,
+                    game_version=game_version,
+                    loader=loader,
+                )
+            else:
+                hits = self._modrinth_page(query, offset, PAGE_SIZE, sort, project_type)
+            return PageOutcome(list(hits), source_has_next(hits, offset, PAGE_SIZE), [])
 
         run_in_background(
-            do_fetch,
-            on_result=self._on_popular_ok,
-            on_error=lambda m: set_app_status(self, tr("mods.popular.fail", m), "error"),
-            on_finished=lambda: self.popular_button.setEnabled(True),
+            do_page,
+            on_result=lambda outcome: self._on_page_ok(outcome, request_id),
+            on_error=lambda message: self._on_page_error(message, request_id),
+            on_finished=lambda: self._on_page_finished(request_id),
         )
 
-    def _on_popular_ok(self, hits: list[ModSearchHit]) -> None:
-        self._popular_cache = (self.page.current_source(), time.monotonic(), list(hits))
-        self._set_entries(list(hits))
-        set_app_status(self, tr("mods.popular.status"))
+    def _modrinth_page(
+        self, query: str, offset: int, limit: int, sort: str, project_type: str
+    ) -> SearchHits:
+        hits = search_projects(
+            query, limit=limit, offset=offset, sort=sort, project_type=project_type
+        )
+        if has_cjk(query) and offset == 0:
+            hits = SearchHits(
+                self._with_local_chinese(list(hits), query),
+                total=int(getattr(hits, "total", 0) or 0),
+            )
+        return hits
+
+    def _with_local_chinese(self, hits: list[ModSearchHit], query: str) -> list[ModSearchHit]:
+        """Chinese query: pin local Chinese-name table matches above the Modrinth results."""
+        local_hits = []
+        for slug in search_local(query)[:10]:
+            try:
+                p = fetch_project(slug)
+            except ModsError:
+                continue
+            local_hits.append(
+                ModSearchHit(
+                    slug=p.get("slug") or slug,
+                    title=p.get("title") or slug,
+                    description=p.get("description") or "",
+                    downloads=int(p.get("downloads") or 0),
+                    icon_url=p.get("icon_url") or "",
+                    # A project lookup carries both; passing them keeps a local Chinese hit's
+                    # row as informative as a Modrinth search row.
+                    updated=str(p.get("updated") or ""),
+                    loaders=[str(item) for item in (p.get("loaders") or [])],
+                    source="modrinth",
+                )
+            )
+        seen = {h.slug for h in local_hits}
+        return local_hits + [h for h in hits if h.slug not in seen]
+
+    def _on_page_ok(self, outcome: PageOutcome, request_id: int) -> None:
+        if request_id != self._request_id:
+            return
+        self._has_next = bool(outcome.has_next)
+        self._set_entries(list(outcome.hits))
+        if not outcome.hits:
+            self._clear_selection()
+        if outcome.errors:
+            if outcome.hits:
+                label, message = outcome.errors[0]
+                set_app_status(self, tr("mods.search.msg.partial", label, message), "error")
+            else:
+                detail = "；".join(f"{label}: {message}" for label, message in outcome.errors)
+                set_app_status(self, tr("mods.search.msg.all_fail", detail), "error")
+            self._update_pager()
+            return
+        if not outcome.hits:
+            if self._query:
+                set_app_status(self, tr("mods.search.msg.none", self._query))
+            else:
+                set_app_status(self, tr("mods.empty.none"))
+            self._update_pager()
+            return
+        set_app_status(self, tr("mods.search.msg.page", self._page, len(outcome.hits)))
+        self._update_pager()
+
+    def _on_page_error(self, message: str, request_id: int) -> None:
+        if request_id != self._request_id:
+            return
+        self._has_next = False
+        self._set_entries([])
+        self._clear_selection()
+        set_app_status(self, tr("mods.search.msg.fail", message), "error")
+        self._update_pager()
+
+    def _on_page_finished(self, request_id: int) -> None:
+        if request_id != self._request_id:
+            return
+        self.search_button.setEnabled(True)
+        self._update_pager()
 
     # ---------- slug query (kept) ----------
 
@@ -1076,7 +1290,10 @@ class _ContentTab(QWidget):
 
     def _on_install_clicked(self) -> None:
         if self._hit is not None:
-            if self.page.current_source() == "curseforge":
+            # "All" merges both sources, so the row's own source decides the install path; the
+            # page-level source remains the fallback for a hit built without one.
+            hit_source = self._hit.source or self.page.current_source()
+            if hit_source == "curseforge":
                 self._install_cf(self._hit)
             elif self.kind == "mod":
                 self._pick_version()
@@ -1422,17 +1639,21 @@ class ResourcesPage(QWidget):
             self.shaderpacks_tab,
         ):
             tab.page = self
-            combo = QComboBox()
+            combo = _PopupFitCombo()
             combo.addItem(tr("mods.source.modrinth"), "modrinth")
             combo.addItem(tr("mods.source.curseforge"), "curseforge")
+            combo.addItem(tr("mods.source.all"), "all")
             # WCAG 4.1.2: it sits in the search row with no adjacent label at all, and the four tabs
             # each own one, so the name says both what it is and which tab it belongs to.
             combo.setAccessibleName(
                 tr(_ContentTab.KIND_TITLE_KEY[tab.kind]) + " · " + tr("mods.source")
             )
-            # Wide enough for "CurseForge" plus the arrow and generous padding
-            combo.setFixedWidth(combo.fontMetrics().horizontalAdvance("CurseForge") + 60)
-            combo.setFixedHeight(36)  # PCL field metric, same as the search field beside it
+            # Wide enough for "CurseForge" plus the arrow and generous padding. Minimum, not fixed:
+            # a pinned size made QComboBox size its popup list from the closed field, so even a
+            # three-item dropdown grew a vertical scrollbar.
+            combo.ensurePolished()
+            combo.setMinimumWidth(combo.fontMetrics().horizontalAdvance("CurseForge") + 60)
+            combo.setMinimumHeight(36)  # PCL field metric, same as the search field beside it
             combo.currentIndexChanged.connect(self._on_source_changed)
             tab._search_row.insertWidget(0, combo)
             self.source_combos.append(combo)
@@ -1450,7 +1671,7 @@ class ResourcesPage(QWidget):
         layout.addWidget(self.tabs, 1)
 
     def showEvent(self, event) -> None:
-        """Load popular content on first show instead of at construction (lazy page data)."""
+        """Load the first page on first show instead of at construction (lazy page data)."""
         super().showEvent(event)
         self._on_tab_changed(self.tabs.currentIndex())
 
@@ -1482,7 +1703,7 @@ class ResourcesPage(QWidget):
             self.shaderpacks_tab,
         ):
             tab._clear_entries()
-            tab._popular_loaded = False
+            tab._initial_loaded = False
         self._on_tab_changed(self.tabs.currentIndex())
 
     def _on_tab_changed(self, index: int) -> None:
@@ -1491,8 +1712,8 @@ class ResourcesPage(QWidget):
         if 0 <= index < len(self.chips) and not self.chips[index].isChecked():
             self.chips[index].setChecked(True)
         tab = self.tabs.widget(index)
-        if isinstance(tab, _ContentTab) and not tab._popular_loaded:
-            tab.load_popular()
+        if isinstance(tab, _ContentTab) and not tab._initial_loaded:
+            tab.load_initial()
 
 
 def _tag(text: str, color: str, background: str) -> str:
