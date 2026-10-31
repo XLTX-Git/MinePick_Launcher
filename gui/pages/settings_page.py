@@ -46,7 +46,7 @@ from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve
 from gui.widgets import (
     AccessibilityPreferenceGroup,
     NoWheelSpinBox,
-    add_page_header,
+    add_page_top_inset,
     set_app_status,
     style_form,
     style_page_layout,
@@ -461,7 +461,7 @@ class SettingsPage(QWidget):
         scroll.setWidget(inner)
         outer = QVBoxLayout(self)
         style_page_layout(outer)
-        add_page_header(outer, tr("nav.settings"), tr("page.settings.desc"))
+        add_page_top_inset(outer)
         outer.addWidget(scroll)
 
         self.browse_game.clicked.connect(self._browse_game)

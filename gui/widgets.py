@@ -671,47 +671,22 @@ def set_app_status(widget, text: str, level: str | None = None) -> None:
         return
 
 
-#: Distance between the shared page header and the first block below it, on every page.
+#: The air above the first block of a page, now that pages no longer draw a title block.
+PAGE_TOP_INSET = 16
+#: Distance between the instance-detail header and the first block below it (second-level page).
 PAGE_HEADER_GAP = 16
 
 
-def build_page_header(title: str, subtitle: str) -> QWidget:
-    """Page header: one title plus one line describing what the page is for.
+def add_page_top_inset(layout) -> None:
+    """Start a page's content exactly ``PAGE_TOP_INSET`` px below its top edge.
 
-    Structure only: the type and colour live in the sheets (``QLabel#pageTitle`` /
-    ``QLabel#pageSubtitle``), so every page gets the same 20px near-black title and 12px hint.
-    The header owns no surface of its own - no background, no border, no colour block.
+    Every top-level page used to open with the shared page header (name + one-line description).
+    That block is gone, so the page now owns its top air directly. Changing the layout's top
+    margin - rather than inserting a spacer widget - keeps the page's left/right/bottom inset and
+    its 8px/12px block rhythm untouched, and gives every page the same measured 16px.
     """
-    box = QWidget()
-    box.setObjectName("pageHeader")
-    layout = QVBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(4)
-    title_label = QLabel(title)
-    title_label.setObjectName("pageTitle")
-    subtitle_label = QLabel(subtitle)
-    subtitle_label.setObjectName("pageSubtitle")
-    subtitle_label.setWordWrap(True)
-    layout.addWidget(title_label)
-    layout.addWidget(subtitle_label)
-    return box
-
-
-def add_page_header(layout, title: str, subtitle: str) -> QWidget:
-    """Add the shared page header and leave exactly ``PAGE_HEADER_GAP`` px below it.
-
-    Page layouts use different spacing between their blocks (8px on most pages, 12px on the
-    instance grid), so the header absorbs the difference in its own bottom margin. The distance
-    from the hint line to the first block below is therefore 16px everywhere, instead of the
-    page's own rhythm plus the header's margin.
-    """
-    header = build_page_header(title, subtitle)
-    spacing = layout.spacing()
-    if spacing < 0:  # style default: assume the common 8px page rhythm
-        spacing = 8
-    header.layout().setContentsMargins(0, 0, 0, max(0, PAGE_HEADER_GAP - spacing))
-    layout.addWidget(header)
-    return header
+    margins = layout.contentsMargins()
+    layout.setContentsMargins(margins.left(), PAGE_TOP_INSET, margins.right(), margins.bottom())
 
 
 def style_page_layout(layout) -> None:

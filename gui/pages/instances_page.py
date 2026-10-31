@@ -53,7 +53,7 @@ from gui.pages.instance_detail import InstanceDetailPage
 from gui.widgets import (
     ElidedLabel,
     EmptyState,
-    add_page_header,
+    add_page_top_inset,
     add_search_icon,
     apply_no_focus_outline,
     disable_keeping_focus,
@@ -389,7 +389,7 @@ class InstancesPage(QWidget):
         browser_layout = QVBoxLayout(browser)
         style_page_layout(browser_layout)
         browser_layout.setSpacing(12)
-        add_page_header(browser_layout, tr("nav.instances"), tr("page.instances.desc"))
+        add_page_top_inset(browser_layout)
 
         first_row = QHBoxLayout()
         first_row.setContentsMargins(0, 0, 0, 0)

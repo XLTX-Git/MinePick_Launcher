@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 from gui import i18n, paint_utils
 from gui.widgets import (
     EmptyState,
-    add_page_header,
+    add_page_top_inset,
     apply_no_focus_outline,
     disable_keeping_focus,
     set_app_status,
@@ -362,7 +362,7 @@ class JavaPage(QWidget):
 
         layout = QVBoxLayout(self)
         style_page_layout(layout)
-        add_page_header(layout, tr("nav.java"), tr("page.java.desc"))
+        add_page_top_inset(layout)
         layout.addWidget(self.managed_card, 1)
         layout.addWidget(self.detected_card, 1)
         layout.addWidget(install_card)

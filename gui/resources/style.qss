@@ -776,14 +776,21 @@ QLabel#overlayCode {
 QLabel#overlayBody { color: __FG_OVERLAY_BODY__; }
 QScrollArea#overlayScroll { background: transparent; }
 
-/* ---------- page header ---------- */
+/* ---------- second-level heading + launch version block ---------- */
 
-/* One header for every page: a 20px near-black title over a 12px hint line, no surface of its own.
-   The 16px gap to the first block below is owned by gui/widgets.add_page_header(). The second-level
-   instance detail header shares the rule through its own object names. */
-QWidget#pageHeader { background: transparent; border: none; }
-QLabel#pageTitle, QLabel#instanceDetailTitle { color: __FG_PAGE_TITLE__; font-size: 20px; font-weight: 600; }
-QLabel#pageSubtitle, QLabel#instanceDetailHint { color: __FG_HINT__; font-size: 12px; }
+/* Top-level pages no longer draw a page name or description; the 16px top inset is a layout
+   value (gui/widgets.add_page_top_inset). Two headings remain: the drilled-in instance-detail
+   page keeps its back/title row, and the launch page's version number is data, not a page name.
+   They share one 20px/12px type scale through their own object names. */
+QLabel#instanceDetailTitle, QWidget#launchPage QLabel#launchVersionTitle {
+    color: __FG_PAGE_TITLE__;
+    font-size: 20px;
+    font-weight: 600;
+}
+QLabel#instanceDetailHint, QWidget#launchPage QLabel#launchVersionMeta {
+    color: __FG_HINT__;
+    font-size: 12px;
+}
 
 /* ---------- sidebar brand ---------- */
 

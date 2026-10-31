@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 
 from gui import i18n
 from gui.widgets import (
-    add_page_header,
+    add_page_top_inset,
     build_download_progress,
     disable_keeping_focus,
     set_app_status,
@@ -102,7 +102,7 @@ class AboutPage(QWidget):
 
         outer = QVBoxLayout(self)
         style_page_layout(outer)
-        add_page_header(outer, tr("nav.about"), tr("page.about.desc"))
+        add_page_top_inset(outer)
         outer.addWidget(scroll)
 
         self.load()

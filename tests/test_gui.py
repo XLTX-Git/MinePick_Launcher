@@ -268,17 +268,29 @@ def test_versions_page_auto_jre_default(app, monkeypatch, ws_tmp):
     window.close()
 
 
-def test_every_page_has_a_header(app, monkeypatch, ws_tmp):
-    """Each page starts with the shared header: a big title plus a one-line description."""
+def test_no_top_level_page_draws_a_page_header_and_all_keep_16px(app, monkeypatch, ws_tmp):
+    """The name/description header is gone; the page's first block starts 16px below its top edge.
+
+    The launch page is edge-to-edge by design, so its own panel margin supplies the top air. The
+    instance grid keeps its inner browser layout inside a zero-margin page, so the 16px lives there.
+    """
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_header"))
     from gui.main_window import MainWindow
 
     window = MainWindow()
     for key, page in window.pages.items():
-        title = page.findChild(QLabel, "pageTitle")
-        subtitle = page.findChild(QLabel, "pageSubtitle")
-        assert title is not None and title.text(), f"{key}: no page title"
-        assert subtitle is not None and subtitle.text(), f"{key}: no page description"
+        assert page.findChild(QLabel, "pageTitle") is None, f"{key}: still draws a page title"
+        assert page.findChild(QLabel, "pageSubtitle") is None, f"{key}: still draws a page description"
+        assert page.findChild(QWidget, "pageHeader") is None, f"{key}: still builds the header widget"
+        if key == "launch":
+            continue  # edge-to-edge panel, not a themed page inset
+        if key == "instances":
+            browser = page.findChild(QWidget, "instanceBrowser")
+            assert browser is not None, "instances: no browser panel"
+            margins = browser.layout().contentsMargins()
+        else:
+            margins = page.layout().contentsMargins()
+        assert margins.top() == 16, f"{key}: top inset is {margins.top()}px, expected 16px"
     window.close()
 
 
@@ -369,7 +381,7 @@ def test_resources_page_widgets(app, monkeypatch, ws_tmp):
     window = MainWindow()
     page = window.pages["mods"]
     header = page.findChild(QLabel, "pageTitle")
-    assert header is not None and header.text() == "资源"
+    assert header is None, "the resources page keeps its content but no page-name header"
     assert page.tabs.count() == 4  # mods/modpacks/resource packs/shaders
     tab = page.mods_tab
     # search bar exists
@@ -1499,7 +1511,7 @@ def test_resources_page_layout_contains_tabs(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["mods"]
         assert page.tabs.parent() is page
-        assert page.findChild(QLabel, "pageTitle") is not None
+        assert page.findChild(QLabel, "pageTitle") is None
     finally:
         if window is not None:
             window.close()

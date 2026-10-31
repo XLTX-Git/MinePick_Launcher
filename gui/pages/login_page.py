@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from gui import i18n, paint_utils
 from gui.widgets import (
-    add_page_header,
+    add_page_top_inset,
     apply_no_focus_outline,
     set_app_status,
     style_page_layout,
@@ -382,7 +382,7 @@ class LoginPage(QWidget):
 
         layout = QVBoxLayout(self)
         style_page_layout(layout)
-        add_page_header(layout, tr("nav.account"), tr("page.account.desc"))
+        add_page_top_inset(layout)
         layout.addLayout(account_row)
         layout.addWidget(scroll, 1)
 

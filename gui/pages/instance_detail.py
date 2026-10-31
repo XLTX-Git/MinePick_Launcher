@@ -462,11 +462,10 @@ class InstanceDetail(QWidget):
     def _build_header(self) -> QWidget:
         """This page's header: the instance name over its id and directory.
 
-        The second level keeps the shared header type and surfaces: the name and the two hint lines
-        are styled by the same sheet rule as ``pageTitle`` / ``pageSubtitle`` (through their own
-        object names, so the top-level header gate still finds the instance grid's header), and the
-        header paints no coloured block and no card. The back control lives above it in
-        :class:`InstanceDetailPage`.
+        The second level keeps the heading type: the name and the two hint lines are styled by the
+        same sheet rule as the launch version block (through their own object names). The header
+        paints no coloured block and no card. The back control lives above it in
+        :class:`InstanceDetailPage`; top-level pages no longer draw a header at all.
         """
         box = QWidget()
         self.name_label = QLabel(tr("instances.detail.value.none"))

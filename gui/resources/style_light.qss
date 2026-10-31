@@ -716,14 +716,21 @@ QLabel#overlayCode {
 QLabel#overlayBody { color: __FG_OVERLAY_BODY__; }
 QScrollArea#overlayScroll { background: transparent; }
 
-/* ---------- page header ---------- */
+/* ---------- second-level heading + launch version block ---------- */
 
-/* One header for every page: a 20px near-black title over a 12px hint line, no surface of its own.
-   The 16px gap to the first block below is owned by gui/widgets.add_page_header(). The second-level
-   instance detail header shares the rule through its own object names. */
-QWidget#pageHeader { background: transparent; border: none; }
-QLabel#pageTitle, QLabel#instanceDetailTitle { color: __FG_PAGE_TITLE__; font-size: 20px; font-weight: 600; }
-QLabel#pageSubtitle, QLabel#instanceDetailHint { color: __FG_HINT__; font-size: 12px; }
+/* Top-level pages no longer draw a page name or description; the 16px top inset is a layout
+   value (gui/widgets.add_page_top_inset). Two headings remain: the drilled-in instance-detail
+   page keeps its back/title row, and the launch page's version number is data, not a page name.
+   They share one 20px/12px type scale through their own object names. */
+QLabel#instanceDetailTitle, QWidget#launchPage QLabel#launchVersionTitle {
+    color: __FG_PAGE_TITLE__;
+    font-size: 20px;
+    font-weight: 600;
+}
+QLabel#instanceDetailHint, QWidget#launchPage QLabel#launchVersionMeta {
+    color: __FG_HINT__;
+    font-size: 12px;
+}
 
 /* ---------- sidebar brand ---------- */
 
@@ -876,9 +883,8 @@ QDoubleSpinBox#wizardMemory { min-height: 30px; }
 /* other page moves. It deliberately adds no widget and no image: the white    */
 /* layer is the existing scroll content, and the accent is the same            */
 /* user-chosen __ACCENT_BUTTON__ the rest of the app already uses.             */
-/* The page header is the shared transparent one - it used to be a solid       */
-/* accent banner here, which is exactly the inconsistency this page must not   */
-/* reintroduce.                                                               */
+/* The page header is gone on every top-level page; the card starts 16px below the page top
+   (gui/widgets.add_page_top_inset), with no extra title chrome to reintroduce. */
 /* ========================================================================== */
 
 /* Layer 1 - the page paper behind the page, the same token every other page uses. */
@@ -1143,9 +1149,8 @@ QWidget#launchPage QWidget#launchPanel {
     border-bottom-right-radius: 10px;
 }
 
-/* The version number doubles as this page's title, so it follows the shared pageTitle rule
-   (20px, near-black, 600) instead of inventing a second hero size. The panel is white, and the
-   shared header paints no surface, so nothing else moves. */
+/* The account name is the panel's own 14px label; the version block above it is the page's
+   visual subject and keeps the 20px launchVersionTitle treatment. */
 QWidget#launchPage QLabel#accountName {
     color: __FG_LAUNCH__;
     font-size: 14px;

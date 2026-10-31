@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 from gui import i18n, paint_utils
 from gui.errors import show_fatal
 from gui.widgets import (
-    add_page_header,
+    add_page_top_inset,
     add_search_icon,
     apply_no_focus_outline,
     build_download_progress,
@@ -491,7 +491,7 @@ class VersionsPage(QWidget):
 
         layout = QVBoxLayout(self)
         style_page_layout(layout)
-        add_page_header(layout, tr("nav.versions"), tr("page.versions.desc"))
+        add_page_top_inset(layout)
         layout.addLayout(top)
         layout.addLayout(tabs_row)
         layout.addLayout(latest_row)

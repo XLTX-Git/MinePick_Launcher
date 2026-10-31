@@ -188,15 +188,15 @@ class LaunchPage(QWidget):
         self.version_icon.setFixedSize(32, 32)
         self.version_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.version_icon.setPixmap(block_pixmap(30))
-        # The big version number *is* the page title. The shared header gate expects a pageTitle /
-        # pageSubtitle pair on every page, and a separate "Launch" heading above the mock-up's big
-        # version number would be exactly the extra chrome the panel design removes.
+        # The big version number is this page's visual subject, not a page name: the shared page
+        # header (name + description) was removed from every top-level page. It keeps the same
+        # 20px heading treatment through its own object name.
         self.version_label = QLabel(tr("launch.version.none"))
-        self.version_label.setObjectName("pageTitle")
+        self.version_label.setObjectName("launchVersionTitle")
         self.version_label.setProperty("versionHero", True)
         self.version_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self.version_meta = QLabel("")
-        self.version_meta.setObjectName("pageSubtitle")
+        self.version_meta.setObjectName("launchVersionMeta")
         # A "switch instances?" line used to sit under the subtitle. The instance buttons below already
         # say the same thing, so the key stays in the tables but the page no longer draws it.
 
@@ -284,8 +284,8 @@ class LaunchPage(QWidget):
         panel.setContentsMargins(20, 20, 20, 20)
         panel.setSpacing(0)
         panel.addWidget(self.version_block)
-        # The version block is this page's header (it carries pageTitle/pageSubtitle), so the gap to
-        # the account row below it is the same PAGE_HEADER_GAP every other page uses.
+        # The version block is this panel's top content; the gap to the account row below it
+        # stays the same 16px the instance-detail header uses.
         panel.addSpacing(PAGE_HEADER_GAP)
         panel.addLayout(account_row)
         panel.addStretch(1)
