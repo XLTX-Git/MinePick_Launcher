@@ -150,6 +150,15 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+    # The instance/version icons use the real block textures when the user's own client jar or our
+    # cache has them. Fill only the missing four, after the window is already up, in a daemon thread:
+    # local jars first, then Mojang's asset index; the first paint never waits, an offline start
+    # keeps the drawn block, and the next start retries. The headless smoke run
+    # (MCLAUNCHER_GUI_AUTOQUIT_MS) skips it so a test never opens a socket.
+    if not auto_quit:
+        from launcher.meta.block_textures import start_prefetch
+
+        start_prefetch(paths.launcher_dir(), cfg.game_dir or paths.default_game_dir())
     # First run: the wizard is an overlay inside the main window, not a separate dialog
     if not cfg.wizard_done and not auto_quit:
         window.show_wizard()

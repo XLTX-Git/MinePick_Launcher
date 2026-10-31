@@ -128,6 +128,20 @@ def render() -> str:
             "应用内的「关于」页展示同一份清单（按界面语言翻译）。"
         ),
         "",
+        (
+            "Minecraft block textures - used only as version icons - are **not distributed** with "
+            "MinePick Launcher. At runtime they are read from the user's own game installation (the "
+            "version's client jar or assets directory), or downloaded from Mojang's official servers "
+            "when available, and cached only in the user's configuration directory. Neither the "
+            "source tree nor the installer contains a Minecraft image."
+        ),
+        "",
+        (
+            "Minecraft 原版方块材质（仅用作版本图标）**不在分发范围内**：运行时从用户自己的游戏安装"
+            "（该版本的客户端 jar 或 assets 目录）读取，或在可用时从 Mojang 官方服务器获取，并且只缓存"
+            "在用户配置目录中。源码与安装包都不包含任何 Minecraft 图片。"
+        ),
+        "",
     ]
 
     def entry_block(entry: notices.Credit) -> list[str]:

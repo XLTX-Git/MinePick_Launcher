@@ -30,6 +30,7 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -48,7 +49,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, nav_icons, theme
+from gui import block_icons, i18n, theme
 from gui.pages.instance_detail import InstanceDetailPage
 from gui.widgets import (
     ElidedLabel,
@@ -74,6 +75,7 @@ from launcher.instances import (
     list_instances,
     resolve_instance,
 )
+from launcher.meta import block_textures
 
 tr = i18n.tr
 
@@ -174,6 +176,7 @@ class _InstanceCard(QPushButton):
         instance,
         meta: str,
         counts: str,
+        icon_pixmap: QPixmap,
         *,
         parent: QWidget | None = None,
     ) -> None:
@@ -198,10 +201,7 @@ class _InstanceCard(QPushButton):
         icon.setObjectName("instanceCardIcon")
         icon.setFixedSize(40, 40)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tokens = theme.current_tokens() or theme.theme_palette("light")
-        icon.setPixmap(
-            nav_icons.nav_icon("instances", tokens["ACCENT"], 22).pixmap(22, 22)
-        )
+        icon.setPixmap(icon_pixmap)
         icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         # The card button is the one focus stop; its text is painted by child labels, not controls.
         # ElidedLabel enables text selection, which also gives it ClickFocus - so each name/meta line
@@ -497,7 +497,11 @@ class InstancesPage(QWidget):
                     if part
                 )
                 card = _InstanceCard(
-                    inst, f"{version} · {loader}", counts, parent=self.list
+                    inst,
+                    f"{version} · {loader}",
+                    counts,
+                    self._card_icon(version, loader, game_dir),
+                    parent=self.list,
                 )
                 card.clicked.connect(partial(self._open_requested, inst.id))
                 self.list.setItemWidget(item, card)
@@ -509,6 +513,32 @@ class InstancesPage(QWidget):
         self._select(wanted)
         if not instances:
             self.show_list()
+
+    def _card_icon(self, version: str, loader: str, game_dir: Path) -> QPixmap:
+        """Loader glyph for a modded profile, the version's own block otherwise.
+
+        ``card_version_loader`` already resolved the inherited Minecraft version, so the block
+        category (release / snapshot / April Fools / ancient) is read from that version rather than
+        from the display-name folder. 40px is the tile; a 32px texture leaves the accent-soft frame
+        and its rounded corners visible, and a missing texture falls back to the drawn block.
+        """
+        kind = block_textures.loader_kind_for_label(loader)
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        if kind is not None:
+            return block_icons.loader_pixmap(kind, tokens.get("ACCENT", "#2f9e6f"), 22)
+        launcher_dir = paths.launcher_dir()
+        version_type = block_textures.version_type_for(
+            version, game_dir, cache_dir=launcher_dir / "cache"
+        )
+        category = block_textures.icon_category(version, version_type)
+        block = block_textures.block_name_for_category(category)
+        return block_icons.block_pixmap(
+            block,
+            32,
+            game_dir=game_dir,
+            version_id=version,
+            cache_root=block_textures.texture_cache_root(launcher_dir),
+        )
 
     def _relayout_cards(self) -> None:
         width = self.list.viewport().width()

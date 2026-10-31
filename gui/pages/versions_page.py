@@ -24,7 +24,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QLocale, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, paint_utils
+from gui import block_icons, i18n, paint_utils
 from gui.errors import show_fatal
 from gui.widgets import (
     add_page_top_inset,
@@ -64,7 +64,7 @@ from gui.workers import (
 )
 from launcher import config, paths
 from launcher.install import install_version, list_installed_versions
-from launcher.meta import fetch_manifest, version_category
+from launcher.meta import block_textures, fetch_manifest, version_category
 
 tr = i18n.tr
 
@@ -172,6 +172,7 @@ class _VersionRow(QWidget):
         date_text: str,
         status_text: str,
         installed: bool,
+        icon: QPixmap,
         *,
         on_select,
         on_install,
@@ -187,7 +188,7 @@ class _VersionRow(QWidget):
         self._on_install = on_install
         self._selected = False
         self._hover = False
-        self._icon = paint_utils.block_pixmap(self.ICON)
+        self._icon = icon
 
         self.install = QPushButton(tr("versions.install.short"))
         self.install.setObjectName("rowInstall")
@@ -653,15 +654,19 @@ class VersionsPage(QWidget):
                 item.setData(Qt.UserRole, v.id)
                 item.setSizeHint(QSize(0, _VersionRow.SLOT_HEIGHT))
                 self.list.addItem(item)
+            game_dir = self._game_dir()
+            cache_root = block_textures.texture_cache_root(paths.launcher_dir())
             for index, (v, category) in enumerate(shown):
                 type_label, date_text, status_text = self._meta[v.id]
+                installed = v.id in self._installed
                 # The same install path the module always used: the row's button calls it by id.
                 row = _VersionRow(
                     v.id,
                     type_label,
                     date_text,
                     status_text,
-                    v.id in self._installed,
+                    installed,
+                    self._row_icon(v.id, v.type, installed, game_dir, cache_root),
                     on_select=lambda row_index=index: self.list.setCurrentRow(row_index),
                     on_install=lambda version_id=v.id: self._on_row_install(version_id),
                 )
@@ -680,6 +685,31 @@ class VersionsPage(QWidget):
         # The page may still be inside its first layout pass here; re-apply the viewport width once
         # the widget hierarchy has settled (see _VersionList).
         QTimer.singleShot(0, self.list.sync_item_widths)
+
+    def _row_icon(
+        self,
+        version_id: str,
+        version_type: str,
+        installed: bool,
+        game_dir: Path,
+        cache_root: Path,
+    ) -> QPixmap:
+        """The block standing for this row's version type.
+
+        release -> grass, snapshot -> command block, April Fools -> gold, ancient -> cobblestone.
+        Only an installed version can supply its own texture from ``assets`` or its client jar;
+        every other row starts at the user's cache and ends at the drawn block, exactly like the
+        instance cards.
+        """
+        category = block_textures.icon_category(version_id, version_type)
+        block = block_textures.block_name_for_category(category)
+        return block_icons.block_pixmap(
+            block,
+            _VersionRow.ICON,
+            game_dir=game_dir if installed else None,
+            version_id=version_id,
+            cache_root=cache_root,
+        )
 
     def _sync_row_selection(self, index: int) -> None:
         for row_index, row in enumerate(self.rows):

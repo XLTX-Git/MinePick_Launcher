@@ -15,9 +15,9 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Navigation icons rendered from the bundled Lucide SVGs.
+"""Navigation and loader icons rendered from the bundled Lucide SVGs.
 
-Fourteen 24px Lucide glyphs ship under ``gui/resources/icons/nav`` (ISC, see THIRD_PARTY_NOTICES.md).
+Seventeen 24px Lucide glyphs ship under ``gui/resources/icons/nav`` (ISC, see THIRD_PARTY_NOTICES.md).
 The SVGs use ``currentColor`` for their stroke, so the one thing this module does is substitute the
 colour the caller asks for, render the vector at the screen's device pixel ratio and cache the result.
 No icon theme, no network, no second font: the raster is generated from the same file at every scale.
@@ -54,6 +54,11 @@ ICON_FILES: dict[str, str] = {
     "modify": "wrench",
     "export": "package",
     "diagnosis": "stethoscope",
+    # Mod loader glyphs for the instance cards (forge -> anvil, fabric -> spool, neoforge -> flame).
+    "forge": "anvil",
+    "fabric": "spool",
+    "neoforge": "flame",
+    "quilt": "spool",
 }
 
 _CACHE: dict[tuple[str, str, int, float], QIcon] = {}
