@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, nav_icons, theme
+from gui import i18n, nav_icons, theme, window_effects
 
 tr = i18n.tr
 from gui.pages.about_page import AboutPage
@@ -155,6 +155,10 @@ class MainWindow(QMainWindow):
         # tools/measure_min_width.py is what holds every language to it. See _enforce_layout_floor for why
         # this cannot simply be "let Qt derive the minimum" under lazy page construction.
         self._floor_pass = False
+        # The DWM corner preference is a one-shot window attribute, applied in showEvent once the
+        # native handle exists. False means "not attempted yet", not "failed": on Windows 10 it will
+        # simply stay False and the window keeps the square frame it always had.
+        self._corners_rounded = False
         self.setMinimumHeight(MIN_WINDOW_HEIGHT)
 
         from gui.widgets import StatusLabel, apply_no_focus_outline
@@ -668,6 +672,14 @@ class MainWindow(QMainWindow):
         self.build_pages()
         self.statusBar().show()
         self.set_status(tr("status.ready"))
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # The custom title bar means Windows never draws its own rounded frame, so the corners stay
+        # square until DWM is asked for the Windows 11 preference. Do it once, on the first show, when
+        # the native handle is guaranteed; a failure is cosmetic and silent (see window_effects).
+        if not self._corners_rounded:
+            self._corners_rounded = window_effects.apply_rounded_corners(self)
 
     def event(self, event) -> bool:
         # Qt refreshes a top-level's minimum size hint on its next layout pass, not at the moment a page
