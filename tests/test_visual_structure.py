@@ -50,12 +50,16 @@ def test_page_top_inset_is_16px():
     assert PAGE_TOP_INSET == 16
 
 
-def test_topbar_is_one_blue_in_both_themes_and_white_text_passes_aa():
+def test_topbar_blue_per_theme_and_white_text_passes_aa():
     light = theme.NEUTRAL_TOKENS["BG_TOPBAR"]["light"]
     dark = theme.NEUTRAL_TOKENS["BG_TOPBAR"]["dark"]
-    assert light == dark == "#1e6fd9"
+    # The dark theme deliberately uses the deeper blue (see the title-bar commit): one frame colour
+    # per theme, not one shared value. Both must still carry white text at AA.
+    assert light == "#1e6fd9"
+    assert dark == "#1a4e8c"
     assert theme.NEUTRAL_TOKENS["FG_TOPBAR"] == {"dark": "#ffffff", "light": "#ffffff"}
-    assert theme.contrast_ratio("#ffffff", "#1e6fd9") >= 4.5
+    for background in (light, dark):
+        assert theme.contrast_ratio("#ffffff", background) >= 4.5
 
 
 def test_dark_sheet_has_the_same_structural_blocks_as_light():
