@@ -45,9 +45,16 @@ RADIUS_SCALES = {
 }
 DEFAULT_RADIUS = "default"
 DEFAULT_FONT = "Microsoft YaHei UI"
-# 韩文(Hangul)与日文需要在链里各有一个覆盖字体:雅黑只有简体字形,Segoe UI 只有拉丁/西里尔,
-# 末尾的 sans-serif 在中文 Windows 上会映射回雅黑 —— 缺了这两项,韩语界面会整片显示成方块
-FONT_FALLBACKS = '"Segoe UI", "Malgun Gothic", "Yu Gothic UI", "Microsoft YaHei", sans-serif'
+# Latin first, on purpose: Microsoft YaHei UI's own Latin glyphs are markedly wider spaced than
+# Segoe UI's, so a stack that starts with YaHei sets every English word and digit in the wider face.
+# Measured on the same 15px line, the YaHei-first stack runs about one character wider than the
+# Segoe-first one. Segoe UI first gives the Latin text its own spacing while the CJK glyphs fall
+# back to YaHei, which is what the UI font is for here. The entries after it cover the scripts
+# Segoe UI does not: Hangul needs Malgun Gothic and Japanese needs Yu Gothic UI - YaHei has
+# Simplified Chinese only, and the trailing sans-serif maps back to YaHei on Chinese Windows, so
+# without those two the Korean and Japanese UI would be a wall of tofu.
+LATIN_FONT = "Segoe UI"
+FONT_FALLBACKS = '"Microsoft YaHei UI", "Malgun Gothic", "Yu Gothic UI", "Microsoft YaHei", sans-serif'
 
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
@@ -330,9 +337,17 @@ def theme_qpalette(theme: str, accent: str | None = None) -> QPalette:
     return palette
 
 def font_stack(family: str | None = None) -> str:
-    """Font-family value for the QSS: the chosen family first, then safe fallbacks."""
-    name = (family or "").strip() or DEFAULT_FONT
-    return f'"{name}", {FONT_FALLBACKS}'
+    """Font-family value for the QSS: Segoe UI first for Latin, then the UI font and its fallbacks.
+
+    The default UI font (Microsoft YaHei UI) is the CJK face here, not the Latin one: its Latin
+    glyphs are wider than Segoe UI's, so Segoe UI takes the first slot and YaHei catches the
+    Chinese. A family the user picked explicitly keeps the first slot - they asked for it by name,
+    and Segoe UI follows as that choice's Latin fallback rather than replacing it.
+    """
+    name = (family or "").strip()
+    if name and name.casefold() != DEFAULT_FONT.casefold():
+        return f'"{name}", "{LATIN_FONT}", {FONT_FALLBACKS}'
+    return f'"{LATIN_FONT}", {FONT_FALLBACKS}'
 
 
 def system_theme() -> str:

@@ -94,7 +94,7 @@ QHeaderView::section {
     border: none;
     border-bottom: 1px solid __BORDER_LIST__;
     padding: 8px;
-    font-weight: 600;
+    font-weight: 400;
 }
 /* Header corners stay square: rounding a section exposed the base style's light
    default background in the clipped notch (light-grey wedges at both top corners). */
@@ -128,7 +128,7 @@ QPushButton {
     border: 4px solid transparent;
     border-radius: __RADIUS_SM__;
     padding: 4px 12px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton:hover { background: __ACCENT_BUTTON_HOVER__; }
 QPushButton:pressed { background: __ACCENT_BUTTON_PRESS__; }
@@ -182,7 +182,7 @@ QPushButton#secondaryButton {
     color: __FG_BUTTON_SECONDARY__;
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
     padding: 8px 16px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#secondaryButton:hover {
     background: __BG_BUTTON_SECONDARY__;
@@ -201,7 +201,7 @@ QPushButton#dangerButton {
     color: __DANGER_FG__;
     border: 1px solid __DANGER_BORDER__;
     padding: 8px 16px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#dangerButton:hover { background: __DANGER_BG__; border-color: __DANGER_BORDER_2__; }
 QPushButton#dangerButton:pressed { background: __DANGER_BG_2__; }
@@ -251,7 +251,7 @@ QListWidget#sidebar::item {
     margin: 4px 4px;
     border-radius: __RADIUS_LG__;
     border-left: 3px solid transparent;
-    font-weight: 500;
+    font-weight: 400;
 }
 QListWidget#sidebar::item:hover { background: __BG_SIDEBAR__; color: __FG_TEXT__; }
 /* Selected pill: rounded on both sides so the shape stays symmetric. */
@@ -260,7 +260,7 @@ QListWidget#sidebar::item:selected {
     color: __ACCENT_SEL_TEXT__;
     border-left: 3px solid __ACCENT__;
     border-radius: __RADIUS_LG__;
-    font-weight: 700;
+    font-weight: 400;
 }
 
 /* ---------- progress ---------- */
@@ -512,7 +512,7 @@ QGroupBox::title {
     left: 12px;
     padding: 0 4px;
     color: __FG_HINT__;
-    font-weight: 700;
+    font-weight: 400;
 }
 
 /* ---------- versions page: category chips + latest cards ---------- */
@@ -523,14 +523,14 @@ QPushButton#categoryTab {
     border: 1px solid transparent;
     border-radius: 15px;
     padding: 8px 16px;
-    font-weight: 500;
+    font-weight: 400;
 }
 QPushButton#categoryTab:hover { color: __FG_TEXT__; background: __BG_SIDEBAR__; }
 QPushButton#categoryTab:checked {
     background: __ACCENT_BUTTON__;
     color: __FG_SELECTED__;
     border-color: __ACCENT_BUTTON__;
-    font-weight: 700;
+    font-weight: 400;
 }
 
 /* Keyboard focus must survive the id rule: `QPushButton:focus` loses to `QPushButton#categoryTab`.
@@ -634,7 +634,7 @@ QPushButton#rowDanger {
     border-radius: 6px;
     padding: 0 16px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#rowDanger:hover { background: __DANGER_BG__; border-color: __DANGER_BORDER_2__; }
 QPushButton#rowDanger:pressed { background: __DANGER_BG_2__; }
@@ -670,7 +670,7 @@ QPushButton#rowAction {
     border-radius: 6px;
     padding: 0 16px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#rowAction:hover {
     background: __BG_BUTTON_SECONDARY__;
@@ -711,7 +711,7 @@ QLabel#overlayCode {
     border: 1px solid __BORDER_OVERLAY_CODE__;
     border-radius: __RADIUS_SM__;
     padding: 0 8px;
-    font-weight: 700;
+    font-weight: 400;
 }
 QLabel#overlayBody { color: __FG_OVERLAY_BODY__; }
 QScrollArea#overlayScroll { background: transparent; }
@@ -784,7 +784,7 @@ QWidget#titleBar {
     background: __BG_TOPBAR__;
     border-bottom: none;
 }
-QLabel#titleBarTitle { color: __FG_TOPBAR__; font-size: 13px; font-weight: 600; }
+QLabel#titleBarTitle { color: __FG_TOPBAR__; font-size: 13px; font-weight: 400; }
 
 QPushButton#titleBarMinimize, QPushButton#titleBarClose {
     background: transparent;
@@ -846,7 +846,7 @@ QLabel#wizardDot[current="true"] { background: __ACCENT__; }
 
 QWidget#wizardRail { background: __BG_WINDOW__; border-right: 1px solid __BORDER_LIST__; }
 QLabel#wizardRailItem { color: __FG_RAIL_ITEM__; font-size: 13px; padding: 8px 4px; }
-QLabel#wizardRailItem[state="current"] { color: __FG_PAGE_TITLE__; font-weight: 700; }
+QLabel#wizardRailItem[state="current"] { color: __FG_PAGE_TITLE__; font-weight: 400; }
 QLabel#wizardRailItem[state="done"] { color: __FG_HINT__; }
 QWidget#wizardContent { background: __BG_WINDOW__; }
 QWidget#wizardActionBar { background: __BG_WINDOW__; border-top: 1px solid __BORDER_LIST__; }
@@ -862,7 +862,7 @@ QPushButton#wizardOption, QPushButton#wizardBrowse {
     border-radius: __RADIUS_SM__;
     color: __FG_OPTION__;
     padding: 8px 12px;
-    font-weight: 500;
+    font-weight: 400;
     min-height: 22px;
 }
 QPushButton#wizardOption:hover, QPushButton#wizardBrowse:hover { border-color: __BORDER_HOVER__; color: __FG_OPTION_2__; }
@@ -870,7 +870,7 @@ QPushButton#wizardOption[selected="true"] {
     background: __ACCENT_SOFT__;
     border: 1px solid __ACCENT__;
     color: __FG_OPTION_2__;
-    font-weight: 700;
+    font-weight: 400;
 }
 QLabel#wizardStatus { color: __FG_HINT__; font-size: 12px; }
 QLabel#wizardBullet { color: __FG_OPTION__; font-size: 13px; }
@@ -1064,7 +1064,7 @@ QWidget#settingsPage QPushButton#secondaryButton {
     border-radius: 6px;
     padding: 0 16px;
     min-height: 30px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QWidget#settingsPage QPushButton#secondaryButton:hover {
     background: __BG_BUTTON_SECONDARY__;
@@ -1154,7 +1154,7 @@ QWidget#launchPage QWidget#launchPanel {
 QWidget#launchPage QLabel#accountName {
     color: __FG_LAUNCH__;
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QWidget#launchPage QLabel#launchStats,
 QWidget#launchPage QLabel#launchLast {
@@ -1200,7 +1200,7 @@ QWidget#launchPage QPushButton#secondaryButton {
     border: 1px solid __BORDER_LAUNCH_FIELD__;
     padding: 8px 8px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QWidget#launchPage QPushButton#secondaryButton:hover {
     background: __BG_HOVER__;
@@ -1232,7 +1232,7 @@ QWidget#launchPage QPushButton#secondaryButton[disclosure="true"] {
     padding: 4px 8px;
     text-align: left;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:hover {
     background: __BG_HOVER__;
@@ -1296,7 +1296,7 @@ QPushButton#resourceChip {
     border-radius: 16px;
     padding: 0 16px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#resourceChip:hover { background: __ACCENT_TINT__; }
 QPushButton#resourceChip:checked {
@@ -1350,7 +1350,7 @@ QPushButton#rowInstall {
     border-radius: 6px;
     padding: 0 16px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#rowInstall:hover {
     background: __BG_BUTTON_SECONDARY__;
@@ -1431,7 +1431,7 @@ QLabel#instanceCardManage {
     border-radius: __RADIUS_SM__;
     padding: 4px 12px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#instanceCard:hover QLabel#instanceCardManage {
     border-color: __ACCENT__;
@@ -1450,7 +1450,7 @@ QPushButton#backButton {
     border: 1px solid transparent;
     border-radius: __RADIUS_SM__;
     color: __FG_HINT__;
-    font-weight: 600;
+    font-weight: 400;
     padding: 4px 8px;
     text-align: left;
 }
@@ -1479,11 +1479,11 @@ QLabel#instanceNavLabel {
     background: transparent;
     color: __FG_HINT__;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 400;
 }
 QLabel#instanceNavLabel[active="true"] {
     color: __ACCENT_SEL_TEXT__;
-    font-weight: 700;
+    font-weight: 400;
 }
 QLabel#instanceNavIcon { background: transparent; }
 QLabel#instanceNavBadge {
