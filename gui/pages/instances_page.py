@@ -339,6 +339,11 @@ class InstancesPage(QWidget):
     instance_open_requested = Signal(str)
     #: The detail page's back control asks to return to the grid.
     back_requested = Signal()
+    #: The detail view is on screen. The window uses this to hide the main navigation rail, because
+    #: the detail page has an eight-entry sidebar of its own and two sidebars side by side do not fit.
+    detail_shown = Signal()
+    #: The card grid is on screen again: the main navigation rail has to come back.
+    list_shown = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -443,15 +448,25 @@ class InstancesPage(QWidget):
         self.detail_page.detail_stack.setCurrentWidget(self.detail)
         self.view_stack.setCurrentWidget(self.detail_page)
         self.detail_page.focus_back_button()
+        # The main rail steps aside only after the detail page is up and focus has moved there: an
+        # emitted signal first would hide the rail while its own item still held the keyboard focus.
+        self.detail_shown.emit()
         return True
 
     def show_list(self) -> None:
-        """Return to the card grid, putting keyboard focus back on the current card."""
+        """Return to the card grid, putting keyboard focus back on the current card.
+
+        Focus lands on a control that stays visible: the current card when there is one, otherwise the
+        search field. It used to stay on the back button whenever the grid was empty, which left the
+        window with focus on a widget inside the now-hidden detail page.
+        """
         self.view_stack.setCurrentWidget(self.view_stack.widget(0))
-        item = self.list.currentItem()
-        card = self.list.itemWidget(item) if item is not None else None
-        if card is not None:
-            card.setFocus(Qt.FocusReason.OtherFocusReason)
+        if self.isVisible():
+            item = self.list.currentItem()
+            card = self.list.itemWidget(item) if item is not None else None
+            target = card if card is not None else self.search_edit
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.list_shown.emit()
 
     def current_view(self) -> QWidget:
         return self.view_stack.currentWidget()

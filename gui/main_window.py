@@ -24,6 +24,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt, QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
@@ -183,6 +184,9 @@ class MainWindow(QMainWindow):
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(12, 12, 0, 12)
         nav_layout.addWidget(self.sidebar, 1)
+        # Named because the instance detail page swaps this rail for its own sidebar: the detail host
+        # hides it, and every top-level page shows it again (see set_nav_rail_visible).
+        self.nav_rail = nav
 
         self.stack = QStackedWidget()
         # The page paper is painted on the stack itself (see QStackedWidget#pageStack in the light
@@ -205,7 +209,6 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
         layout.addWidget(nav)
         layout.addWidget(self.stack, 1)
-
         # Frameless window: the frame is ours, so it follows the theme instead of the OS
         from gui.title_bar import TitleBar
 
@@ -300,6 +303,10 @@ class MainWindow(QMainWindow):
             "instances": [
                 ("instance_open_requested", self._goto_instance),
                 ("back_requested", self._on_instances_back),
+                # The instance detail page replaces the main rail with its own sidebar: the page says
+                # which of its two views is on screen, and the window shows exactly one rail.
+                ("detail_shown", self._on_instance_detail_shown),
+                ("list_shown", self._on_instance_list_shown),
             ],
             "settings": [("settings_changed", self._on_settings_changed)],
             "versions": [
@@ -345,10 +352,61 @@ class MainWindow(QMainWindow):
         else:
             self.stack.setContentsMargins(6, 12, 12, 12)
 
+    # ---------- one rail at a time ----------
+
+    def set_nav_rail_visible(self, visible: bool) -> None:
+        """Show or hide the main rail.
+
+        The instance detail page has an eight-entry sidebar of its own. Two sidebars side by side left
+        the content 162px narrower and read as two competing navigations, so while a detail page is
+        open the main rail steps aside and the detail sidebar owns the left edge; every other page
+        shows the main rail again (``_on_nav_changed`` is the safety net, and the detail page's back
+        control restores it through ``list_shown``).
+
+        A hidden widget must not keep keyboard focus: if the rail (or one of its list items) was the
+        focused control when the detail page opened, focus moves to the back control before the rail
+        disappears, so the next Tab starts from a visible, meaningful control.
+        """
+        if self.nav_rail.isHidden() == (not visible):
+            return
+        if not visible:
+            self._move_focus_out_of_nav_rail()
+        self.nav_rail.setVisible(visible)
+
+    def _move_focus_out_of_nav_rail(self) -> None:
+        """Move keyboard focus to the detail page's back control before the rail is hidden."""
+        focused = QApplication.focusWidget()
+        if focused is None:
+            return
+        if focused is not self.nav_rail and not self.nav_rail.isAncestorOf(focused):
+            return
+        # peek() never builds a page: hiding the rail must not construct the instances page just to
+        # give focus away. The detail view is the only legitimate reason to hide the rail, so its back
+        # control is the target; a stray programmatic hide falls back to the grid's search field.
+        page = self.pages.peek("instances")
+        if page is None:
+            return
+        if page.current_view() is page.detail_page:
+            page.detail_page.focus_back_button()
+        elif page.isVisible():
+            page.search_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _on_instance_detail_shown(self) -> None:
+        """An instance detail page is on screen: its sidebar replaces the main navigation rail."""
+        self.set_nav_rail_visible(False)
+
+    def _on_instance_list_shown(self) -> None:
+        """The instance card grid is back on screen: the main navigation rail returns."""
+        self.set_nav_rail_visible(True)
+
     def _on_nav_changed(self, row: int) -> None:
         """Show the page for ``row`` - building it on first visit - then refresh and fade it in."""
         if not 0 <= row < len(NAV_KEYS):
             return
+        # Every top-level page is reached through the main rail, so entering one always restores it.
+        # This is the safety net for "the rail was hidden by an instance detail page and the user
+        # somehow got back to a top-level page": the rail cannot stay hidden outside the detail view.
+        self.set_nav_rail_visible(True)
         key = NAV_KEYS[row]
         page = self.pages[key]  # first visit to a page is what constructs it
         self.stack.setCurrentWidget(page)
@@ -440,6 +498,7 @@ class MainWindow(QMainWindow):
     def _on_instances_back(self) -> None:
         """The detail page's back control: return to the card grid on the instances page."""
         self.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
+        self.set_nav_rail_visible(True)
         self.pages["instances"].show_list()
 
     def _goto_instance_settings(self, version_id: str) -> None:

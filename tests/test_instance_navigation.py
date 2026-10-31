@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QPoint, Qt, QThreadPool
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
@@ -95,7 +95,27 @@ def _settle(app, window) -> None:
         app.processEvents()
 
 
-def _window(app, monkeypatch, ws_tmp):
+def _active_focus(app, window):
+    """The focused widget once the window is active again.
+
+    The offscreen platform drops the application's active window while events are processed, and a
+    widget of an inactive window reports no focus even though Qt still holds it as the window's focus
+    widget. Re-activating reproduces the state a real desktop window is always in; it does not relax
+    the check, and every caller still asserts the widget is visible and outside the hidden rail.
+    """
+    window.activateWindow()
+    app.processEvents()
+    return app.focusWidget()
+
+
+def _window(app, monkeypatch, ws_tmp, *, dont_show: bool = True):
+    """Build the real window on the offscreen platform.
+
+    ``dont_show=False`` is for the focus tests: a window marked ``WA_DontShowOnScreen`` never becomes
+    active, and a widget of an inactive window cannot take focus - so a focus assertion against it would
+    be probing the attribute, not the focus rule. The platform is forced offscreen by conftest.py, so a
+    shown window still cannot reach a desktop.
+    """
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data"))
     game = ws_tmp / "mc"
     _make_instance(
@@ -120,7 +140,8 @@ def _window(app, monkeypatch, ws_tmp):
 
     window = MainWindow()
     window.resize(1180, 760)
-    window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    if dont_show:
+        window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     window.show()
     window.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
     _settle(app, window)
@@ -398,3 +419,88 @@ def test_sidebar_width_gate_all_nine_languages(app):
     finally:
         i18n.set_language("zh_cn")
     assert not failures, "sidebar width gate failed:\n" + "\n".join(failures)
+
+
+# ---------------------------------------------------------------------------
+# One rail at a time: the detail sidebar replaces the main navigation rail
+# ---------------------------------------------------------------------------
+
+
+def test_instance_detail_replaces_the_main_rail_and_back_restores_it(
+    app, monkeypatch, ws_tmp
+):
+    """One sidebar at a time: detail hides the main rail, back (or any page) brings it back.
+
+    The focus half of this test is the point: the rail is hidden while a keyboard user may be
+    standing on it, and a hidden widget must never keep focus. Every state is checked through
+    ``QApplication.focusWidget()`` against ``isVisible()``, not just against the source.
+    """
+    from gui.main_window import NAV_KEYS
+
+    window = None
+    try:
+        window, _game = _window(app, monkeypatch, ws_tmp, dont_show=False)
+        page = window.pages["instances"]
+        assert window.nav_rail.isVisible()
+        assert page.current_view() is page.view_stack.widget(0)
+        stack_width_before = window.stack.width()
+
+        # A keyboard user is on the rail when the detail opens.
+        window.activateWindow()
+        app.processEvents()
+        window.sidebar.setFocus(Qt.FocusReason.OtherFocusReason)
+        app.processEvents()
+        assert window.sidebar.hasFocus()
+
+        assert page.open_instance("1.20.1")
+        _settle(app, window)
+        focused = _active_focus(app, window)
+
+        assert page.current_view() is page.detail_page
+        assert page.detail.instance_id == "1.20.1"
+        assert not window.nav_rail.isVisible()
+        # One sidebar, at the far left: the detail sidebar starts where the content starts, and the
+        # content gained exactly the rail's width.
+        assert page.detail.sidebar.mapTo(window, QPoint(0, 0)).x() <= 24
+        assert window.stack.width() == stack_width_before + window.nav_rail.width()
+
+        assert focused is not None, "the detail page left the window with no focused control"
+        assert focused.isVisible(), f"{type(focused).__name__} kept focus while hidden"
+        assert not window.nav_rail.isAncestorOf(focused)
+        assert focused is page.detail_page.back_button
+
+        # Hiding the rail while focus is on it must move focus to a visible control, even when the
+        # detail page was already open.
+        window.set_nav_rail_visible(True)
+        _active_focus(app, window)
+        window.sidebar.setFocus(Qt.FocusReason.OtherFocusReason)
+        app.processEvents()
+        assert window.sidebar.hasFocus()
+        window.set_nav_rail_visible(False)
+        _settle(app, window)
+        focused = _active_focus(app, window)
+        assert focused is not None and focused.isVisible()
+        assert not window.nav_rail.isAncestorOf(focused)
+        assert focused is page.detail_page.back_button
+
+        # Back: the grid and the main rail return, and focus is on a visible card.
+        page.detail_page.back_button.click()
+        _settle(app, window)
+        assert page.current_view() is page.view_stack.widget(0)
+        assert window.nav_rail.isVisible()
+        focused = _active_focus(app, window)
+        assert focused is not None and focused.isVisible()
+        assert not window.nav_rail.isAncestorOf(focused)
+
+        # A top-level page reached programmatically while the rail is hidden brings it back too:
+        # "the rail cannot come back" is exactly the failure this asserts against.
+        assert page.open_instance("1.20.1")
+        _settle(app, window)
+        assert not window.nav_rail.isVisible()
+        window.sidebar.setCurrentRow(NAV_KEYS.index("launch"))
+        _settle(app, window)
+        assert window.nav_rail.isVisible()
+        assert window.stack.currentWidget() is window.pages["launch"]
+    finally:
+        if window is not None:
+            _close(app, window)
