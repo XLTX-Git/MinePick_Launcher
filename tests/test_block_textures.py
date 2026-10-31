@@ -247,7 +247,9 @@ def test_prefetch_prefers_local_jars_and_never_touches_the_network(ws_tmp):
     )
     data = ws_tmp / "data"
     client = _ExplodingClient()
-    assert bt.prefetch_missing_textures(data, game_dir=game, client=client) == 4
+    assert bt.prefetch_missing_textures(data, game_dir=game, client=client) == len(
+        bt.TEXTURE_NAMES
+    )
     assert client.urls == []  # a local jar is enough: no manifest, no index, no PNG request
     root = bt.texture_cache_root(data) / bt.MODERN_BUCKET
     for name in bt.TEXTURE_NAMES:

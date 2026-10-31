@@ -15,24 +15,31 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Block and loader glyphs for the instance cards and the dense version rows.
+"""Block and loader glyphs for the instance cards, the dense version rows and the launch page.
 
 The real texture comes from ``launcher.meta.block_textures``: the version's own ``assets``, then its
 own client jar, then the user's cache. When none of them has it, the accent block painted by
 :func:`gui.paint_utils.block_pixmap` is used, so the pages keep working on a fresh install with no
 game files and no network.
 
-Scaling is deliberately nearest-neighbour: the source is a 16x16 pixel-art texture, and a smoothed
-48px scale would turn it into mush. The pixmap is cached per (file, mtime, size, device ratio), so a
-list of a thousand manifest rows loads each texture once.
+A 16x16 texture is shown the way Minecraft shows a block in the inventory: as an isometric cube with a
+diamond top, two side faces and the game's own face shading (top 100%, left 80%, right 60%). The three
+faces are painted as affinely transformed copies of the texture - one ``QPainter`` transform per face -
+so the artwork is the real thing, not a flat square and not a hand-drawn stand-in. Grass is the one
+block with two textures: ``grass_block_top`` for the top and ``grass_block_side`` for both sides.
+
+Scaling is deliberately nearest-neighbour: the source is 16x16 pixel art, and a smoothed scale would
+turn it into mush. The cube is cached per (source, mtime, size, device ratio), so a list of a thousand
+manifest rows decodes each texture once.
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QApplication
 
 from gui import nav_icons, paint_utils
@@ -42,14 +49,38 @@ from launcher.meta import block_textures
 #: forge -> anvil, fabric/quilt -> spool, neoforge -> flame).
 LOADER_GLYPHS: frozenset[str] = frozenset({"forge", "fabric", "neoforge", "quilt"})
 
-_TEXTURE_CACHE: dict[tuple[str, int, int, int], QPixmap] = {}
-_JAR_CACHE: dict[tuple[str, int, int], QPixmap] = {}
+#: Minecraft's own block shading: the top face is lit in full, the left face at 80% and the right at
+#: 60%. Keeping the game's numbers is what makes the icon read as a Minecraft block instead of a
+#: generic folded square.
+CUBE_TOP_LIGHT = 1.0
+CUBE_LEFT_LIGHT = 0.8
+CUBE_RIGHT_LIGHT = 0.6
+
+#: Half the cube's width as a fraction of the icon's edge. The top rhombus is then the classic 2:1
+#: isometric diamond, and the side height (2 / sqrt(3) * half) makes all three visible edges the same
+#: projected length: a cube, not a squashed box. The cube is 0.86 x 0.93 of the icon, which leaves a
+#: little air around it at every size the pages use (30, 32 and 48 px).
+CUBE_HALF_WIDTH_RATIO = 0.43
+
+#: The one block whose top face is a different texture: the side is dirt with a grass fringe, the top is
+#: grass seen from above. Everything else (stone, gold, command block) uses one texture on all faces.
+TOP_FACE_BLOCK: dict[str, str] = {"grass_block_side": "grass_block_top"}
+
+#: Minecraft's default (plains) grass colour. Since 1.13 the game ships ``grass_block_top`` as a
+#: greyscale mask and tints it per biome while rendering. The launcher has no biome, so it applies the
+#: same default tint the game applies on plains; a pre-1.13 texture is already coloured and is left
+#: alone (see :func:`_grass_top`).
+GRASS_TINT = "#91bd59"
+
+#: Bumped whenever a cached pixmap would have to be redrawn; the key carries everything that decides it.
+_IMAGE_CACHE: dict[str, QImage] = {}
+_CUBE_CACHE: dict[tuple[str, str, int, int], QPixmap] = {}
 
 
 def clear_cache() -> None:
-    """Drop scaled textures (tests and theme-independent reloads)."""
-    _TEXTURE_CACHE.clear()
-    _JAR_CACHE.clear()
+    """Drop decoded textures and rendered cubes (tests and theme-independent reloads)."""
+    _IMAGE_CACHE.clear()
+    _CUBE_CACHE.clear()
 
 
 def _screen_ratio() -> float:
@@ -69,38 +100,41 @@ def block_pixmap(
     version_id: str | None = None,
     cache_root: Path | None = None,
 ) -> QPixmap:
-    """A real block texture when one resolves, the drawn accent block otherwise.
+    """A real block texture rendered as an isometric cube, the drawn accent block otherwise.
 
     ``size`` is the displayed (logical) edge in pixels; the returned pixmap carries the screen's
-    device pixel ratio, so 48px stays 48px on a 125% display without a blurred upscale.
+    device pixel ratio, so 48px stays 48px on a 125% display without a blurred upscale. The lookup
+    order is block_textures' own: the version's assets, its client jar, the user's cache.
     """
-    path = block_textures.find_asset_texture(
-        block_name, game_dir=game_dir, version_id=version_id
+    side = _load_texture(
+        block_name, game_dir=game_dir, version_id=version_id, cache_root=cache_root
     )
-    if path is not None:
-        pixmap = _scaled_texture(path, size)
-        if pixmap is not None:
-            return pixmap
-    if game_dir is not None and version_id:
-        source = f"jar:{game_dir}:{version_id}:{block_name}"
-        cached = _cached_jar(source, size)
-        if cached is not None:
-            return cached
-        data = block_textures.jar_texture_bytes(
-            block_name, game_dir=game_dir, version_id=version_id
+    if side is None:
+        return paint_utils.block_pixmap(size)
+
+    top = side
+    top_block = TOP_FACE_BLOCK.get(block_name)
+    if top_block is not None:
+        resolved_top = _load_texture(
+            top_block, game_dir=game_dir, version_id=version_id, cache_root=cache_root
         )
-        if data is not None:
-            pixmap = _scaled_bytes(data, source, size)
-            if pixmap is not None:
-                return pixmap
-    path = block_textures.find_cached_texture(
-        block_name, cache_root=cache_root, version_id=version_id
-    )
-    if path is not None:
-        pixmap = _scaled_texture(path, size)
-        if pixmap is not None:
-            return pixmap
-    return paint_utils.block_pixmap(size)
+        if resolved_top is not None:
+            top = resolved_top
+
+    ratio = _screen_ratio()
+    key = (side[0], top[0], int(size), round(ratio * 100))
+    cached = _CUBE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    top_image = _grass_top(top[1]) if top_block is not None else top[1]
+    pixmap = _render_cube(side[1], top_image, size, ratio)
+    if pixmap is None:
+        return paint_utils.block_pixmap(size)
+    if len(_CUBE_CACHE) > 128:
+        _CUBE_CACHE.clear()
+    _CUBE_CACHE[key] = pixmap
+    return pixmap
 
 
 def loader_pixmap(loader: str, color: str, size: int = 22) -> QPixmap:
@@ -112,51 +146,234 @@ def loader_pixmap(loader: str, color: str, size: int = 22) -> QPixmap:
     return paint_utils.block_pixmap(size)
 
 
-def _cached_jar(source: str, size: int) -> QPixmap | None:
-    """The scaled jar texture if it is already decoded - avoids re-opening the zip on every row."""
-    return _JAR_CACHE.get((source, int(size), round(_screen_ratio() * 100)))
+def isometric_pixmap(side: QImage, top: QImage | None = None, size: int = 48) -> QPixmap:
+    """Paint a 16x16 texture as an isometric cube of ``size`` logical pixels.
+
+    ``side`` is the texture on both side faces; ``top`` (the same texture when omitted) is the diamond
+    on top. The faces are shaded with :data:`CUBE_TOP_LIGHT`, :data:`CUBE_LEFT_LIGHT` and
+    :data:`CUBE_RIGHT_LIGHT`, and drawn without smoothing or antialiasing so every texel stays a hard
+    pixel. The result carries the screen's device pixel ratio.
+    """
+    return _render_cube(
+        side, top if top is not None else side, size, _screen_ratio()
+    ) or QPixmap()
 
 
-def _scaled_texture(path: Path, size: int) -> QPixmap | None:
+def _render_cube(
+    side: QImage, top: QImage, size: int, ratio: float
+) -> QPixmap | None:
+    """Render one cube; ``None`` when either texture is empty."""
+    side = _first_frame(side)
+    top = _first_frame(top)
+    if side.isNull() or top.isNull():
+        return None
+    edge = max(1, round(int(size) * ratio))
+    pixmap = QPixmap(edge, edge)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap.setDevicePixelRatio(ratio)
+
+    painter = QPainter(pixmap)
+    # Pixel art: a smoothed or antialiased edge is a blurred edge.
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+    _paint_faces(painter, side, top, float(size))
+    painter.end()
+    return pixmap
+
+
+def _paint_faces(painter: QPainter, side: QImage, top: QImage, extent: float) -> None:
+    """Lay the three faces out as the three visible sides of a cube standing on its corner.
+
+    The top face is the rhombus ``left -> peak -> bottom -> right``; the left face drops from the
+    ``left``/``bottom`` edge and the right face from ``bottom``/``right``. Each face is an affine image
+    of the texture square: one transform maps texture (0,0) to the face's top-left corner and its two
+    edges onto the two projected cube edges.
+    """
+    half = extent * CUBE_HALF_WIDTH_RATIO
+    diamond = half / 2.0
+    depth = 2.0 / math.sqrt(3.0) * half
+    center_x = extent / 2.0
+    top_y = (extent - (half + depth)) / 2.0
+
+    left = QPointF(center_x - half, top_y + diamond)
+    peak = QPointF(center_x, top_y)
+    right = QPointF(center_x + half, top_y + diamond)
+    bottom = QPointF(center_x, top_y + 2.0 * diamond)
+    drop = QPointF(0.0, depth)
+
+    _paint_face(
+        painter, _shaded(top, CUBE_TOP_LIGHT), left, peak - left, bottom - left
+    )
+    _paint_face(
+        painter, _shaded(side, CUBE_LEFT_LIGHT), left, bottom - left, drop
+    )
+    _paint_face(
+        painter, _shaded(side, CUBE_RIGHT_LIGHT), bottom, right - bottom, drop
+    )
+
+
+def _paint_face(
+    painter: QPainter, image: QImage, origin: QPointF, across: QPointF, down: QPointF
+) -> None:
+    """Draw one textured face through the affine transform its parallelogram describes."""
+    width = float(max(1, image.width()))
+    height = float(max(1, image.height()))
+    transform = QTransform(
+        across.x() / width,
+        across.y() / width,
+        down.x() / height,
+        down.y() / height,
+        origin.x(),
+        origin.y(),
+    )
+    painter.save()
+    painter.setTransform(transform)
+    painter.drawImage(0, 0, image)
+    painter.restore()
+
+
+def _shaded(image: QImage, factor: float) -> QImage:
+    """The texture darkened by ``factor`` (0.8 = 80% light), leaving transparency untouched."""
+    out = image.convertToFormat(QImage.Format.Format_ARGB32)
+    if factor >= 0.999:
+        return out
+    for y in range(out.height()):
+        for x in range(out.width()):
+            color = out.pixelColor(x, y)
+            out.setPixelColor(
+                x,
+                y,
+                QColor(
+                    round(color.red() * factor),
+                    round(color.green() * factor),
+                    round(color.blue() * factor),
+                    color.alpha(),
+                ),
+            )
+    return out
+
+
+def _grass_top(image: QImage) -> QImage:
+    """Colour a modern greyscale grass top the way the game does; return colours untouched.
+
+    Pre-1.13 games ship a pre-tinted ``grass_top``; 1.13+ ships a greyscale mask. Tinting the latter
+    is what keeps the top face from reading as stone, and skipping it for the former avoids
+    double-tinting an old texture.
+    """
+    if not _is_greyscale(image):
+        return image
+    tint = QColor(GRASS_TINT)
+    out = image.convertToFormat(QImage.Format.Format_ARGB32)
+    for y in range(out.height()):
+        for x in range(out.width()):
+            color = out.pixelColor(x, y)
+            out.setPixelColor(
+                x,
+                y,
+                QColor(
+                    round(color.red() * tint.red() / 255),
+                    round(color.green() * tint.green() / 255),
+                    round(color.blue() * tint.blue() / 255),
+                    color.alpha(),
+                ),
+            )
+    return out
+
+
+def _is_greyscale(image: QImage) -> bool:
+    """Is the image a greyscale mask? True when nearly every opaque texel has equal channels."""
+    opaque = 0
+    greyscale = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            if color.alpha() < 8:
+                continue
+            opaque += 1
+            channels = (color.red(), color.green(), color.blue())
+            if max(channels) - min(channels) <= 6:
+                greyscale += 1
+    return opaque > 0 and greyscale * 100 >= opaque * 95
+
+
+def _first_frame(image: QImage) -> QImage:
+    """Crop an animated texture strip to its first frame (``command_block_front`` is 16x64)."""
+    if image.isNull() or image.width() == image.height():
+        return image
+    edge = min(image.width(), image.height())
+    return image.copy(0, 0, edge, edge)
+
+
+# ---------------------------------------------------------------------------
+# Texture lookup: the three block_textures levels, memoised by source
+# ---------------------------------------------------------------------------
+
+
+def _load_texture(
+    block_name: str,
+    *,
+    game_dir: Path | None,
+    version_id: str | None,
+    cache_root: Path | None,
+) -> tuple[str, QImage] | None:
+    """Resolve one block texture: ``(cache key, image)`` or ``None`` when it is nowhere.
+
+    The returned key identifies the exact bytes (a path's mtime is part of the file key, a client jar's
+    location and profile id are part of the jar key), so the caller's cube cache cannot serve pixels
+    from a texture that has since changed.
+    """
+    path = block_textures.find_asset_texture(
+        block_name, game_dir=game_dir, version_id=version_id
+    )
+    if path is not None:
+        loaded = _load_path(path)
+        if loaded is not None:
+            return loaded
+
+    if game_dir is not None and version_id:
+        source = f"jar:{game_dir}:{version_id}:{block_name}"
+        cached = _IMAGE_CACHE.get(source)
+        if cached is not None:
+            return source, cached
+        data = block_textures.jar_texture_bytes(
+            block_name, game_dir=game_dir, version_id=version_id
+        )
+        if data is not None:
+            image = QImage.fromData(data, "PNG")
+            if not image.isNull():
+                image = _first_frame(image)
+                _remember(source, image)
+                return source, image
+
+    path = block_textures.find_cached_texture(
+        block_name, cache_root=cache_root, version_id=version_id
+    )
+    if path is not None:
+        loaded = _load_path(path)
+        if loaded is not None:
+            return loaded
+    return None
+
+
+def _load_path(path: Path) -> tuple[str, QImage] | None:
+    """Decode a texture file once per (path, mtime)."""
     try:
-        mtime = path.stat().st_mtime_ns
+        key = f"file:{path}:{path.stat().st_mtime_ns}"
     except OSError:
         return None
-    ratio = _screen_ratio()
-    key = (str(path), mtime, int(size), round(ratio * 100))
-    cached = _TEXTURE_CACHE.get(key)
+    cached = _IMAGE_CACHE.get(key)
     if cached is not None:
-        return cached
+        return key, cached
     image = QImage(str(path))
-    pixmap = _scale(image, size, ratio)
-    if pixmap is not None:
-        _TEXTURE_CACHE[key] = pixmap
-    return pixmap
-
-
-def _scaled_bytes(data: bytes, source: str, size: int) -> QPixmap | None:
-    ratio = _screen_ratio()
-    key = (source, int(size), round(ratio * 100))
-    cached = _JAR_CACHE.get(key)
-    if cached is not None:
-        return cached
-    image = QImage.fromData(data, "PNG")
-    pixmap = _scale(image, size, ratio)
-    if pixmap is not None:
-        _JAR_CACHE[key] = pixmap
-    return pixmap
-
-
-def _scale(image: QImage, size: int, ratio: float) -> QPixmap | None:
     if image.isNull():
         return None
-    edge = max(1, round(size * ratio))
-    scaled = image.scaled(
-        edge,
-        edge,
-        Qt.AspectRatioMode.IgnoreAspectRatio,
-        Qt.TransformationMode.FastTransformation,
-    )
-    pixmap = QPixmap.fromImage(scaled)
-    pixmap.setDevicePixelRatio(ratio)
-    return pixmap
+    image = _first_frame(image)
+    _remember(key, image)
+    return key, image
+
+
+def _remember(key: str, image: QImage) -> None:
+    """Memoise one decoded texture, keeping the cache from growing with every version ever seen."""
+    if len(_IMAGE_CACHE) > 64:
+        _IMAGE_CACHE.clear()
+    _IMAGE_CACHE[key] = image

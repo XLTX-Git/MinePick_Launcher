@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, icons, theme
+from gui import block_icons, i18n, icons, theme
 from gui.accessibility_launch import (
     prepare_launch_accessibility,
     trigger_source_for_click,
@@ -315,8 +315,8 @@ class LaunchPage(QWidget):
         self._populate_versions()
 
     def on_theme_applied(self) -> None:
-        """Re-draw the accent-derived icon and avatar after a theme/accent swap."""
-        self.version_icon.setPixmap(block_pixmap(30))
+        """Re-draw the block icon and avatar after a theme/accent swap."""
+        self._refresh_version_icon()
         self.refresh_account()
 
     # ---- version state: the launch page shows it, the paths choose it ----
@@ -371,11 +371,38 @@ class LaunchPage(QWidget):
             self.avatar_label.setPixmap(avatar)
 
     def _refresh_version_block(self) -> None:
-        """Update the version number, the meta line, the counts and the last-launch line."""
+        """Update the block icon, the version number, the meta line and the launch history."""
+        self._refresh_version_icon()
         self.version_label.setText(self._version_label_text())
         self.version_meta.setText(self._version_meta_text())
         self._refresh_last_launch()
         self._refresh_stats()
+
+    def _refresh_version_icon(self) -> None:
+        """Show the selected version's own block as a 3D cube, the drawn block when it has no texture.
+
+        The texture comes from the same three-step lookup the instance cards use (the version's assets,
+        then its client jar, then the user cache), so the launch page shows the exact artwork of the
+        version it is about to run - a 1.20.1 world shows the 1.20.1 grass, not a generic icon.
+        """
+        version_id = self._current_version_id()
+        if not version_id:
+            self.version_icon.setPixmap(block_pixmap(30))
+            return
+        from launcher.meta import block_textures
+
+        game_dir = self._game_dir()
+        category = block_textures.icon_category(version_id, self._version_type(version_id))
+        block = block_textures.block_name_for_category(category)
+        self.version_icon.setPixmap(
+            block_icons.block_pixmap(
+                block,
+                30,
+                game_dir=game_dir,
+                version_id=version_id,
+                cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
+            )
+        )
 
     def _refresh_stats(self) -> None:
         """Show mods/worlds only when the selected profile really has some.

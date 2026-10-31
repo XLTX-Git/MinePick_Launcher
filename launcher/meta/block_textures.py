@@ -28,7 +28,7 @@ their own block when it returns ``None``; when a real texture is wanted, the loo
 3. nothing (the caller draws the accent block, so the UI never breaks).
 
 The cache is filled after the window is already on screen by ``start_prefetch``: a daemon thread that
-first copies the four missing textures out of any installed client jar (newest release first), and
+first copies the five missing textures out of any installed client jar (newest release first), and
 only then falls back to the documented Mojang chain - manifest -> a modern version's asset index ->
 ``resources.download.minecraft.net``. It never downloads ``client.jar`` and swallows every failure:
 the next start simply tries again.
@@ -68,9 +68,11 @@ BLOCK_BY_CATEGORY: dict[str, str] = {
     "ancient": "cobblestone",
 }
 
-#: The only textures the startup prefetch fetches (order is also the fetch order).
+#: The only textures the startup prefetch fetches (order is also the fetch order). Grass needs two:
+#: its side (dirt with a grass fringe) and its top (the green surface seen from above).
 TEXTURE_NAMES: tuple[str, ...] = (
     "grass_block_side",
+    "grass_block_top",
     "command_block_front",
     "gold_block",
     "cobblestone",
@@ -79,6 +81,7 @@ TEXTURE_NAMES: tuple[str, ...] = (
 #: File stems per block: the modern name first, the pre-1.13 name as a fallback alias.
 _TEXTURE_STEMS: dict[str, tuple[str, ...]] = {
     "grass_block_side": ("grass_block_side", "grass_side"),
+    "grass_block_top": ("grass_block_top", "grass_top"),
     "command_block_front": ("command_block_front", "command_block"),
     "gold_block": ("gold_block",),
     "cobblestone": ("cobblestone",),
@@ -218,7 +221,7 @@ def texture_cache_root(launcher_dir: Path) -> Path:
 
 
 def missing_textures(launcher_dir: Path) -> list[str]:
-    """The four texture names that are not in the user's cache yet (empty when everything is cached)."""
+    """The texture names that are not in the user's cache yet (empty when everything is cached)."""
     root = texture_cache_root(launcher_dir) / MODERN_BUCKET
     return [name for name in TEXTURE_NAMES if not _is_texture(root / (name + ".png"))]
 
@@ -457,7 +460,7 @@ def _is_texture(path: Path) -> bool:
 def start_prefetch(launcher_dir: Path, game_dir: Path | None = None) -> threading.Thread | None:
     """Fill the texture cache in a daemon thread; returns ``None`` when nothing is missing.
 
-    Called once after the main window is shown. The cache hit check is four ``stat`` calls, so the
+    Called once after the main window is shown. The cache hit check is five ``stat`` calls, so the
     every-day start does no thread and no network at all.
     """
     if not missing_textures(launcher_dir):

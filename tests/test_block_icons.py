@@ -15,11 +15,12 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Version icons: nearest-neighbour pixel scaling, loader glyphs, and the drawn fallback."""
+"""Version icons: the isometric cube (shading, nearest-neighbour pixels), loader glyphs, fallback."""
 
 from __future__ import annotations
 
 import json
+import math
 import zipfile
 
 import pytest
@@ -59,17 +60,55 @@ def _painted(pixmap) -> int:
 
 
 def _colours(pixmap) -> set[str]:
+    """Every colour with a painted (non-transparent) pixel; empty corners would read as #000000."""
     image = pixmap.toImage()
     return {
         image.pixelColor(x, y).name()
         for x in range(image.width())
         for y in range(image.height())
+        if image.pixelColor(x, y).alpha() > 0
     }
 
 
-def _solid_png(path, colour: str):
+def _shaded(colour: str, factor: float) -> str:
+    """The exact colour the cube renderer produces for one face (it rounds per channel)."""
+    source = QColor(colour)
+    return QColor(
+        round(source.red() * factor),
+        round(source.green() * factor),
+        round(source.blue() * factor),
+    ).name()
+
+
+def _face_centre(size: int, face: str) -> tuple[int, int]:
+    """A pixel safely inside the top / left / right face of the cube layout."""
+    half = size * block_icons.CUBE_HALF_WIDTH_RATIO
+    diamond = half / 2.0
+    depth = 2.0 / math.sqrt(3.0) * half
+    center_x = size / 2.0
+    top_y = (size - (half + depth)) / 2.0
+    left = (center_x - half, top_y + diamond)
+    peak = (center_x, top_y)
+    right = (center_x + half, top_y + diamond)
+    bottom = (center_x, top_y + 2.0 * diamond)
+    if face == "top":
+        points = (left, peak, right, bottom)
+    elif face == "left":
+        points = (left, bottom, (bottom[0], bottom[1] + depth), (left[0], left[1] + depth))
+    else:
+        points = (bottom, right, (right[0], right[1] + depth), (bottom[0], bottom[1] + depth))
+    return round(sum(point[0] for point in points) / 4), round(
+        sum(point[1] for point in points) / 4
+    )
+
+
+def _pixel(pixmap, point: tuple[int, int]) -> QColor:
+    return pixmap.toImage().pixelColor(*point)
+
+
+def _solid_png(path, colour: str, height: int = 16):
     path.parent.mkdir(parents=True, exist_ok=True)
-    image = QImage(16, 16, QImage.Format.Format_ARGB32)
+    image = QImage(16, height, QImage.Format.Format_ARGB32)
     image.fill(QColor(colour))
     assert image.save(str(path))
     return path
@@ -79,18 +118,122 @@ def _solid_png_bytes(path, colour: str) -> bytes:
     return _solid_png(path, colour).read_bytes()
 
 
-def test_texture_is_scaled_to_48px_without_smoothing(texture_cache):
+def test_texture_is_rendered_as_a_48px_cube_without_smoothing(texture_cache):
+    """FastTransformation + no antialiasing: exactly the six shaded source colours, no blends."""
     pixmap = block_icons.block_pixmap("grass_block_side", 48, cache_root=texture_cache)
     assert not pixmap.isNull()
     assert round(pixmap.width() / pixmap.devicePixelRatio()) == 48
-    image = pixmap.toImage()
-    colours = {
-        image.pixelColor(x, y).name()
-        for x in range(image.width())
-        for y in range(image.height())
+    assert pixmap.height() / pixmap.devicePixelRatio() == 48
+    # Transparent corners are part of the icon shape, not painted texels.
+    assert pixmap.toImage().pixelColor(0, 0).alpha() == 0
+    assert _painted(pixmap) > 48 * 48 // 2
+    expected = {
+        colour
+        for source in ("#cc2222", "#2244cc")
+        for colour in (
+            source,
+            _shaded(source, block_icons.CUBE_LEFT_LIGHT),
+            _shaded(source, block_icons.CUBE_RIGHT_LIGHT),
+        )
     }
-    # FastTransformation keeps the two source colours exactly; any smoothing would add blends.
-    assert colours == {"#cc2222", "#2244cc"}
+    assert _colours(pixmap) == expected
+
+
+def test_cube_faces_use_minecrafts_100_80_60_shading(texture_cache):
+    """Top is full brightness, left 80%, right 60%; a pixel sample proves the order and the values."""
+    root = texture_cache
+    _solid_png(root / bt.MODERN_BUCKET / "gold_block.png", "#cc2222")
+    block_icons.clear_cache()
+    pixmap = block_icons.block_pixmap("gold_block", 48, cache_root=texture_cache)
+
+    top = _pixel(pixmap, _face_centre(48, "top")).name()
+    left = _pixel(pixmap, _face_centre(48, "left")).name()
+    right = _pixel(pixmap, _face_centre(48, "right")).name()
+    assert top == "#cc2222"
+    assert left == _shaded("#cc2222", block_icons.CUBE_LEFT_LIGHT)
+    assert right == _shaded("#cc2222", block_icons.CUBE_RIGHT_LIGHT)
+
+    def luminance(name: str) -> float:
+        colour = QColor(name)
+        return 0.2126 * colour.red() + 0.7152 * colour.green() + 0.0722 * colour.blue()
+
+    assert luminance(top) > luminance(left) > luminance(right)
+    assert block_icons.CUBE_TOP_LIGHT == 1.0
+    assert block_icons.CUBE_LEFT_LIGHT == 0.8
+    assert block_icons.CUBE_RIGHT_LIGHT == 0.6
+
+
+def test_isometric_pixmap_is_a_public_renderer_with_a_transparent_background():
+    image = QImage(16, 16, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#2244cc"))
+    pixmap = block_icons.isometric_pixmap(image, size=64)
+    assert round(pixmap.width() / pixmap.devicePixelRatio()) == 64
+    assert _colours(pixmap) == {
+        "#2244cc",
+        _shaded("#2244cc", block_icons.CUBE_LEFT_LIGHT),
+        _shaded("#2244cc", block_icons.CUBE_RIGHT_LIGHT),
+    }
+    assert pixmap.toImage().pixelColor(0, 63).alpha() == 0
+
+
+def test_grass_block_uses_grass_block_top_for_the_top_face(texture_cache):
+    """Grass is the two-texture block: top from grass_block_top, both sides from grass_block_side."""
+    root = texture_cache / bt.MODERN_BUCKET
+    _solid_png(root / "grass_block_side.png", "#cc2222")
+    _solid_png(root / "grass_block_top.png", "#2244cc")
+    block_icons.clear_cache()
+    assert block_icons.TOP_FACE_BLOCK["grass_block_side"] == "grass_block_top"
+
+    pixmap = block_icons.block_pixmap("grass_block_side", 48, cache_root=texture_cache)
+    assert _pixel(pixmap, _face_centre(48, "top")).name() == "#2244cc"
+    assert _pixel(pixmap, _face_centre(48, "left")).name() == _shaded(
+        "#cc2222", block_icons.CUBE_LEFT_LIGHT
+    )
+    assert _pixel(pixmap, _face_centre(48, "right")).name() == _shaded(
+        "#cc2222", block_icons.CUBE_RIGHT_LIGHT
+    )
+
+
+def test_animated_texture_uses_its_first_frame(texture_cache):
+    """command_block_front ships as a 16x64 strip: the cube takes frame one, not a squashed strip."""
+    root = texture_cache / bt.MODERN_BUCKET
+    image = QImage(16, 64, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#22cc44"))
+    for y in range(16):
+        for x in range(16):
+            image.setPixelColor(x, y, QColor("#cc2222"))
+    assert image.save(str(root / "command_block_front.png"))
+    block_icons.clear_cache()
+
+    pixmap = block_icons.block_pixmap("command_block_front", 48, cache_root=texture_cache)
+    assert _colours(pixmap) == {
+        "#cc2222",
+        _shaded("#cc2222", block_icons.CUBE_LEFT_LIGHT),
+        _shaded("#cc2222", block_icons.CUBE_RIGHT_LIGHT),
+    }
+
+
+def test_greyscale_grass_top_is_tinted_but_a_coloured_one_is_left_alone(texture_cache):
+    """1.13+ ships the grass top as a greyscale mask; Minecraft tints it, so the launcher does too."""
+    root = texture_cache / bt.MODERN_BUCKET
+    _solid_png(root / "grass_block_side.png", "#66aa44")
+    _solid_png(root / "grass_block_top.png", "#8f8f8f")
+    block_icons.clear_cache()
+
+    pixmap = block_icons.block_pixmap("grass_block_side", 48, cache_root=texture_cache)
+    top = _pixel(pixmap, _face_centre(48, "top"))
+    tint = QColor(block_icons.GRASS_TINT)
+    assert top.name() == QColor(
+        round(0x8F * tint.red() / 255),
+        round(0x8F * tint.green() / 255),
+        round(0x8F * tint.blue() / 255),
+    ).name()
+
+    # A pre-1.13 grass_top is already green: tinting it a second time would make it almost black.
+    _solid_png(root / "grass_block_top.png", "#66cc33")
+    block_icons.clear_cache()
+    coloured = block_icons.block_pixmap("grass_block_side", 48, cache_root=texture_cache)
+    assert _pixel(coloured, _face_centre(48, "top")).name() == "#66cc33"
 
 
 def test_missing_texture_falls_back_to_the_drawn_block(ws_tmp):
@@ -146,15 +289,22 @@ def test_lookup_order_is_assets_then_jar_then_cache(ws_tmp):
     object_path.parent.mkdir(parents=True)
     object_path.write_bytes(asset.read_bytes())
 
+    def cube_colours(colour: str) -> set[str]:
+        return {
+            colour,
+            _shaded(colour, block_icons.CUBE_LEFT_LIGHT),
+            _shaded(colour, block_icons.CUBE_RIGHT_LIGHT),
+        }
+
     def icon():
         block_icons.clear_cache()
         return block_icons.block_pixmap(
             "grass_block_side", 48, game_dir=game, version_id="1.20.1", cache_root=cache
         )
 
-    assert _colours(icon()) == {"#cc2222"}  # own assets
+    assert _colours(icon()) == cube_colours("#cc2222")  # own assets
     object_path.unlink()
-    assert _colours(icon()) == {"#2244cc"}  # own client jar
+    assert _colours(icon()) == cube_colours("#2244cc")  # own client jar
     assert _colours(
         block_icons.block_pixmap(
             "grass_block_side",
@@ -163,4 +313,4 @@ def test_lookup_order_is_assets_then_jar_then_cache(ws_tmp):
             version_id="1.20.1",
             cache_root=cache,
         )
-    ) == {"#33aa33"}  # user cache
+    ) == cube_colours("#33aa33")  # user cache
