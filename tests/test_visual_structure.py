@@ -42,7 +42,8 @@ def test_default_radius_scale_is_card_8_and_control_6():
     # cards take LG, inputs/buttons take SM
     assert "QFrame#pageCard" in LIGHT and "border-radius: __RADIUS_LG__;" in LIGHT
     assert "QWidget#settingsPage QWidget#settingsCard" in LIGHT
-    assert "QWidget#settingsPage QLineEdit," in LIGHT and "border-radius: 6px;" in LIGHT
+    # The 6px control radius must come from the SM token, not a literal: the preset has to reach it.
+    assert "QWidget#settingsPage QLineEdit," in LIGHT and "border-radius: __RADIUS_SM__;" in LIGHT
 
 
 def test_page_top_inset_is_16px():

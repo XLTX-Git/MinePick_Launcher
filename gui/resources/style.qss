@@ -619,7 +619,7 @@ QLabel#latestVersion { font-size: 15px; font-weight: 600; color: __FG_CARD_LATES
 QWidget#versionsPage QLineEdit {
     background: __BG_LIST__;
     border: 1px solid __BORDER_LAUNCH_FIELD__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 12px;
     font-size: 13px;
 }
@@ -691,7 +691,7 @@ QPushButton#rowDanger {
     background: transparent;
     color: __DANGER_FG__;
     border: 1px solid __DANGER_BORDER__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 16px;
     font-size: 12px;
     font-weight: 400;
@@ -727,7 +727,7 @@ QPushButton#rowAction {
     background: transparent;
     color: __FG_BUTTON_SECONDARY__;
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 16px;
     font-size: 12px;
     font-weight: 400;
@@ -912,7 +912,7 @@ QWidget#settingsPage QDoubleSpinBox {
     background: __BG_LIST__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_LAUNCH_FIELD__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 12px;
     font-size: 15px;
     selection-background-color: __ACCENT_SEL__;
@@ -982,7 +982,7 @@ QWidget#settingsPage QPushButton#secondaryButton {
     background: __BG_LIST__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 16px;
     min-height: 30px;
     font-weight: 400;
@@ -1155,7 +1155,7 @@ QWidget#launchPage QPushButton#secondaryButton[disclosure="true"][keyboardFocus=
 QWidget#launchPage QLineEdit {
     background: __BG_LIST__;
     border: 1px solid __BORDER_LAUNCH_FIELD__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 12px;
     min-height: 38px;
     color: __FG_LAUNCH__;
@@ -1257,14 +1257,14 @@ QPushButton#resourceChip:checked[keyboardFocus="true"]:focus { border-color: __F
 QWidget#resourcesPage QLineEdit {
     background: __BG_LIST__;
     border: 1px solid __BORDER_LAUNCH_FIELD__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 12px;
     font-size: 13px;
 }
 QWidget#resourcesPage QComboBox {
     background: __BG_LIST__;
     border: 1px solid __BORDER_LAUNCH_FIELD__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 24px 0 12px;
     font-size: 13px;
 }
@@ -1293,7 +1293,7 @@ QPushButton#rowInstall {
     background: transparent;
     color: __FG_BUTTON_SECONDARY__;
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
-    border-radius: 6px;
+    border-radius: __RADIUS_SM__;
     padding: 0 16px;
     font-size: 12px;
     font-weight: 400;
