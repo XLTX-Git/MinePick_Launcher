@@ -53,6 +53,7 @@ from pathlib import Path
 
 import httpx
 
+from launcher.meta import sources
 from launcher.meta.assets import fetch_asset_index
 from launcher.meta.manifest import (
     APRIL_FOOLS_IDS,
@@ -821,7 +822,12 @@ def _hash_for(index, block_name: str) -> str | None:
 
 def _download_texture(client: httpx.Client, digest: str, destination: Path) -> None:
     """Fetch one object, verify it, and move it into the cache atomically."""
-    response = client.get(ASSET_BASE + digest[:2] + "/" + digest)
+    response = sources.get(
+        client,
+        ASSET_BASE + digest[:2] + "/" + digest,
+        kind=sources.KIND_ASSETS,
+        context="block texture",
+    )
     response.raise_for_status()
     data = response.content
     if hashlib.sha1(data).hexdigest().lower() != digest.lower():

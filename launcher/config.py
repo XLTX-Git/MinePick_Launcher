@@ -35,6 +35,12 @@ CONFIG_FILENAME = "config.json"
 ACCESSIBILITY_PREFERENCE_DEFAULT = "auto"
 ACCESSIBILITY_PREFERENCE_CHOICES = ("auto", "always_on", "never")
 
+# Download source preference, one setting per endpoint family (launcher.meta.sources owns the
+# meaning of the values and the mirror addresses). "mirror" = mirrors only, "auto" = Mojang first
+# with a mirror fallback, "official" = Mojang only (a failure is reported, never silently mirrored).
+DOWNLOAD_SOURCE_DEFAULT = "auto"
+DOWNLOAD_SOURCE_CHOICES = ("mirror", "auto", "official")
+
 # Common game languages (code, display name); en_us is built into the game, the rest are the game's bundled language packs
 GAME_LANGUAGES: list[tuple[str, str]] = [
     ("", ""),
@@ -248,6 +254,20 @@ class LauncherConfig(BaseModel):
             "file into that many parallel Range requests when the server supports it"
         ),
     )
+    download_source_meta: str = Field(
+        default=DOWNLOAD_SOURCE_DEFAULT,
+        description=(
+            "Download source for versions and manifests (version manifest/JSON, client.jar, "
+            "libraries, asset index): mirror / auto / official; see launcher.meta.sources"
+        ),
+    )
+    download_source_assets: str = Field(
+        default=DOWNLOAD_SOURCE_DEFAULT,
+        description=(
+            "Download source for resource files (assets objects under "
+            "resources.download.minecraft.net): mirror / auto / official"
+        ),
+    )
     window_start_mode: str = Field(
         default="default",
         description="Window start state: default / maximized / minimized / remember",
@@ -321,6 +341,18 @@ class LauncherConfig(BaseModel):
             ACCESSIBILITY_PREFERENCE_DEFAULT,
         )
         return ACCESSIBILITY_PREFERENCE_DEFAULT
+
+    @field_validator("download_source_meta", "download_source_assets", mode="before")
+    @classmethod
+    def _normalize_download_source(cls, value: object) -> str:
+        """Keep hand-edited configs loadable: an unknown source preference means ``auto``."""
+        normalized = value.strip().lower() if isinstance(value, str) else value
+        if normalized in DOWNLOAD_SOURCE_CHOICES:
+            return str(normalized)
+        logging.getLogger(__name__).warning(
+            "Invalid download source %r; falling back to %r", value, DOWNLOAD_SOURCE_DEFAULT
+        )
+        return DOWNLOAD_SOURCE_DEFAULT
 
     @model_validator(mode="before")
     @classmethod

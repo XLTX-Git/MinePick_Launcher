@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from launcher import __version__
 from launcher.i18n import describe_network_error, tr_core
+from launcher.meta import sources
 
 MANIFEST_URLS = (
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
@@ -202,17 +203,17 @@ def reset_http_client() -> None:
 
 
 def _fetch_first(client: httpx.Client, urls: tuple[str, ...]) -> dict:
-    last_error: Exception | None = None
-    for url in urls:
-        try:
-            resp = client.get(url)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPError as exc:
-            last_error = exc
-    raise MetaError(
-        tr_core("meta.manifest_fetch_failed", describe_network_error(last_error))
-    ) from last_error
+    """Fetch the manifest from the first address the source resolver offers.
+
+    The order (official, then the BMCLAPI mirrors in the ``auto`` setting) and the switching log
+    live in :mod:`launcher.meta.sources`; this function keeps its historical error message.
+    """
+    try:
+        return sources.fetch_json(client, urls, kind=sources.KIND_META)
+    except httpx.HTTPError as exc:
+        raise MetaError(
+            tr_core("meta.manifest_fetch_failed", describe_network_error(exc))
+        ) from exc
 
 
 def _read_cache(cache_path: Path, max_age: float) -> VersionManifest | None:

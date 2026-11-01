@@ -47,13 +47,14 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import httpx
 import tenacity
 
 from launcher.i18n import describe_network_error, tr_core
+from launcher.meta import sources
 from launcher.meta.manifest import _new_client
 
 CHUNK = 64 * 1024
@@ -172,6 +173,11 @@ def _content_length(headers: httpx.Headers) -> int | None:
     return int(value) if (value or "").isdigit() else None
 
 
+def _timeout_kwargs(timeout: httpx.Timeout | None) -> dict[str, httpx.Timeout]:
+    """Per-request timeout override; empty when the client's configured timeout is the right one."""
+    return {"timeout": timeout} if timeout is not None else {}
+
+
 def _content_range_total(headers: httpx.Headers) -> int | None:
     """Total resource length from Content-Range ("bytes 0-0/1234"); None when it is "*" or absent."""
     _, _, total = (headers.get("Content-Range") or "").partition("/")
@@ -179,7 +185,9 @@ def _content_range_total(headers: httpx.Headers) -> int | None:
     return int(total) if total.isdigit() else None
 
 
-def _probe_ranges(client: httpx.Client, url: str) -> _RangeInfo:
+def _probe_ranges(
+    client: httpx.Client, url: str, timeout: httpx.Timeout | None = None
+) -> _RangeInfo:
     """Whether the server serves byte ranges, plus the resource length when one is announced.
 
     HEAD first (cheap, no body). When that is rejected, or answers without Content-Length, or does not
@@ -187,8 +195,9 @@ def _probe_ranges(client: httpx.Client, url: str) -> _RangeInfo:
     a server that never advertises the capability, while a 200 is the answer we are looking for in the
     other direction. Every failure mode returns "not supported" and is not an error of the download.
     """
+    kwargs = _timeout_kwargs(timeout)
     try:
-        head = client.head(url)
+        head = client.head(url, **kwargs)
     except httpx.HTTPError:
         head = None
     if head is not None:
@@ -197,7 +206,7 @@ def _probe_ranges(client: httpx.Client, url: str) -> _RangeInfo:
         if accepts and total is not None:
             return _RangeInfo(supported=True, total=total)
     try:
-        with client.stream("GET", url, headers={"Range": "bytes=0-0"}) as response:
+        with client.stream("GET", url, headers={"Range": "bytes=0-0"}, **kwargs) as response:
             if response.status_code == 206:
                 return _RangeInfo(supported=True, total=_content_range_total(response.headers))
             if response.status_code == 200:
@@ -573,6 +582,12 @@ class Downloader:
         # as every other file in flight, instead of handing each shard an allowance of its own.
         self._limiter = _SpeedLimiter(speed_limit_kb or 0)
         self._segments = max(1, int(segments or 1))
+        # Snapshot of the two download-source settings, replaced at the start of every batch so one
+        # batch is one decision (a settings change mid-batch must not split a file across sources).
+        self._source_modes: dict[str, str] = {
+            sources.KIND_META: sources.MODE_DEFAULT,
+            sources.KIND_ASSETS: sources.MODE_DEFAULT,
+        }
 
     def download(
         self,
@@ -602,6 +617,11 @@ class Downloader:
             unique.setdefault(task.dest, task)
         tasks = list(unique.values())
 
+        # The two source settings are read once per batch: every file of this batch resolves through
+        # the same decision, and the log states that decision before the first byte moves.
+        self._source_modes = sources.current_modes()
+        self._log_source_plan()
+
         result = DownloadResult()
         state = DownloadProgress(
             total_bytes=sum(t.size or 0 for t in tasks),
@@ -619,25 +639,36 @@ class Downloader:
                 return
             task.dest.parent.mkdir(parents=True, exist_ok=True)
             part = task.dest.with_name(task.dest.name + ".part")
+            # Only the URL list is source-aware; the transfer, verification, resume and progress
+            # logic below is exactly the same for every candidate.
+            urls = sources.candidates(task.url, mode=self._mode_for(task.url))
+            timeout = sources.request_timeout(len(urls))
+            attempts = self.retries if len(urls) == 1 else 1
+            failures: list[tuple[str, BaseException]] = []
             try:
-                retryer = tenacity.Retrying(
-                    stop=tenacity.stop_after_attempt(self.retries),
-                    wait=tenacity.wait_exponential(
-                        multiplier=self.retry_wait, min=self.retry_wait, max=self.retry_wait * 8
-                    ),
-                    retry=tenacity.retry_if_exception_type((httpx.HTTPError, OSError)),
-                    reraise=True,
-                )
-                # `_download_segmented` answers "is the file already waiting in `part`?": False when the
-                # shard path finished it (only verification is left), True when a single stream still
-                # has to do the work - no shards configured, the probe refused, or a run that failed
-                # with nothing worth resuming.
-                done = self._segments > 1 and not self._download_segmented(
-                    client, task, part, reporter
-                )
-                if not done:
-                    # One stream: the default path, and the fallback for every shard failure.
-                    retryer(self._one_attempt, client, task, part, reporter)
+                for index, url in enumerate(urls):
+                    attempt = task if url == task.url else replace(task, url=url)
+                    try:
+                        self._transfer(client, attempt, part, reporter, attempts, timeout)
+                    except httpx.HTTPError as exc:
+                        failures.append((url, exc))
+                        if index + 1 < len(urls):
+                            # The next candidate may serve the same bytes: the `.part` file stays and
+                            # the retry resumes from its offset.
+                            sources.note_switch(
+                                url, exc, urls[index + 1], context=task.dest.name
+                            )
+                            continue
+                        message = (
+                            sources.failure_message(failures)
+                            if len(urls) > 1
+                            else describe_network_error(exc)
+                        )
+                        with lock:
+                            failed.append((task.url, message))
+                        reporter.files_done(task.dest.name)
+                        return
+                    break
                 if not _verify(part, task.sha1, task.size, task.sha256):
                     raise DownloadError(tr_core("error.verify_failed", task.dest.name))
                 part.replace(task.dest)
@@ -669,19 +700,71 @@ class Downloader:
         result.failed.extend(failed)
         return result
 
+    def _mode_for(self, url: str) -> str:
+        """The snapshotted source setting that governs this URL's endpoint family."""
+        return self._source_modes.get(sources.source_kind(url), sources.MODE_DEFAULT)
+
+    def _log_source_plan(self) -> None:
+        """State the batch's source decision once, without dumping a list of URLs into the log."""
+        labels = {
+            sources.MODE_MIRROR: "镜像优先",
+            sources.MODE_AUTO: "自动",
+            sources.MODE_OFFICIAL: "官方优先",
+        }
+        logger.info(
+            "下载源配置: 版本与清单=%s, 资源文件=%s（镜像顺序: %s → %s）",
+            labels.get(self._source_modes[sources.KIND_META], self._source_modes[sources.KIND_META]),
+            labels.get(
+                self._source_modes[sources.KIND_ASSETS], self._source_modes[sources.KIND_ASSETS]
+            ),
+            sources.MIRROR_PRIMARY_HOST,
+            sources.MIRROR_BACKUP_HOST,
+        )
+
+    def _transfer(
+        self,
+        client: httpx.Client,
+        task: DownloadTask,
+        part: Path,
+        reporter: _Progress,
+        attempts: int,
+        timeout: httpx.Timeout | None,
+    ) -> None:
+        """Move one candidate URL into `part`: shards when enabled, otherwise a single stream."""
+        retryer = tenacity.Retrying(
+            stop=tenacity.stop_after_attempt(attempts),
+            wait=tenacity.wait_exponential(
+                multiplier=self.retry_wait, min=self.retry_wait, max=self.retry_wait * 8
+            ),
+            retry=tenacity.retry_if_exception_type((httpx.HTTPError, OSError)),
+            reraise=True,
+        )
+        # `_download_segmented` answers "is the file already waiting in `part`?": False when the
+        # shard path finished it (only verification is left), True when a single stream still
+        # has to do the work - no shards configured, the probe refused, or a run that failed
+        # with nothing worth resuming.
+        done = self._segments > 1 and not self._download_segmented(
+            client, task, part, reporter, attempts, timeout
+        )
+        if not done:
+            # One stream: the default path, and the fallback for every shard failure.
+            retryer(self._one_attempt, client, task, part, reporter, timeout)
+
     def _download_segmented(
         self,
         client: httpx.Client,
         task: DownloadTask,
         part: Path,
         reporter: _Progress,
+        attempts: int,
+        timeout: httpx.Timeout | None,
     ) -> bool:
         """Run the parallel-shard path; return True when the caller has to fall back to a single stream.
 
         Returns False when the file sits complete in `part`, ready for verification. A server that
         cannot do ranges is a probe result here, never an error.
         """
-        plan = self._plan_segments(client, task, part)
+        plan = self._plan_segments(client, task, part, timeout)
         if plan is None:
             return True
         segments, total = plan
@@ -696,7 +779,7 @@ class Downloader:
         workers = max(1, min(len(shards), self.concurrency, MAX_SEGMENT_WORKERS))
 
         def shard_job(shard: Path, first: int, last: int) -> None:
-            self._segment_attempt(client, shard, task.url, first, last)
+            self._segment_attempt(client, shard, task.url, first, last, attempts, timeout)
             reporter.tick(task.dest, part, segments)
 
         try:
@@ -725,10 +808,14 @@ class Downloader:
         return False
 
     def _plan_segments(
-        self, client: httpx.Client, task: DownloadTask, part: Path
+        self,
+        client: httpx.Client,
+        task: DownloadTask,
+        part: Path,
+        timeout: httpx.Timeout | None = None,
     ) -> tuple[int, int] | None:
         """(shard count, total length) when shards are worth trying, else None for a single stream."""
-        info = _probe_ranges(client, task.url)
+        info = _probe_ranges(client, task.url, timeout)
         total = task.size or info.total
         # Size decides before the flag does: a resource without a length cannot be split at all, and
         # one too small to split is served faster by a single stream.
@@ -746,20 +833,33 @@ class Downloader:
         return min(self._segments, max(1, total // MIN_SEGMENT_BYTES)), total
 
     def _segment_attempt(
-        self, client: httpx.Client, shard: Path, url: str, first: int, last: int
+        self,
+        client: httpx.Client,
+        shard: Path,
+        url: str,
+        first: int,
+        last: int,
+        attempts: int,
+        timeout: httpx.Timeout | None,
     ) -> None:
         retryer = tenacity.Retrying(
-            stop=tenacity.stop_after_attempt(self.retries),
+            stop=tenacity.stop_after_attempt(attempts),
             wait=tenacity.wait_exponential(
                 multiplier=self.retry_wait, min=self.retry_wait, max=self.retry_wait * 8
             ),
             retry=tenacity.retry_if_exception_type((httpx.HTTPError, OSError)),
             reraise=True,
         )
-        retryer(self._segment_piece, client, shard, url, first, last)
+        retryer(self._segment_piece, client, shard, url, first, last, timeout)
 
     def _segment_piece(
-        self, client: httpx.Client, shard: Path, url: str, first: int, last: int
+        self,
+        client: httpx.Client,
+        shard: Path,
+        url: str,
+        first: int,
+        last: int,
+        timeout: httpx.Timeout | None = None,
     ) -> None:
         span = last - first + 1
         try:
@@ -775,7 +875,7 @@ class Downloader:
         if _cancelled.is_set():
             raise DownloadCancelled(url)
         headers = {"Range": f"bytes={first + offset}-{last}"}
-        with client.stream("GET", url, headers=headers) as resp:
+        with client.stream("GET", url, headers=headers, **_timeout_kwargs(timeout)) as resp:
             if resp.status_code == 416:
                 # Not satisfiable. Unlike the single-stream case this cannot mean "already complete",
                 # so ask the caller to fall back rather than loop on it.
@@ -798,6 +898,7 @@ class Downloader:
         task: DownloadTask,
         part: Path,
         reporter: _Progress | None = None,
+        timeout: httpx.Timeout | None = None,
     ) -> None:
         headers: dict[str, str] = {}
         try:
@@ -808,11 +909,11 @@ class Downloader:
             headers["Range"] = "bytes=" + str(offset) + "-"
         if _cancelled.is_set():
             raise DownloadCancelled(task.url)
-        with client.stream("GET", task.url, headers=headers) as resp:
+        with client.stream("GET", task.url, headers=headers, **_timeout_kwargs(timeout)) as resp:
             if resp.status_code == 416 and offset:
                 # server considers the range invalid (.part may already be complete/too large): re-download from scratch
                 part.unlink(missing_ok=True)
-                self._one_attempt(client, task, part, reporter)
+                self._one_attempt(client, task, part, reporter, timeout)
                 return
             resp.raise_for_status()
             mode = "ab" if resp.status_code == 206 else "wb"  # non-206 means the server ignored the Range header

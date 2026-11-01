@@ -35,6 +35,7 @@ from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field
 
 from launcher.i18n import describe_network_error, tr_core
+from launcher.meta import sources
 from launcher.meta.manifest import (
     MetaError,
     VersionManifest,
@@ -292,7 +293,7 @@ def _load_raw(
     if own:
         client = _new_client()
     try:
-        resp = client.get(entry.url)
+        resp = sources.get(client, entry.url, kind=sources.KIND_META)
         resp.raise_for_status()
         raw = resp.json()
     except httpx.HTTPError as exc:
