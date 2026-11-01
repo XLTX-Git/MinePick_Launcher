@@ -19,7 +19,10 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import ClassVar
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl
@@ -34,11 +37,10 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QButtonGroup,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -46,14 +48,13 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from gui import i18n, inwindow_dialog, paint_utils, theme
+from gui import block_icons, i18n, inwindow_dialog, paint_utils, theme
 from gui.errors import show_fatal
 from gui.widgets import (
     EmptyState,
@@ -71,7 +72,7 @@ from gui.workers import (
     format_rate,
     run_in_background,
 )
-from launcher import config, paths
+from launcher import config, instances, paths
 from launcher.mods import (
     ModsError,
     fetch_project,
@@ -84,7 +85,7 @@ from launcher.mods import (
     search_projects,
 )
 from launcher.mods.loaders import display_loader_name
-from launcher.mods.models import ModInfo, ModSearchHit, ModVersion, SearchHits
+from launcher.mods.models import ModInfo, ModSearchHit, SearchHits
 from launcher.mods.search import (
     ALL_PAGE_SIZE,
     PAGE_SIZE,
@@ -222,6 +223,171 @@ def _fetch_icon_bytes(url: str) -> bytes:
     from launcher.net.http_cache import fetch_icon_bytes
 
     return fetch_icon_bytes(url, timeout=8.0)
+
+
+# ---------- the local instances a mod can be installed into ----------
+
+#: The loader names the interface shows. ``display_loader_name`` owns the same four ids for the
+#: Modrinth rows; the instance side needs the id itself (to filter a version request) plus this label.
+_LOADER_LABELS = {
+    "fabric": "Fabric",
+    "forge": "Forge",
+    "neoforge": "NeoForge",
+    "quilt": "Quilt",
+}
+
+
+def _profile_json(game_dir: Path, version_id: str) -> dict:
+    path = game_dir / "versions" / version_id / (version_id + ".json")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _profile_loader(version_id: str) -> str:
+    """The loader id a profile id names, or ``"vanilla"``.
+
+    Mirrors ``launcher.diagnostics.facts.derive_version_facts``. The mapping is repeated rather than
+    imported because that package costs about half a second on its first import (it is the crash
+    knowledge base, loaded on demand), and the resources page must not pay that for twelve lines.
+    """
+    vid = (version_id or "").strip()
+    if vid.startswith("fabric-loader-"):
+        return "fabric"
+    if vid.startswith("quilt-loader-"):
+        return "quilt"
+    if vid.startswith("neoforge-"):
+        return "neoforge"
+    if "-forge-" in vid or vid.endswith("-forge"):
+        return "forge"
+    return "vanilla"
+
+
+def _profile_minecraft(version_id: str, loader: str) -> str:
+    """The Minecraft version a profile id carries, for the loader that id names."""
+    if loader in ("fabric", "quilt"):
+        parts = version_id.split("-")
+        return parts[-1] if len(parts) >= 4 else ""
+    if loader == "forge":
+        if "-forge-" in version_id:
+            return version_id.partition("-forge-")[0]
+        return version_id.removesuffix("-forge")
+    if loader == "neoforge":
+        base = version_id[len("neoforge-") :]
+        if base.startswith("1.") and base.count(".") >= 2 and "-" in base:
+            return base.split("-", 1)[0]  # "1.20.1-47.1.79" keeps its explicit prefix
+        numbers = base.split(".")
+        if len(numbers) >= 2 and numbers[0].isdigit() and numbers[1].isdigit():
+            return f"1.{numbers[0]}.{numbers[1]}"
+        return ""
+    return version_id
+
+
+def _loader_and_minecraft(game_dir: Path, instance_id: str) -> tuple[str, str]:
+    """(loader id, Minecraft version) for one instance, following an inherited profile.
+
+    A copied instance keeps its own folder name and inherits the profile it was copied from, so the
+    folder name alone does not always name the loader (the instances page reads the same field).
+    """
+    seen: set[str] = set()
+    current = instance_id
+    while current and current not in seen:
+        seen.add(current)
+        loader = _profile_loader(current)
+        if loader != "vanilla":
+            return loader, _profile_minecraft(current, loader)
+        parent = _profile_json(game_dir, current).get("inheritsFrom")
+        if not isinstance(parent, str) or not parent.strip():
+            return "vanilla", _profile_minecraft(current, "vanilla")
+        current = parent.strip()
+    return "vanilla", _profile_minecraft(instance_id, "vanilla")
+
+
+@dataclass(frozen=True)
+class InstanceChoice:
+    """One local instance offered by the install step, and why it may be refused.
+
+    ``note`` is the loader-mismatch sentence (empty when the mod can go in): the dialog draws that row
+    greyed and cannot select it, which is the whole of the "never force a mismatch" rule.
+    """
+
+    game_dir: Path
+    instance_id: str
+    name: str
+    loader_id: str
+    loader_label: str
+    minecraft: str
+    isolated: bool
+    mods_dir: Path
+    folder: Path
+    instance: object
+    note: str = ""
+
+    @property
+    def version_id(self) -> str:
+        """The version id shown beside the instance name (the folder *is* the version, by design)."""
+        return self.instance_id
+
+    @property
+    def usable(self) -> bool:
+        return not self.note
+
+
+def _loader_mismatch(mod_loaders: list[str], loader_id: str, loader_label: str) -> str:
+    """The sentence that greys a row out, or "" when the instance can take the mod.
+
+    An empty ``mod_loaders`` means "the source did not say", never "incompatible": a row without
+    loader metadata must stay usable, otherwise a project lookup would offer nothing.
+    """
+    supported = {str(item).strip().lower() for item in mod_loaders if str(item).strip()}
+    if not supported or loader_id in supported:
+        return ""
+    mod_label = " / ".join(display_loader_name(item) for item in sorted(supported))
+    if loader_id == "vanilla":
+        return tr("mods.instance.mismatch.vanilla", mod_label)
+    return tr("mods.instance.mismatch", mod_label, loader_label)
+
+
+def instance_choices(game_dir: Path, mod_loaders: list[str], *, cfg=None) -> list[InstanceChoice]:
+    """Every instance in ``game_dir``, with its loader and whether this mod fits it.
+
+    This is the local list the install step offers. It reads the folder only - no network request,
+    and no instance is created or changed here.
+    """
+    if cfg is None:
+        cfg, _ = config.load()
+    choices: list[InstanceChoice] = []
+    for instance in sorted(
+        instances.list_instances(game_dir).values(), key=lambda item: item.name.casefold()
+    ):
+        loader_id, minecraft = _loader_and_minecraft(game_dir, instance.id)
+        try:
+            resolved = instances.resolve_instance(instance.id, cfg, game_dir)
+        except (instances.InstancesError, OSError):
+            continue  # the folder vanished between the listing and the resolve
+        loader_label = (
+            tr("instances.card.vanilla")
+            if loader_id == "vanilla"
+            else _LOADER_LABELS.get(loader_id, loader_id)
+        )
+        choices.append(
+            InstanceChoice(
+                game_dir=game_dir,
+                instance_id=instance.id,
+                name=instance.name,
+                loader_id=loader_id,
+                loader_label=loader_label,
+                minecraft=minecraft,
+                isolated=resolved.isolated,
+                mods_dir=resolved.mods_dir,
+                folder=instances.instance_dir(game_dir, instance.id),
+                instance=instance,
+                note=_loader_mismatch(mod_loaders, loader_id, loader_label),
+            )
+        )
+    return choices
 
 
 class _ResourceRow(QWidget):
@@ -526,81 +692,327 @@ class _ResourceList(QListWidget):
                 widget.resize(width, widget.height())
 
 
-class _VersionPickerDialog(QDialog):
-    """Modrinth project version picker dialog (version / loader / MC version)."""
+class _InstanceRow(QAbstractButton):
+    """One local instance in the install step: 40px icon, name, version id, loader.
 
-    def __init__(self, slug: str, parent: QWidget | None = None) -> None:
+    Painted rather than composed for the reason the versions page's loader rows are: a list of
+    choices must elide its text on one line, and a QLabel either wraps or reports a width wider than
+    it paints. It is a real ``QAbstractButton``: it is a Tab stop, Space/Enter activate it, and
+    assistive technology reports the choice and its state. A mismatched instance is disabled and
+    **not** checkable - the greyed row is the whole of the "never force a loader mismatch" rule.
+    """
+
+    HEIGHT = 64
+    #: A refused row carries a second text line: the sentence that says why.
+    NOTE_HEIGHT = 84
+    PADDING = 16
+    ICON = 40
+    GAP = 12
+    RADIUS = 8
+    MARK = 16
+
+    def __init__(self, choice: InstanceChoice, icon: QPixmap, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.slug = slug
-        self._versions: list[ModVersion] = []
-        self.setWindowTitle(tr("mods.picker.title"))
-        self.setMinimumSize(560, 380)
-        self.table = QTableWidget(0, 3)
-        self.table.setAccessibleName(tr("mods.picker.title"))  # WCAG 4.1.2
-        self.table.setHorizontalHeaderLabels(
-            [
-                tr("mods.picker.col.version"),
-                tr("mods.picker.col.loaders"),
-                tr("mods.picker.col.game_versions"),
-            ]
+        self.choice = choice
+        self._icon = icon
+        self._hover = False
+        self.setObjectName("instanceChoiceRow")
+        self.setFixedHeight(self.NOTE_HEIGHT if choice.note else self.HEIGHT)
+        self.setCheckable(choice.usable)
+        self.setEnabled(choice.usable)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor if choice.usable else Qt.CursorShape.ArrowCursor
         )
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        ok_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok_button.setText(tr("mods.picker.ok"))
-        ok_button.setEnabled(False)
-        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(
-            tr("mods.picker.cancel")
-        )
-        self.buttons.accepted.connect(self.accept)
-        self.buttons.rejected.connect(self.reject)
+        label = f"{choice.name} · {choice.version_id} · {choice.loader_label}"
+        if choice.note:
+            label += " · " + choice.note
+            self.setToolTip(choice.note)
+        self.setAccessibleName(label)  # WCAG 4.1.2
+        self.setAccessibleDescription(choice.note)
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.table, 1)
-        layout.addWidget(self.buttons)
+    # ---------- interaction ----------
 
-        self.table.itemSelectionChanged.connect(
-            lambda: ok_button.setEnabled(self.selected_version() is not None)
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        self.update()
+
+    def keyPressEvent(self, event) -> None:
+        """Enter chooses the row, exactly like Space; the dialog's Enter must not skip the choice."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    # ---------- painting ----------
+
+    def paintEvent(self, event) -> None:
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
+
+        background = QColor(tokens.get("BG_LIST", "#ffffff"))
+        border = QColor(tokens.get("BORDER_TABLE", "#dfe4ea"))
+        if self.isChecked():
+            border = QColor(tokens.get("ACCENT", "#2f9e6f"))
+            background = QColor(tokens.get("ACCENT_TINT", background.name()))
+        elif self._hover and self.isEnabled():
+            border = QColor(tokens.get("BORDER_HOVER", border.name()))
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            border = QColor(tokens.get("FOCUS_RING", border.name()))
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(background)
+        painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        icon_rect = QRectF(self.PADDING, (self.height() - self.ICON) / 2.0, self.ICON, self.ICON)
+        if not self._icon.isNull():
+            # A refused row keeps its icon readable but dimmed: the loader glyph is what the sentence
+            # under it is about, so hiding it would take away the "which loader is this" cue.
+            painter.setOpacity(1.0 if self.isEnabled() else 0.45)
+            painter.drawPixmap(icon_rect, self._icon, QRectF(self._icon.rect()))
+            painter.setOpacity(1.0)
+
+        text_color = QColor(
+            tokens.get("FG_TEXT" if self.isEnabled() else "FG_DISABLED", "#1f2a36")
         )
-        self.table.cellDoubleClicked.connect(
-            lambda _row, _col: self.accept() if self.selected_version() is not None else None
+        hint_color = QColor(
+            tokens.get("FG_HINT" if self.isEnabled() else "FG_DISABLED", "#4f6070")
         )
+        name_font = QFont(self.font())
+        name_font.setPixelSize(15)
+        name_font.setWeight(QFont.Weight.DemiBold)
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(12)
+        name_metrics = QFontMetrics(name_font)
+        meta_metrics = QFontMetrics(meta_font)
 
-        def do_fetch() -> object:
-            return fetch_versions(slug)
+        left = self.PADDING + self.ICON + self.GAP
+        right = self.width() - self.PADDING - self.MARK - 12
+        text_width = max(0, right - left)
+        name_height = name_metrics.height()
+        meta_height = meta_metrics.height()
+        block = name_height + 2 + meta_height
+        if self.choice.note:
+            block += 2 + meta_height
+        top = (self.height() - block) / 2.0
 
-        run_in_background(
-            do_fetch,
-            on_result=self._fill,
-            on_error=lambda m: set_app_status(self, tr("mods.picker.fail", m), "error"),
+        painter.setFont(name_font)
+        painter.setPen(text_color)
+        painter.drawText(
+            QRectF(left, top, text_width, name_height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            name_metrics.elidedText(self.choice.name, Qt.TextElideMode.ElideRight, text_width),
         )
-
-    def _fill(self, versions: list[ModVersion]) -> None:
-        self._versions = versions
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(versions))
-        for row, version in enumerate(versions):
-            self.table.setItem(row, 0, QTableWidgetItem(version.version_number))
-            self.table.setItem(
-                row,
-                1,
-                QTableWidgetItem(", ".join(display_loader_name(l) for l in version.loaders)),
+        painter.setFont(meta_font)
+        painter.setPen(hint_color)
+        meta = f"{self.choice.version_id} · {self.choice.loader_label}"
+        painter.drawText(
+            QRectF(left, top + name_height + 2, text_width, meta_height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            meta_metrics.elidedText(meta, Qt.TextElideMode.ElideRight, text_width),
+        )
+        if self.choice.note:
+            painter.setPen(QColor(tokens.get("FG_STATUS_WARNING", "#87691b")))
+            painter.drawText(
+                QRectF(left, top + name_height + 2 + meta_height + 2, text_width, meta_height),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                meta_metrics.elidedText(
+                    self.choice.note, Qt.TextElideMode.ElideRight, text_width
+                ),
             )
-            self.table.setItem(row, 2, QTableWidgetItem(", ".join(version.game_versions)))
-        if versions:
-            set_app_status(self, "")
-        else:
-            set_app_status(self, tr("mods.picker.none"))
 
-    def selected_version(self) -> ModVersion | None:
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self._versions):
-            return None
-        return self._versions[row]
+        self._paint_mark(painter, tokens)
+
+    def _paint_mark(self, painter: QPainter, tokens: dict[str, str]) -> None:
+        """The single-choice indicator: an empty ring, or a filled accent disc with a tick."""
+        centre = QPointF(
+            self.width() - self.PADDING - self.MARK / 2.0, self.height() / 2.0
+        )
+        radius = self.MARK / 2.0 - 1.0
+        if self.isChecked():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens.get("ACCENT", "#2f9e6f")))
+            painter.drawEllipse(centre, radius, radius)
+            pen = QPen(QColor(tokens.get("FG_SELECTED", "#ffffff")))
+            pen.setWidthF(1.8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            path = QPainterPath(centre + QPointF(-3.4, 0.2))
+            path.lineTo(centre + QPointF(-1.0, 2.6))
+            path.lineTo(centre + QPointF(3.4, -2.8))
+            painter.drawPath(path)
+            return
+        ring = "FG_DISABLED" if not self.isEnabled() else "FG_HINT"
+        painter.setPen(QPen(QColor(tokens.get(ring, "#4f6070")), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(centre, radius, radius)
+
+
+class _InstancePickerDialog(inwindow_dialog.InWindowDialog):
+    """Second step of the resources page: choose which **local** instance gets the mod.
+
+    The panel is a window-internal card (``InWindowDialog``: a child widget, never a native window),
+    and it speaks the versions page's install-step language - one card, one row per choice with the
+    same 40px block icon the instances page uses, and one 48px accent pill as the single primary
+    action. The rows come from :func:`instance_choices`, i.e. from ``versions/`` on disk; nothing here
+    downloads a loader or creates an instance.
+
+    ``selected_choice()`` is what the page installs into. A row whose loader does not match the mod
+    is disabled and cannot be checked, so "force install anyway" has no path.
+    """
+
+    CARD_WIDTH = 560
+    LIST_MAX_HEIGHT = 312
+
+    def __init__(
+        self, parent: QWidget | None, choices: list[InstanceChoice], *, mod_title: str
+    ) -> None:
+        super().__init__(
+            parent,
+            title=tr("mods.instance.title"),
+            severity="question",
+            card_width=self.CARD_WIDTH,
+        )
+        self.choices = list(choices)
+        self.rows: list[_InstanceRow] = []
+        self.wants_versions = False
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        # A plain label, not InWindowDialog.add_body's scroll area: the hint is one short sentence, and
+        # a scroll area's 192px size hint left a hole between the hint and the empty state.
+        self.hint_label = QLabel(tr("mods.instance.hint", mod_title))
+        self.hint_label.setObjectName("overlayBody")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setMaximumWidth(self.CARD_WIDTH - 2 * inwindow_dialog.CARD_PADDING)
+        self.card_layout.addWidget(self.hint_label)
+
+        self.list_area = QScrollArea()
+        self.list_area.setObjectName("overlayScroll")  # the shared transparent scroll surface
+        self.list_area.setWidgetResizable(True)
+        self.list_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.list_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Tab must land on the rows
+        self.list_area.setMaximumHeight(self.LIST_MAX_HEIGHT)
+        self.list_area.setMaximumWidth(self.CARD_WIDTH - 2 * inwindow_dialog.CARD_PADDING)
+        container = QWidget()
+        rows_layout = QVBoxLayout(container)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(8)
+        for choice in self.choices:
+            icon = block_icons.instance_icon_pixmap(
+                choice.instance, choice.folder, _InstanceRow.ICON, game_dir=choice.game_dir
+            )
+            row = _InstanceRow(choice, icon)
+            row.clicked.connect(self._sync_install)
+            self._group.addButton(row)
+            rows_layout.addWidget(row)
+            self.rows.append(row)
+        rows_layout.addStretch(1)
+        self.list_area.setWidget(container)
+        self.list_area.setVisible(bool(self.choices))
+        self.card_layout.addWidget(self.list_area)
+
+        self.empty_state = EmptyState(tr("mods.instance.empty"))
+        self.empty_state.update_for(len(self.choices))
+        self.versions_button = QPushButton(tr("mods.instance.go_versions"))
+        self.versions_button.setObjectName("secondaryButton")
+        self.versions_button.setFixedHeight(32)
+        self.versions_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.versions_button.setAccessibleName(tr("mods.instance.go_versions"))
+        self.versions_button.clicked.connect(self._open_versions)
+        empty_row = QHBoxLayout()
+        empty_row.setSpacing(0)
+        empty_row.addStretch(1)
+        empty_row.addWidget(self.versions_button)
+        empty_row.addStretch(1)
+        self.empty_state.setVisible(not self.choices)
+        self.versions_button.setVisible(not self.choices)
+        self.card_layout.addWidget(self.empty_state)
+        self.card_layout.addLayout(empty_row)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(8)
+        button_row.addStretch(1)
+        self.cancel_button = QPushButton(tr("mods.instance.cancel"))
+        self.cancel_button.setObjectName("secondaryButton")
+        self.cancel_button.setFixedHeight(36)
+        self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_button.clicked.connect(
+            lambda: self._finish(inwindow_dialog.Outcome.REJECTED)
+        )
+        self.install_button = QPushButton(tr("mods.instance.install"))
+        self.install_button.setObjectName("installPrimary")  # the versions step's pill
+        self.install_button.setFixedHeight(48)
+        self.install_button.setMinimumWidth(200)
+        self.install_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.install_button.setEnabled(False)
+        self.install_button.clicked.connect(
+            lambda: self._finish(inwindow_dialog.Outcome.ACCEPTED)
+        )
+        button_row.addWidget(self.cancel_button)
+        button_row.addWidget(self.install_button)
+        self.card_layout.addLayout(button_row)
+        self._mark_default(self.install_button, inwindow_dialog.Outcome.ACCEPTED)
+
+    # ---------- data ----------
+
+    def selected_choice(self) -> InstanceChoice | None:
+        for row in self.rows:
+            if row.isChecked():
+                return row.choice
+        return None
+
+    def _sync_install(self, *_args) -> None:
+        self.install_button.setEnabled(self.selected_choice() is not None)
+
+    # ---------- keyboard ----------
+
+    def _focus_initial(self) -> None:
+        """Start on the first instance that can actually take the mod."""
+        for row in self.rows:
+            if row.isEnabled():
+                row.setFocus(Qt.FocusReason.TabFocusReason)
+                return
+        super()._focus_initial()
+
+    def keyPressEvent(self, event) -> None:
+        """Enter is the pill, but only once a row is chosen; otherwise it must do nothing."""
+        if (
+            event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and self.selected_choice() is None
+        ):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    # ---------- navigation ----------
+
+    def _open_versions(self) -> None:
+        """The empty state's way out: close, and let the page open the versions page."""
+        self.wants_versions = True
+        self._finish(inwindow_dialog.Outcome.REJECTED)
 
 
 class _PopupFitCombo(QComboBox):
@@ -671,6 +1083,8 @@ class _ContentTab(QWidget):
         self._current_mod_version_id = ""
         self._current_loader = ""
         self._current_game_version = ""
+        #: Loaders the last project lookup said the mod supports (empty = the source did not say).
+        self._current_loaders: list[str] = []
         # Paging state: _query "" means the initial browse list (no keyword), otherwise the last
         # submitted search. _request_id discards a result whose source/page/sort has been changed
         # while its request was still in flight.
@@ -687,9 +1101,9 @@ class _ContentTab(QWidget):
         # the combo's name (only a QFormLayout row does that automatically).
         self.loader_combo.setAccessibleName(tr("mods.loader"))
         self.game_version_edit = QLineEdit("1.20.1")
-        self.game_version_edit.setAccessibleName(tr("mods.picker.col.game_versions"))  # WCAG 4.1.2
+        self.game_version_edit.setAccessibleName(tr("mods.game_version"))  # WCAG 4.1.2
         self.slug_edit = QLineEdit()
-        self.slug_edit.setAccessibleName(tr("mods.picker.col.loaders"))  # WCAG 4.1.2
+        self.slug_edit.setAccessibleName(tr("mods.slug.label"))  # WCAG 4.1.2
         self.slug_edit.setPlaceholderText(tr("mods.slug.placeholder"))
         self.query_button = QPushButton(tr("mods.query"))
         self.query_button.setObjectName("queryButton")
@@ -1054,11 +1468,15 @@ class _ContentTab(QWidget):
         self._update_install_button()
 
     def _update_install_button(self) -> None:
+        # A mod always goes into a local instance, so the button names that decision. The other
+        # categories keep their old wording: resource packs, shaders and modpacks are not scoped to an
+        # instance by this page.
+        mod_label = tr("mods.install_to_instance") if self.kind == "mod" else None
         if self._hit is not None:
-            self.install_button.setText(tr("mods.search.pick"))
+            self.install_button.setText(mod_label or tr("mods.search.pick"))
             self.install_button.setEnabled(True)
         else:
-            self.install_button.setText(tr("mods.install"))
+            self.install_button.setText(mod_label or tr("mods.install"))
             self.install_button.setEnabled(self._current is not None)
 
     # ---------- Search & paging ----------
@@ -1327,6 +1745,9 @@ class _ContentTab(QWidget):
             self.loader_combo.currentData() if self.kind == "mod" else None
         )
         self._current_game_version = self.game_version_edit.text().strip()
+        # The version the lookup landed on carries the loaders the project supports; the instance
+        # step greys a row out from exactly that list.
+        self._current_loaders = [str(item) for item in picked.loaders]
         if self.kind == "mod":
             kept = [e for e in self._entries if not (isinstance(e, ModInfo) and e.slug == info.slug)]
             self._set_entries([info] + kept)
@@ -1358,7 +1779,7 @@ class _ContentTab(QWidget):
             if hit_source == "curseforge":
                 self._install_cf(self._hit)
             elif self.kind == "mod":
-                self._pick_version()
+                self._install_hit(self._hit)
             else:
                 self._install_slug(
                     self._hit.slug,
@@ -1370,18 +1791,103 @@ class _ContentTab(QWidget):
             return
         self._on_install()
 
+    # ---------- the install step: which local instance gets this mod ----------
+
+    def _game_dir(self) -> Path:
+        cfg, _ = config.load()
+        return Path(cfg.game_dir or paths.default_game_dir())
+
+    def _pick_instance(self, mod_title: str, mod_loaders: list[str]) -> InstanceChoice | None:
+        """Show the local-instance step and return the chosen instance, or None.
+
+        The dialog owns only the choice; the page still owns the download. ``wants_versions`` is the
+        empty state's 去版本页 button: the dialog is gone by then, so the page can switch pages.
+        """
+        dialog = _InstancePickerDialog(
+            self, instance_choices(self._game_dir(), mod_loaders), mod_title=mod_title
+        )
+        outcome = dialog.ask()
+        if dialog.wants_versions:
+            self._go_to_versions()
+            return None
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
+            return None
+        return dialog.selected_choice()
+
+    def _go_to_versions(self) -> None:
+        """Open the versions page in the main rail (the same route the instances page's empty state uses)."""
+        from gui.main_window import NAV_KEYS
+
+        sidebar = getattr(self.window(), "sidebar", None)
+        if sidebar is None:
+            return
+        sidebar.setCurrentRow(NAV_KEYS.index("versions"))
+
+    def _install_hit(self, hit: ModSearchHit) -> None:
+        """A Modrinth mod row: choose the instance, then let that instance pick the version."""
+        choice = self._pick_instance(hit.title, [str(item) for item in hit.loaders])
+        if choice is None:
+            return
+        self._install_mod_into(choice, hit.slug, hit.title)
+
+    def _install_mod_into(self, choice: InstanceChoice, slug: str, title: str) -> None:
+        """Download one mod into the chosen instance's own mods directory.
+
+        The instance supplies the loader and the game version the version request is filtered by;
+        ``version_id`` + ``isolated`` make ``install_mod`` resolve the instance folder itself - the
+        very directory the instances page counts. Nothing is created and no loader is downloaded.
+        """
+        loader = None if choice.loader_id == "vanilla" else choice.loader_id
+        disable_keeping_focus(self.install_button)
+        set_app_status(self, tr("mods.msg.downloading_into", title or slug, choice.name))
+
+        def do_install() -> object:
+            return install_mod(
+                slug,
+                game_dir=choice.game_dir,
+                loader=loader,
+                game_version=choice.minecraft or None,
+                version_id=choice.instance_id,
+                isolated=choice.isolated,
+            )
+
+        run_in_background(
+            do_install,
+            on_result=lambda info: self._on_mod_installed(info, choice.name),
+            on_error=lambda m: set_app_status(self, tr("mods.msg.install_fail", m), "error"),
+            on_finished=self._on_install_finished,
+        )
+
+    def _on_mod_installed(self, info: ModInfo, instance_name: str) -> None:
+        """Stays on the resources page; the status line names the instance that just gained the mod."""
+        message = tr("mods.msg.installed_into", instance_name, info.title, info.slug)
+        if info.depends:
+            message += " | " + tr("mods.dep.required") + " " + ", ".join(info.depends)
+        if info.optional_depends:
+            message += " | " + tr("mods.dep.optional") + " " + ", ".join(info.optional_depends)
+        set_app_status(self, message)
+
     def _install_cf(self, hit: ModSearchHit) -> None:
-        """Install from CurseForge: pick the latest release file matching the game version and download it to the content directory."""
+        """Install from CurseForge into the chosen instance (a mod is always instance-scoped)."""
         if self.kind == "modpack":
             set_app_status(self, tr("mods.cf.modpack_unsupported"))
             return
         from launcher.mods import curseforge as cf
-        from launcher.mods import resolve_content_dir, resolve_mods_dir
+        from launcher.mods import resolve_content_dir
 
+        choice = None
+        if self.kind == "mod":
+            choice = self._pick_instance(hit.title, [str(item) for item in hit.loaders])
+            if choice is None:
+                return
         cfg, _ = config.load()
         game_dir = cfg.game_dir or paths.default_game_dir()
-        game_version = self.game_version_edit.text().strip()
-        loader = self.loader_combo.currentData() if self.kind == "mod" else ""
+        if choice is not None:
+            game_version = choice.minecraft
+            loader = "" if choice.loader_id == "vanilla" else choice.loader_id
+        else:
+            game_version = self.game_version_edit.text().strip()
+            loader = ""
         disable_keeping_focus(self.install_button)
         set_app_status(self, tr("mods.cf.downloading", hit.title))
 
@@ -1390,13 +1896,8 @@ class _ContentTab(QWidget):
             if not files:
                 raise ModsError(tr("mods.cf.no_file", game_version or hit.title))
             picked = files[0]
-            if self.kind == "mod":
-                target = resolve_mods_dir(
-                    game_dir,
-                    isolated=cfg.default_isolation,
-                    loader=loader,
-                    game_version=game_version,
-                )
+            if choice is not None:
+                target = choice.mods_dir
             else:
                 subdir = {"resourcepack": "resourcepacks", "shaderpack": "shaderpacks"}.get(
                     self.kind, self.kind
@@ -1406,34 +1907,19 @@ class _ContentTab(QWidget):
 
         run_in_background(
             do_install,
-            on_result=self._on_cf_installed,
+            on_result=lambda result: self._on_cf_installed(
+                result, choice.name if choice is not None else ""
+            ),
             on_error=lambda m: set_app_status(self, tr("mods.cf.fail", m), "error"),
             on_finished=lambda: self.install_button.setEnabled(True),
         )
 
-    def _on_cf_installed(self, result) -> None:
+    def _on_cf_installed(self, result, instance_name: str = "") -> None:
         target, _picked = result
-        set_app_status(self, tr("mods.cf.done", target.name))
-
-    def _pick_version(self) -> None:
-        hit = self._hit
-        if hit is None:
-            return
-        dialog = _VersionPickerDialog(hit.slug, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        picked = dialog.selected_version()
-        if picked is None:
-            return
-        loader = picked.loaders[0] if picked.loaders else None
-        game_version = picked.game_versions[0] if picked.game_versions else None
-        self._install_slug(
-            hit.slug,
-            mod_version_id=picked.version_id,
-            loader=loader,
-            game_version=game_version,
-            title=hit.title,
-        )
+        if instance_name:
+            set_app_status(self, tr("mods.cf.done_into", instance_name, target.name))
+        else:
+            set_app_status(self, tr("mods.cf.done", target.name))
 
     def _install_slug(
         self,
@@ -1557,6 +2043,15 @@ class _ContentTab(QWidget):
         ):
             return
 
+        if self.kind == "mod":
+            # A mod is installed into a local instance, never into the shared folder and never by
+            # building a new instance from the network.
+            choice = self._pick_instance(mod.title, self._current_loaders)
+            if choice is None:
+                return
+            self._install_mod_into(choice, mod.slug, mod.title)
+            return
+
         def do_install() -> object:
             if self.kind == "resourcepack":
                 return install_resourcepack(
@@ -1566,18 +2061,9 @@ class _ContentTab(QWidget):
                     mod_version_id=self._current_mod_version_id or None,
                     isolated=cfg.default_isolation,
                 )
-            if self.kind == "shaderpack":
-                return install_shaderpack(
-                    mod.slug,
-                    game_dir=game_dir,
-                    game_version=self._current_game_version or None,
-                    mod_version_id=self._current_mod_version_id or None,
-                    isolated=cfg.default_isolation,
-                )
-            return install_mod(
+            return install_shaderpack(
                 mod.slug,
                 game_dir=game_dir,
-                loader=self._current_loader or None,
                 game_version=self._current_game_version or None,
                 mod_version_id=self._current_mod_version_id or None,
                 isolated=cfg.default_isolation,
