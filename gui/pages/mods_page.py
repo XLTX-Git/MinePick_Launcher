@@ -213,16 +213,15 @@ def display_titles(entry: object) -> tuple[str, str, bool]:
 
 
 def _fetch_icon_bytes(url: str) -> bytes:
-    """Download one project icon (small, short timeout, capped) for the background worker."""
-    import httpx
+    """One project icon for the background worker: disk cache first, then one small request.
 
-    with httpx.Client(timeout=8.0, follow_redirects=True) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        content = response.content
-    if len(content) > 2_000_000:  # a project icon is a few dozen KB; never hold a huge payload
-        raise ValueError("icon payload too large")
-    return content
+    The store lives in ``<launcher data dir>/cache/mod-icons`` and is owned by
+    :mod:`launcher.net.http_cache`: a hit is a file read, and an icon older than 30 days is still
+    returned while a background request revalidates it.
+    """
+    from launcher.net.http_cache import fetch_icon_bytes
+
+    return fetch_icon_bytes(url, timeout=8.0)
 
 
 class _ResourceRow(QWidget):
@@ -897,6 +896,17 @@ class _ContentTab(QWidget):
         if local:
             pixmap = QPixmap(local)
             if not pixmap.isNull():
+                self._icon_cache[url] = pixmap
+                row.set_icon(pixmap)
+                return
+        # Warm start: the icon is already on disk, so paint it in this pass instead of showing the
+        # letter tile until a worker thread reports back. One file read of a few dozen KB.
+        from launcher.net.http_cache import cached_icon_bytes
+
+        stored = cached_icon_bytes(url)
+        if stored is not None:
+            pixmap = QPixmap()
+            if pixmap.loadFromData(stored):
                 self._icon_cache[url] = pixmap
                 row.set_icon(pixmap)
                 return
