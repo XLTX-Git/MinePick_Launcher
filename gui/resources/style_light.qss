@@ -1140,13 +1140,12 @@ QWidget#launchPage {
     background: __BG_PAGE__;
 }
 
-/* Flush left, full height, 360px (set in code). Only the two right corners are rounded: the panel
-   grows out of the window edge, and a rounded left corner would expose paper behind it. */
+/* 360px wide (set in code) and inset 16px by the page layout: a white card floating on the paper,
+   rounded on all four corners like every other card, instead of a strip welded to the window edge. */
 QWidget#launchPage QWidget#launchPanel {
     background: __BG_LIST__;
-    border: none;
-    border-top-right-radius: 8px;
-    border-bottom-right-radius: 8px;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_LG__;
 }
 
 /* The account name is the panel's own 14px label; the version block above it is the page's

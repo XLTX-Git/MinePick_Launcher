@@ -345,11 +345,12 @@ class MainWindow(QMainWindow):
     def _apply_page_inset(self, key: str) -> None:
         """Give the launch page the full content area; keep the old frame on every other page.
 
-        The content layout's margin and its 6px nav/stack spacing are zero so the launch panel can
-        touch the window edge. Every other page used to sit inside 12px of margin, plus that 6px gap:
-        reproducing the same 6/12/12/12 insets on the stack keeps their geometry - and therefore
-        every screenshot and width measurement - unchanged. QStackedLayout honours the widget's
-        contents margins, not a layout-level margin, so the value is set on the stack itself.
+        The launch page asks for a zero stack inset because its own layout draws the 16px paper
+        margin around the card (a second inset here would double it). Every other page used to sit
+        inside 12px of margin, plus that 6px gap: reproducing the same 6/12/12/12 insets on the
+        stack keeps their geometry - and therefore every screenshot and width measurement -
+        unchanged. QStackedLayout honours the widget's contents margins, not a layout-level margin,
+        so the value is set on the stack itself.
         """
         if key == "launch":
             self.stack.setContentsMargins(0, 0, 0, 0)

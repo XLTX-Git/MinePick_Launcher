@@ -274,14 +274,14 @@ class LaunchPage(QWidget):
         self.last_launch_label.setObjectName("launchLast")
         self.last_launch_label.setWordWrap(True)
 
-        # ---- the white side panel: flush left, full height, one column ----
+        # ---- the white card: 16px of paper around it, 16px of its own air inside ----
         self.panel = QWidget()
         self.panel.setObjectName("launchPanel")
         self.panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.panel.setFixedWidth(360)
         self.panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         panel = QVBoxLayout(self.panel)
-        panel.setContentsMargins(20, 20, 20, 20)
+        panel.setContentsMargins(16, 16, 16, 16)
         panel.setSpacing(0)
         panel.addWidget(self.version_block)
         # The version block is this panel's top content; the gap to the account row below it
@@ -299,7 +299,9 @@ class LaunchPage(QWidget):
 
         # The rest of the page is deliberately blank: the panel is the only thing on the paper.
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # 16px of paper on every side: the panel is a card floating on the page, not a half of a
+        # two-column split. The right half stays empty on purpose (no artwork, no widgets).
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(0)
         layout.addWidget(self.panel, 0)
         layout.addStretch(1)
