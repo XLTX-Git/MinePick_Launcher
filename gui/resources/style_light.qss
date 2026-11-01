@@ -211,6 +211,30 @@ QPushButton#dangerButton:disabled {
     border-color: __DANGER_BORDER_3__;
 }
 
+/* Warning variant: the primary action of a warning reads in the warning colour, the way the danger
+   variant already reads in the danger one. It keeps the variant box exactly (1px border, 8/16 padding,
+   both on the spacing ladder) so the three variants cannot drift apart. Used by the in-window dialogs
+   (gui/inwindow_dialog.py): "the launcher is warning you" must not look like an ordinary confirmation.
+   Measured on the card it sits on (BG_LIST): 9.81:1 dark, 5.16:1 light - both clear 4.5:1. */
+QPushButton#warningButton {
+    background: transparent;
+    color: __FG_STATUS_WARNING__;
+    border: 1px solid __FG_STATUS_WARNING__;
+    padding: 8px 16px;
+    font-weight: 400;
+}
+QPushButton#warningButton:hover { background: __BG_BUTTON_SECONDARY__; }
+QPushButton#warningButton:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#warningButton:disabled {
+    background: transparent;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+/* A warning button chosen as a dialog's default: the ring has to be the one the outlined variants use,
+   because FG_SELECTED (the filled button's ring) is white on white in the light theme. */
+QPushButton#dangerButton[defaultChoice="true"],
+QPushButton#warningButton[defaultChoice="true"] { border-color: __FOCUS_RING__; }
+
 /* ---------- status text severity ---------- */
 
 QLabel#statusWarning { color: __FG_STATUS_WARNING__; }
@@ -798,7 +822,8 @@ QPushButton[keyboardFocus="true"] { background: __ACCENT_HOVER__; }
    light sheet. Their focus cue stays the FOCUS_RING they were already paired with, which clears 3:1
    against the surfaces they sit on in both themes. Only the colour is set - the 1px width comes from
    their own rule, so this cannot shift anything. */
-QPushButton#secondaryButton[keyboardFocus="true"], QPushButton#dangerButton[keyboardFocus="true"] {
+QPushButton#secondaryButton[keyboardFocus="true"], QPushButton#dangerButton[keyboardFocus="true"],
+QPushButton#warningButton[keyboardFocus="true"] {
     border-color: __FOCUS_RING__;
 }
 QScrollArea[keyboardFocus="true"] { border: 1px solid __FOCUS_RING__; }

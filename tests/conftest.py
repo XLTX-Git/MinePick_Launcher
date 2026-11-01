@@ -318,6 +318,18 @@ def _no_modal_dialogs(monkeypatch):
 
     monkeypatch.setattr(QMessageBox, "exec", _exec_without_a_loop)
 
+    # The launcher's own dialogs (gui/inwindow_dialog.py) are blocking too, and they are what every
+    # product call site uses now. ``ask`` is their single blocking entry point, so one line covers
+    # them the way ``QMessageBox.exec`` covers the boxes that are left (tests and tools build those
+    # themselves). A dismissal is the safe answer: it is what Esc gives.
+    from gui import inwindow_dialog
+
+    def _ask_without_a_loop(self) -> object:
+        """Report "dismissed" without entering the nested event loop."""
+        return inwindow_dialog.Outcome.DISMISSED
+
+    monkeypatch.setattr(inwindow_dialog.InWindowDialog, "ask", _ask_without_a_loop)
+
 
 @pytest.fixture(autouse=True)
 def _settle_background_work():
