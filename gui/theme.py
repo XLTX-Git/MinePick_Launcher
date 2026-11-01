@@ -222,7 +222,16 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BORDER_BUTTON_ICON": {"dark": "#27303d", "light": "#c9d2dc"},
     "BORDER_BUTTON_SECONDARY": {"dark": "#33404f", "light": "#b6c1cd"},
     "BORDER_BUTTON_SECONDARY_2": {"dark": "#232c39", "light": "#d8dee6"},
-    "BORDER_HOVER": {"dark": "#33404f", "light": "#a7b4c2"},
+    # The hover outline of every input, combo, spin box and outlined button. In dark this used to be
+    # the same value as BORDER_LAUNCH_FIELD (#33404f) and BORDER_BUTTON_SECONDARY, so `border-color:
+    # BORDER_HOVER` repainted the border in the colour it already had: hovering the settings page's
+    # Java path, the versions page's search field, the launch page's version field or the resources
+    # page's filters changed nothing at all, while the light sheet visibly firms the border up
+    # (#c5d5e8 -> #a7b4c2). The dark value is one step lighter so the step exists here too: 1.41:1 from
+    # BORDER_LAUNCH_FIELD (light: 1.41:1) and 2.26:1 against the BG_LIST it is drawn on (light: 2.11:1).
+    # It is also the resting outline of a checkbox/radio indicator, which reads more clearly for it
+    # (1.60:1 -> 2.26:1 on BG_LIST; the light sheet sits at 2.11:1 there).
+    "BORDER_HOVER": {"dark": "#46566a", "light": "#a7b4c2"},
     "BORDER_LAUNCH_FIELD": {"dark": "#33404f", "light": "#c5d5e8"},
     "BORDER_LIST": {"dark": "#27303d", "light": "#c9d2dc"},
     # The hairline between the sidebar rail and the page: decoration, not a control, so it is one quiet
