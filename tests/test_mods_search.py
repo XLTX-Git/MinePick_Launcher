@@ -123,6 +123,126 @@ def _sync_runner(fn, *args, on_result=None, on_error=None, on_finished=None, **_
         on_finished()
 
 
+def test_rank_hits_puts_the_name_layers_above_downloads() -> None:
+    """Exact name, then a partial one, then a word-by-word one, and only then the rest."""
+    from launcher.mods.search import rank_hits
+
+    hits = [
+        _hit("popular-but-unrelated", "Popular But Unrelated", "modrinth"),
+        _hit("entityculling", "Entity Culling", "modrinth"),
+        _hit("exact-name", "实体渲染优化", "modrinth"),
+    ]
+    hits[0].downloads = 900_000_000
+    hits[1].downloads = 20_000_000
+    hits[2].downloads = 10
+    assert [hit.slug for hit in rank_hits(hits, "实体渲染优化")] == [
+        "exact-name",
+        "entityculling",
+        "popular-but-unrelated",
+    ]
+
+
+def test_rank_hits_breaks_ties_on_downloads_and_keeps_the_rest_stable() -> None:
+    from launcher.mods.search import rank_hits
+
+    first = _hit("a", "Alpha", "modrinth")
+    second = _hit("b", "Beta", "modrinth")
+    first.downloads = 5
+    second.downloads = 50
+    # Neither name answers the query: the download count orders them.
+    assert [hit.slug for hit in rank_hits([first, second], "zzz")] == ["b", "a"]
+    # Without a query the page keeps the source's own order.
+    assert [hit.slug for hit in rank_hits([first, second], "")] == ["a", "b"]
+
+
+def test_chinese_search_falls_back_to_the_english_name_the_api_knows(
+    app, monkeypatch
+) -> None:
+    """搜 "投影": the Chinese query finds nothing, so the same page asks again with "litematica"."""
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+
+    queries: list[str] = []
+
+    def fake_search(query, *, limit, offset=0, sort="relevance", project_type="mod"):
+        queries.append(query)
+        if query == "litematica":
+            return SearchHits([_hit("litematica", "Litematica", "modrinth")], total=1)
+        return SearchHits([], total=0)
+
+    def fake_project(slug):
+        return {"slug": slug, "title": "Litematica", "downloads": 1000}
+
+    monkeypatch.setattr(mods_page, "search_projects", fake_search)
+    monkeypatch.setattr(mods_page, "fetch_project", fake_project)
+    monkeypatch.setattr(mods_page, "run_in_background", _sync_runner)
+
+    page = ResourcesPage()
+    try:
+        tab = page.mods_tab
+        tab._initial_loaded = True
+        tab.search_edit.setText("投影")
+        tab._search()
+        assert queries == ["投影", "litematica"]
+        slugs = [entry.slug for entry in tab._entries]
+        assert slugs[0] == "litematica"
+        # The local table's own matches and the API hit are the same project, so it shows once.
+        assert slugs.count("litematica") == 1
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_chinese_search_with_hits_does_not_spend_a_second_request(app, monkeypatch) -> None:
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+
+    queries: list[str] = []
+
+    def fake_search(query, *, limit, offset=0, sort="relevance", project_type="mod"):
+        queries.append(query)
+        return SearchHits([_hit("sodium", "钠", "modrinth")], total=1)
+
+    monkeypatch.setattr(mods_page, "search_projects", fake_search)
+    monkeypatch.setattr(mods_page, "fetch_project", lambda slug: {"slug": slug, "title": slug})
+    monkeypatch.setattr(mods_page, "run_in_background", _sync_runner)
+
+    page = ResourcesPage()
+    try:
+        tab = page.mods_tab
+        tab._initial_loaded = True
+        tab.search_edit.setText("钠")
+        tab._search()
+        assert queries == ["钠"]
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_row_shows_the_chinese_name_on_top_and_the_english_one_below(app) -> None:
+    from gui.pages.mods_page import ResourcesPage
+
+    page = ResourcesPage()
+    try:
+        tab = page.mods_tab
+        unknown = _hit("definitely-not-in-the-table", "Definitely Not In The Table", "modrinth")
+        unknown.description = "an English summary"
+        tab._set_entries([_hit("sodium", "Sodium", "modrinth"), unknown])
+        app.processEvents()
+        # A known project: Chinese headline, English project title underneath.
+        assert tab._rows[0].title == "钠"
+        assert tab._rows[0].subtitle == "Sodium"
+        assert tab.list.item(0).text().startswith("钠 · Sodium")
+        assert tab.title_label.text() == "钠 · Sodium"
+        # An unknown one keeps the old shape: English title and its description.
+        assert tab._rows[1].title == "Definitely Not In The Table"
+        assert tab._rows[1].subtitle == "an English summary"
+        assert tab.list.item(1).text() == "Definitely Not In The Table"
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
 def test_all_source_page_two_asks_each_source_for_its_own_offset(app, monkeypatch) -> None:
     from gui.pages import mods_page
     from gui.pages.mods_page import ResourcesPage
