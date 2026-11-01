@@ -419,6 +419,14 @@ class _ModsTable(QTableWidget):
         self.setSelectionMode(QTableWidget.ExtendedSelection)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         self.horizontalHeader().setStretchLastSection(True)
+        # The header is text only. Qt draws a sort indicator - a small chevron in a section's corner
+        # that reads as a dropdown - as soon as sorting is on, and it lands in 启用 because that is
+        # the first column. There is nothing to sort by here: scan_mods() already returns the rows in
+        # display-name order, and sorting would re-order the list on every refill by the checkbox
+        # column (every disabled mod first). The enabled/disabled *filter* is the toolbar combo
+        # (全部 / 已启用 / 已禁用), which is where a filter belongs.
+        self.setSortingEnabled(False)
+        self.horizontalHeader().setSortIndicatorShown(False)
 
     def _jar_urls(self, event) -> bool:
         data = event.mimeData()
@@ -1958,7 +1966,6 @@ class InstanceDetail(QWidget):
             shown.append(m)
         self._filling_mods = True
         try:
-            self.mods_table.setSortingEnabled(False)
             self.mods_table.setRowCount(0)
             self.mods_table.setRowCount(len(shown))
             for row, m in enumerate(shown):
@@ -1977,7 +1984,6 @@ class InstanceDetail(QWidget):
                     (m.name, m.mod_id, m.version, m.loader, m.file), start=1
                 ):
                     self.mods_table.setItem(row, col, QTableWidgetItem(text))
-            self.mods_table.setSortingEnabled(True)
         finally:
             self._filling_mods = False
         if not shown and self._mods:

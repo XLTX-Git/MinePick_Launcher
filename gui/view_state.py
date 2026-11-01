@@ -31,8 +31,16 @@ def _settings() -> QSettings:
 
 
 def remember_column_widths(view, key: str) -> None:
-    """Restore this table's saved column widths and store them again when they change."""
+    """Restore this table's saved column widths and store them again when they change.
+
+    ``QHeaderView::saveState`` carries more than widths: it also stores the sort indicator (its
+    section, its order and whether it is shown). Restoring it therefore re-showed a sort chevron on
+    a table that had deliberately turned sorting off - the mods table - whenever the ``ui_state.ini``
+    had been written while sorting was still on. Widths are what this function is for, so the
+    widget's own indicator decision is captured and put back after the restore.
+    """
     header = view.horizontalHeader()
+    indicator_shown = header.isSortIndicatorShown()
     settings = _settings()
     saved = settings.value(f"columns/{key}")
     if saved is not None:
@@ -40,6 +48,7 @@ def remember_column_widths(view, key: str) -> None:
             header.restoreState(saved)
         except (TypeError, ValueError):
             pass  # stale state from an older column layout: keep the defaults
+        header.setSortIndicatorShown(indicator_shown)
     header.sectionResized.connect(
         lambda *_: settings.setValue(f"columns/{key}", header.saveState())
     )
