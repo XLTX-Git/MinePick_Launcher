@@ -35,7 +35,11 @@ DEFAULT_ACCENTS = {"dark": "#35a06a", "light": "#2f9e6f"}
 # NEUTRAL_TOKENS because accent_palette() derives ACCENT_TEXT against the light value: accent-coloured
 # *text* directly on the paper is a different question from white text on an accent *fill*, and the fill
 # shade it used before measured 4.3-4.4:1 as text once the paper was blue-tinted.
-PAGE_PAPER = {"dark": "#0f141b", "light": "#f6f9fc"}
+#
+# Dark's value is level 2 of the dark surface ladder described above NEUTRAL_TOKENS: one measurable
+# step above the window chrome and the rail, one below the cards. The light value is untouched - the
+# light theme's three levels (#f9fafc chrome / #f6f9fc paper / #ffffff cards) already separate.
+PAGE_PAPER = {"dark": "#0a1622", "light": "#f6f9fc"}
 
 # Corner radius presets: (extra small, small, large) in px
 RADIUS_SCALES = {
@@ -182,19 +186,46 @@ def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
 # Neutral / semantic palette: one entry per role, one value per theme. Together with
 # accent_palette() these are the only colours the QSS files may reference, through __TOKEN__
 # placeholders; both sheets are checked to hold no colour literals by tests/test_qss_tokens.py.
+#
+# The dark surfaces are a three-level ladder now (light already had three: #f9fafc chrome,
+# #f6f9fc paper, #ffffff cards). Before this, the window, the page and the rail were one value
+# (#0f141b) and the card nearly the same (#161d27, 1.09:1): one black with no depth.
+#
+#   level 1 (deepest)  BG_WINDOW = BG_NAV   #03080f   H 215  S 67%  L  3.5%   Y 0.0023
+#   level 2            BG_PAGE              #0a1622   H 210  S 55%  L  8.6%   Y 0.0075
+#   level 3 (lightest) BG_LIST              #122030   H 212  S 46%  L 12.9%   Y 0.0138
+#
+# window->page 1.10:1, page->card 1.11:1 (contrast_ratio; tests/test_dark_surface_layers.py holds
+# the band 1.10-1.20:1). Two constraints picked these values. First, every adjacent pair has to be a
+# measurable step: 1.10-1.15:1 reads as depth, and past 1.20:1 the levels read as separate patches
+# instead of one surface receding. Second, the card stays near the lightness it had - #122030 is 15%
+# above #161d27 in relative luminance - because raising it further would put it on top of every fill
+# painted above it (hover, section header, popup, outlined button, the pressed fill the previous
+# change calibrated), and re-deriving that whole band is a bigger change than this one. The price of
+# keeping the card low is that the deepest level has to be near black: #03080f measures 1.04:1 from
+# #000000, and the report keeps a zoomed edge comparison so that stays a decision.
+#
+# The three are cool blue on purpose, not slate. Hue sits at 210-215 and the blue channel is 12/24/30
+# levels above red; at these luminances a neutral slate reads as grey, which is exactly what the old
+# #0f141b looked like. HSL saturation is quoted as computed - it rises as lightness falls, so the
+# window's 67% is a consequence of its low L, and the hue plus the blue-minus-red chroma are what the
+# test checks alongside it.
 NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_BUTTON_ICON": {"dark": "#1c2531", "light": "#eef0f4"},
-    "BG_BUTTON_ICON_2": {"dark": "#161d27", "light": "#e2e6ec"},
+    # The dark value of the two ``_2`` tokens is BG_LIST's value: the pressed-state test uses that
+    # equality to prove the collapse the dedicated pressed token below was introduced for. Neither
+    # token is painted by the dark sheet any more.
+    "BG_BUTTON_ICON_2": {"dark": "#122030", "light": "#e2e6ec"},
     # The pressed fill of an outlined control (secondary, warning, row actions, icon buttons). Dark
     # cannot borrow the light recipe: in light the pressed fill steps *below* the surface, and in dark
-    # that surface is BG_LIST itself - the light sheet's value is #161d27 there, which is BG_LIST to
-    # the byte, so the button vanished into the page exactly while it was being pressed. There is no
+    # that surface is BG_LIST itself - BG_BUTTON_SECONDARY_2's dark value is #122030, BG_LIST to the
+    # byte, so the button vanished into the page exactly while it was being pressed. There is no
     # headroom left below a near-black surface, so dark presses upwards instead: one step above the
-    # hover fill, 1.29:1 from the surface at rest and 1.17:1 from hover. The light sheet keeps
+    # hover fill, 1.25:1 from the surface at rest and 1.17:1 from hover. The light sheet keeps
     # BG_BUTTON_SECONDARY_2 / BG_BUTTON_ICON_2, and its own values do not move.
     "BG_BUTTON_PRESSED": {"dark": "#26313f", "light": "#e2e6ec"},
     "BG_BUTTON_SECONDARY": {"dark": "#1c2531", "light": "#f1f3f6"},
-    "BG_BUTTON_SECONDARY_2": {"dark": "#161d27", "light": "#e2e6ec"},
+    "BG_BUTTON_SECONDARY_2": {"dark": "#122030", "light": "#e2e6ec"},
     "BG_DISABLED": {"dark": "#131a23", "light": "#f4f6f9"},
     "BG_DISABLED_2": {"dark": "#232c39", "light": "#d8dee6"},
     # dark rows hover with this; the light sheet uses ACCENT_TINT instead, so the light value
@@ -202,22 +233,30 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_HOVER": {"dark": "#1c2531", "light": "#e6eaf0"},
     # Launch page fields and the settings page's disabled inputs keep their own recessed tone.
     "BG_LAUNCH_FIELD_DISABLED": {"dark": "#232c39", "light": "#e9edf2"},
-    "BG_LIST": {"dark": "#161d27", "light": "#ffffff"},
+    # Level 3 of the dark surface ladder (top of the table): the card, list and table-row fill. One
+    # measurable step above the page paper, and below the fills painted on top of it.
+    "BG_LIST": {"dark": "#122030", "light": "#ffffff"},
+    # Popup/menu/tooltip fill. It sits above the page, so it keeps the value it had; on a page card the
+    # step it makes to BG_LIST is 1.07:1, so a popup drawn on a card leans on its outline instead.
     "BG_LIST_2": {"dark": "#1c2531", "light": "#ffffff"},
-    # The sidebar rail: one step darker than the page paper and blue-tinted, so it recedes behind the
-    # cards instead of competing with them. Dark keeps the window colour it already painted.
-    "BG_NAV": {"dark": "#0f141b", "light": "#f3f6fd"},
+    # The sidebar rail: in light one step darker than the page paper; in dark it is level 1, the same
+    # value as the window chrome, so the rail and the window's own chrome share the deepest surface.
+    "BG_NAV": {"dark": "#03080f", "light": "#f3f6fd"},
     "BG_OPTION": {"dark": "#161d27", "light": "#f1f3f6"},
     # The in-window overlay card is the one surface painted over a scrim instead of over the page
     # (gui/overlay.py BlurOverlay, gui/inwindow_dialog.py). Its fill therefore has to separate it from
-    # the *scrimmed* backdrop, and BG_LIST cannot do that in dark: it is 1.15:1 from the dimmed page,
-    # and 1.24:1 is the ceiling for any scrim, because that is BG_LIST against pure black. The dark
-    # value is the raised surface that clears the 1.8:1 floor (2.22:1 against the scrimmed page); the
-    # light sheet keeps painting BG_LIST, and the light value here is the same white for that reason.
-    "BG_OVERLAY_CARD": {"dark": "#3b4a5c", "light": "#ffffff"},
+    # the *scrimmed* backdrop, and BG_LIST cannot do that in dark: even on the new level-3 fill it is
+    # 1.21:1 from the dimmed page, and 1.28:1 is the ceiling for any scrim, because that is BG_LIST
+    # against pure black. The dark value is the raised surface that clears the 1.8:1 floor (2.31:1
+    # against the scrimmed page, 1.91:1 in the worst case - the red severity scrim over a page card);
+    # it is also the same cool blue as the surfaces underneath (H 214, blue 48 above red) rather than
+    # the grey-blue it used to be. The light sheet keeps painting BG_LIST, and the light value here is
+    # the same white for that reason.
+    "BG_OVERLAY_CARD": {"dark": "#384d68", "light": "#ffffff"},
     "BG_OVERLAY_CODE": {"dark": "#2a1a1e", "light": "#fdecea"},
     # The one page paper: every page container, the content stack and each page-level scroll viewport
-    # paints this, so the three near-identical blues the pages used to invent are gone.
+    # paints this, so the three near-identical blues the pages used to invent are gone. It is level 2
+    # of the dark ladder; see PAGE_PAPER at the top of this module for why it lives there.
     "BG_PAGE": PAGE_PAPER,
     "BG_RAIL_DOT": {"dark": "#33404f", "light": "#b6c1cd"},
     "BG_SCROLLBAR": {"dark": "#6d7f95", "light": "#8a96a3"},
@@ -231,9 +270,10 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_TOPBAR": {"dark": "#1a4e8c", "light": "#1e6fd9"},
     "BG_TITLEBAR_CLOSE": {"dark": "#cf3f3f", "light": "#cf3f3f"},
     "BG_TITLEBAR_MINIMIZE": {"dark": "#1a63c4", "light": "#1a63c4"},
-    # Window chrome used below the title bar: the status bar and native dialogs. One step lighter
-    # than the page paper and one below the cards: near the cards, but never a second white surface.
-    "BG_WINDOW": {"dark": "#0f141b", "light": "#f9fafc"},
+    # Window chrome used below the title bar: the status bar and native dialogs. In light it is one
+    # step lighter than the page paper and one below the cards: near the cards, but never a second
+    # white surface. In dark it is level 1 - the deepest of the three surfaces, shared with BG_NAV.
+    "BG_WINDOW": {"dark": "#03080f", "light": "#f9fafc"},
     "BORDER_BUTTON_ICON": {"dark": "#27303d", "light": "#c9d2dc"},
     "BORDER_BUTTON_SECONDARY": {"dark": "#33404f", "light": "#b6c1cd"},
     "BORDER_BUTTON_SECONDARY_2": {"dark": "#232c39", "light": "#d8dee6"},
@@ -254,10 +294,11 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BORDER_NAV": {"dark": "#27303d", "light": "#dfe7f0"},
     # The overlay card's outline. Once the card's fill carries the silhouette (see BG_OVERLAY_CARD),
     # the frame only has to read as an edge on that fill, not carry the whole separation: BORDER_SWATCH
-    # (#3a4757) would sit 1.06:1 above the new dark fill, i.e. invisible, so dark steps up to 1.40:1.
-    # The light sheet keeps its quiet BORDER_BUTTON_ICON outline (1.70:1 against the scrim); the light
-    # value here repeats that colour for the same reason as the fill above.
-    "BORDER_OVERLAY_CARD": {"dark": "#4e6076", "light": "#c9d2dc"},
+    # (#3a4757) would sit 1.06:1 above the new dark fill, i.e. invisible, so dark steps up to 1.40:1
+    # on the fill (3.24:1 against the scrim). It is the cool-blue edge of that fill (H 213, blue 51
+    # above red). The light sheet keeps its quiet BORDER_BUTTON_ICON outline (1.70:1 against the
+    # scrim); the light value here repeats that colour for the same reason as the fill above.
+    "BORDER_OVERLAY_CARD": {"dark": "#4c637f", "light": "#c9d2dc"},
     "BORDER_OVERLAY_CODE": {"dark": "#e5787f", "light": "#e5787f"},
     "BORDER_SWATCH": {"dark": "#3a4757", "light": "#b6c1cd"},
     "BORDER_TABLE": {"dark": "#212a36", "light": "#dfe4ea"},
