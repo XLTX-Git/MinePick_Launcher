@@ -163,8 +163,8 @@ def _card_by_id(page, instance_id: str):
     return card
 
 
-def test_cards_are_a_responsive_grid_and_open_the_detail_page(app, monkeypatch, ws_tmp):
-    """The first view is a 2-3 column white-card grid; a card drill-down is a real page switch."""
+def test_cards_are_a_single_column_and_open_the_detail_page(app, monkeypatch, ws_tmp):
+    """One card per row, spanning the pane; a card drill-down is a real page switch."""
     window = None
     try:
         window, _game = _window(app, monkeypatch, ws_tmp)
@@ -173,20 +173,23 @@ def test_cards_are_a_responsive_grid_and_open_the_detail_page(app, monkeypatch, 
         assert page.detail_page.isHidden()
         assert len(page.cards()) == 4
 
-        # The 200px folder rail takes the width the old three-column floor used, so the two-level
-        # layout draws two columns at the 1180px window and adds a third only when the pane can hold
-        # three 320px cards. The four instances split into 正式版 (3) and 带加载器 (1), and the
-        # release group's own x positions are what state the column count.
+        # One column at every width: the grid used to add a column at 676px and another at 1008px,
+        # and at 1644x915 the right column was cut in half because the fixed card width became the
+        # content widget's minimum (the horizontal scrollbar is off, so it could never shrink back).
+        # The four instances split into 正式版 (3) and 带加载器 (1); the release group's card
+        # positions are what state the column count.
         release_cards = page.groups_view.sections()[0].cards
         assert len(release_cards) == 3
         xs = {card.mapTo(page, QPoint(0, 0)).x() for card in release_cards}
-        assert len(xs) == 2, (
-            f"expected 2 columns at 1180px, got x positions {sorted(xs)}; "
+        assert len(xs) == 1, (
+            f"expected 1 column, got x positions {sorted(xs)}; "
             f"window={window.width()} page={page.width()} "
             f"viewport={page.content_scroll.viewport().width()} "
             f"cards={[(card.width(), card.mapTo(page, QPoint(0, 0)).x()) for card in release_cards]}"
         )
         assert len({card.width() for card in release_cards}) == 1
+        # The card fills the row: its width is the pane's, not a per-column slice of it.
+        assert release_cards[0].width() == page.content_scroll.viewport().width()
 
         for card in page.cards():
             assert card is not None

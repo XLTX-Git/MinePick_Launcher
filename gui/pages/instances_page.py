@@ -96,15 +96,19 @@ tr = i18n.tr
 
 CARD_HEIGHT = 156
 CARD_GAP = 12
+#: A card's hard floor, independent of the text it happens to hold.
 CARD_MIN_WIDTH = 260
-CARD_MAX_COLUMNS = 3
-# The two-level layout spends 212px on the folder rail, so the old "three 260px cards" floor (860)
-# no longer fits the 1180px window budget in tools/measure_min_width.py. The floor is now two cards at
-# the width the grid actually draws them (320px), and a third column is added once the pane can hold
-# three of those. tests/test_window_clipping.py keeps the window above the old 1000px pin from this.
+# One card per row, always. The grid used to add a column at 676px (two) and 1008px (three), and at
+# 1644x915 the third column was cut in half: the fixed card width became the content widget's minimum
+# width, the horizontal scrollbar is off, and the pane could never shrink back under a width it had
+# once been laid out at. A single card that spans the row removes the whole class of "a column that
+# does not fit"; the number of columns no longer changes with the window at all.
+CARD_COLUMNS = 1
+# The pane's floor: the width one card is comfortably drawn at, plus the pane's two gutters. It is
+# strictly smaller than the old two-card floor (676), so the window's minimum width can only shrink
+# now that the second column is gone (measured by tools/measure_min_width.py: 1078 -> 746 in zh_cn).
 CARD_FLOOR_WIDTH = 320
-CARD_GRID_MIN_WIDTH = 2 * CARD_FLOOR_WIDTH + 3 * CARD_GAP
-CARD_COLUMNS_MIN_WIDTH = CARD_MAX_COLUMNS * CARD_FLOOR_WIDTH + 4 * CARD_GAP
+CARD_GRID_MIN_WIDTH = CARD_FLOOR_WIDTH + 2 * CARD_GAP
 
 # The three card groups, in the order they are shown. A group with no card is not rendered at all.
 GROUP_RELEASE = "release"
@@ -139,12 +143,12 @@ def instance_group(version: str, loader: str, game_dir: Path) -> str:
 
 
 def card_columns(width: int) -> int:
-    """How many cards fit across ``width``: three only at the three-card floor, else two or one."""
-    if width >= CARD_COLUMNS_MIN_WIDTH:
-        return CARD_MAX_COLUMNS
-    if width >= CARD_GRID_MIN_WIDTH:
-        return 2
-    return 1
+    """How many cards fit across ``width``: always one, so a card spans the whole pane.
+
+    Kept as a function (rather than inlining the constant) because it is the seam the tests and the
+    width audit talk to, and the answer is deliberately independent of ``width`` now.
+    """
+    return CARD_COLUMNS
 
 
 def _profile_json(game_dir: Path, version_id: str) -> dict:
@@ -351,7 +355,7 @@ class _InstanceCard(QFrame):
 
 
 class _GroupSection(QWidget):
-    """One group: a 15/600 heading plus the cards that belong to it, laid out in a responsive grid.
+    """One group: a 15/600 heading plus its cards, one per row, each spanning the pane.
 
     The heading is the same ``sectionTitle`` label the rest of the app uses for a 15px/600 block
     title, so the group headers do not invent a second type scale. A flat (search) section passes an
@@ -375,26 +379,39 @@ class _GroupSection(QWidget):
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setHorizontalSpacing(CARD_GAP)
         self.grid.setVerticalSpacing(CARD_GAP)
-        self.grid.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        # The single column takes every pixel the section has: that is what makes the card fill the
+        # row. No horizontal alignment on the grid (it would shrink the layout back to its size hint).
+        self.grid.setColumnStretch(0, 1)
         layout.addWidget(self.title_label)
         layout.addLayout(self.grid)
+        # The grid keeps its rows at their size hint and the section keeps its content at the top;
+        # without this the spare height would be spread between the cards instead of staying below.
+        layout.addStretch(1)
 
     def add_card(self, card: _InstanceCard) -> None:
         self.cards.append(card)
 
     def reflow(self, width: int) -> None:
-        """Give every card the cell's exact width and place it in the current column count."""
-        columns = card_columns(width)
-        card_width = max(CARD_MIN_WIDTH, (width - (columns - 1) * CARD_GAP) // columns)
+        """Place every card in the one column; the layout supplies the width, not the card.
+
+        The width used to be written into the card with ``setFixedSize``. That fixed width became the
+        content widget's minimum width, so a pane laid out once at 1386px could never shrink back to
+        its 1224px viewport: the scroll area kept the wider widget and, because the horizontal
+        scrollbar is off, cut the right edge off the row. An expanding card in a stretched one-column
+        grid follows the pane in both directions; only the height stays fixed.
+        """
         for card in self.cards:
-            if card.width() != card_width or card.height() != CARD_HEIGHT:
-                card.setFixedSize(card_width, CARD_HEIGHT)
+            if card.height() != CARD_HEIGHT:
+                card.setFixedHeight(CARD_HEIGHT)
+            if card.minimumWidth() != CARD_MIN_WIDTH:
+                card.setMinimumWidth(CARD_MIN_WIDTH)
+        columns = card_columns(width)
         if columns == self._columns and self.grid.count() == len(self.cards):
             return
         while self.grid.count():
             self.grid.takeAt(0)
         for index, card in enumerate(self.cards):
-            self.grid.addWidget(card, index // columns, index % columns)
+            self.grid.addWidget(card, index, 0)
         self._columns = columns
 
 

@@ -217,7 +217,9 @@ class FolderRail(QWidget):
                 # underneath the transparent row widget, and the row's two labels would show twice.
                 item.setData(Qt.ItemDataRole.AccessibleTextRole, text)
                 item.setData(Qt.ItemDataRole.UserRole, path)
-                item.setSizeHint(QSize(FOLDER_RAIL_WIDTH, FOLDER_ITEM_HEIGHT))
+                item.setSizeHint(
+                    QSize(self.list.viewport().width() or FOLDER_RAIL_WIDTH, FOLDER_ITEM_HEIGHT)
+                )
                 item.setToolTip(path)
                 self.list.addItem(item)
                 row = _FolderRow(name, count)
@@ -229,6 +231,7 @@ class FolderRail(QWidget):
             self._labels = labels
         finally:
             self.list.blockSignals(False)
+        self._sync_row_widths()
 
     def set_active(self, active_path) -> None:
         """Select the row for ``active_path`` without re-emitting ``folder_changed``."""
@@ -262,6 +265,25 @@ class FolderRail(QWidget):
             widget.set_active(index == row)
 
     # ---------- events ----------
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._sync_row_widths()
+
+    def _sync_row_widths(self) -> None:
+        """Match every row's width to the list's viewport, not to the rail's width.
+
+        The rail is 200px wide but the list draws a 1px frame, so its viewport is 198px. The item
+        hint used to be the rail's 200px, which put the row 2px past the viewport's right edge - the
+        row is the view's child, so the viewport's width is what it may occupy.
+        tools/audit_window_widths.py caught the overflow at 1050px.
+        """
+        width = self.list.viewport().width()
+        if width <= 0:
+            return
+        for item in self._items:
+            if item.sizeHint().width() != width:
+                item.setSizeHint(QSize(width, FOLDER_ITEM_HEIGHT))
 
     def _on_current_row_changed(self, row: int) -> None:
         self._apply_marks(row)
