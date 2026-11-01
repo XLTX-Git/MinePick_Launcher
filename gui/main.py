@@ -116,6 +116,12 @@ def create_app(argv: list[str] | None = None) -> QApplication:
     # Hover/disabled states for the combo chevron (subcontrol pseudo-classes do not work in Qt 6.11)
     app._combo_arrow_state = ComboArrowState(app)
     app.installEventFilter(app._combo_arrow_state)
+    # Combo popups are top-level Qt::Popup windows: the stylesheet can round the list inside one, but
+    # only a window attribute can make the square window around it transparent. This hook shapes every
+    # combo automatically, including the ones built later by the lazily created pages.
+    from gui import popup_shape
+
+    popup_shape.install(app)
     # Tooltips the pointer can travel into, that stay until dismissed (WCAG 1.4.13)
     from gui.tooltip import TooltipController
 

@@ -407,18 +407,17 @@ QComboBox[keyboardFocus="true"]::down-arrow {
 QComboBox[comboDisabled="true"]::down-arrow {
     image: url(__CHEVRON_DOWN_DISABLED__);
 }
-/* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup). It fills its window
-   with this list, and Qt paints the window's own square frame under it - so a radius here rounded the
-   white card while the window corner stayed square, and the four corners showed a grey patch outside a
-   rounded edge. That is the "the dropdown's corners are broken" the user saw. The window cannot be
-   rounded from QSS, so the list is squared to it: one 1px border in the same BORDER_LIST every other
-   control uses, square. A truly rounded popup needs a translucent window attribute on the container in
-   code, which this QSS-only change deliberately does not touch. */
+/* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup). gui/popup_shape.py
+   makes that window translucent and frameless (keeping Qt::Popup, which is what closes it on an
+   outside click) and clears the container's own frame; the list below is then the only surface, so
+   its radius really is the popup's corner and the pixels outside the 1px BORDER_LIST arc show the
+   page behind instead of a square window patch. The radius comes from the same card token as
+   #pageCard; the 4px list padding keeps the viewport's square corners inside that arc. */
 QComboBox QAbstractItemView {
     background: __BG_LIST_2__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_LIST__;
-    border-radius: 0;
+    border-radius: __RADIUS_LG__;
     padding: 4px;
     selection-background-color: __ACCENT_SEL__;
     selection-color: __ACCENT_SEL_TEXT__;

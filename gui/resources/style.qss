@@ -402,16 +402,17 @@ QComboBox[keyboardFocus="true"]::down-arrow {
 QComboBox[comboDisabled="true"]::down-arrow {
     image: url(__CHEVRON_DOWN_DISABLED__);
 }
-/* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup) and it fills that
-   window, so a radius here rounds the white card while the window corner stays square - a rounded edge
-   with a grey patch outside it, the broken corner the light sheet documents in full. The window cannot
-   be rounded from QSS, so the list is squared to it here too: one BORDER_LIST outline, square, in both
-   themes. */
+/* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup). gui/popup_shape.py
+   makes that window translucent and frameless (keeping Qt::Popup, which is what closes it on an
+   outside click) and clears the container's own frame; the list below is then the only surface, so
+   its radius really is the popup's corner and the pixels outside the 1px BORDER_LIST arc show the
+   page behind instead of a square window patch. The radius comes from the same card token as
+   #pageCard; the 4px list padding keeps the viewport's square corners inside that arc. */
 QComboBox QAbstractItemView {
     background: __BG_LIST_2__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_LIST__;
-    border-radius: 0;
+    border-radius: __RADIUS_LG__;
     padding: 4px;
     selection-background-color: __ACCENT_SEL__;
     selection-color: __FG_SELECTED__;
