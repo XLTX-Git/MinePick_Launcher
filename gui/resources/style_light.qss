@@ -1443,21 +1443,60 @@ QFrame#resourceDetail QLabel#title { font-size: 15px; font-weight: 600; color: _
 /* 36px rows and 20px group headings; the styles here only paint state.        */
 /* ========================================================================== */
 
-QListWidget#instanceCardList {
+/* ---------- the 200px game-folder rail (the instances page's first level) ----------
+   A page-local column, not a second main rail. Its selected row speaks the same selection language
+   the detail sidebar and the current card use: 3px accent bar on the left, accent text, pale wash.
+   The row widgets inside the list items are transparent, so the item's own fill is what is seen. */
+QWidget#instanceFolderRail { background: transparent; }
+QListWidget#instanceFolderList {
     background: transparent;
-    border: none;
+    /* The transparent border is the focus ring's placeholder, the same shape QListWidget#sidebar uses:
+       a view repaints its frame on focus, while an item's :focus pseudo-state proved unreliable. */
+    border: 1px solid transparent;
     outline: none;
     padding: 0;
 }
-QListWidget#instanceCardList::item,
-QListWidget#instanceCardList::item:hover,
-QListWidget#instanceCardList::item:selected,
-QListWidget#instanceCardList::item:selected:focus {
+QListWidget#instanceFolderList[keyboardFocus="true"]:focus {
+    border-color: __FOCUS_RING__;
+}
+QListWidget#instanceFolderList::item {
     background: transparent;
     border: none;
+    border-left: 3px solid transparent;
+    /* Square: the selected row is an accent bar plus a pale wash, not a rounded pill. */
+    border-radius: 0;
     padding: 0;
-    margin: 0;
 }
+QListWidget#instanceFolderList::item:hover { background: __BG_SIDEBAR__; }
+QListWidget#instanceFolderList::item:selected {
+    background: __ACCENT_TINT__;
+    border-left: 3px solid __ACCENT__;
+}
+QLabel#instanceFolderName {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 13px;
+    font-weight: 400;
+}
+QLabel#instanceFolderName[active="true"] { color: __ACCENT_TEXT__; }
+QLabel#instanceFolderCount {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 11px;
+}
+QLabel#instanceFolderCount[active="true"] { color: __ACCENT_TEXT__; }
+/* The flat search results' summary line ("N 个结果"), the resources page's wording. */
+QLabel#instanceResultCount {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 12px;
+}
+QScrollArea#instanceGroupScroll {
+    background: transparent;
+    border: none;
+}
+QWidget#instanceGroups, QWidget#instanceGroupSection,
+QWidget#instanceFolderEmpty { background: transparent; }
 QFrame#instanceCard {
     background: __BG_LIST__;
     border: 1px solid __BORDER_LIST__;

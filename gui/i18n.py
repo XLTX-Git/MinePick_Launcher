@@ -670,6 +670,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # Instances page: list + detail (search, tabs, overview, resources, saves, settings)
         "instances.search.placeholder": "搜索实例（名称 / 版本 id / 档案名）",
         "instances.search.none": "没有匹配的实例",
+        # Two-level navigation: a game-folder rail on the left, grouped cards on the right. The brief
+        # result line and the field's "N results" wording match the resources page's search summary.
+        "instances.folder.list": "游戏文件夹",
+        "instances.folder.a11y": "{}，{} 个实例",
+        "instances.folder.empty": "这个文件夹里还没有实例",
+        "instances.folder.download": "去下载版本",
+        "instances.group.release": "正式版",
+        "instances.group.snapshot": "快照版",
+        "instances.group.loader": "带加载器",
+        "instances.search.results": "{} 个结果",
         "instances.select.hint": "从左侧选择一个实例，这里会显示它的概览、模组、资源、存档与设置",
         "instances.create_copy": "新建/复制实例",
         "instances.detail.tab.overview": "概览",
@@ -1478,6 +1488,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # Instances page: list + detail (search, tabs, overview, resources, saves, settings)
         "instances.search.placeholder": "Search instances (name / version id / profile)",
         "instances.search.none": "No matching instances",
+        # Two-level navigation: a game-folder rail on the left, grouped cards on the right. The brief
+        # result line and the field's "N results" wording match the resources page's search summary.
+        "instances.folder.list": "Game folders",
+        "instances.folder.a11y": "{}, {} instances",
+        "instances.folder.empty": "No instances in this folder yet",
+        "instances.folder.download": "Download a version",
+        "instances.group.release": "Releases",
+        "instances.group.snapshot": "Snapshots",
+        "instances.group.loader": "With a loader",
+        "instances.search.results": "{} results",
         "instances.select.hint": "Pick an instance on the left to see its overview, mods, resources, saves and settings",
         "instances.create_copy": "New / Copy Instance",
         "instances.detail.tab.overview": "Overview",
