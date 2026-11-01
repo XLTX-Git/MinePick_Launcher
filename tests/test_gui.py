@@ -669,7 +669,8 @@ def test_first_run_wizard_applies(app, monkeypatch, ws_tmp):
 
     cfg, cfg_path = config_mod.load()
     assert cfg.wizard_done is False
-    wizard = FirstRunWizard()
+    # State the machine: the range is device-dependent now, so 6 GB has to be legal on it.
+    wizard = FirstRunWizard(total_gb=16.0, available_gb=12.0, java_32bit=False)
     wizard.language_combo.setCurrentIndex(wizard.language_combo.findData("en_us"))
     wizard.game_dir_edit.setText(str(ws_tmp / "mc"))
     wizard.memory_spin.setValue(6.0)

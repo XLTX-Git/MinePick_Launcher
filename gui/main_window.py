@@ -632,26 +632,70 @@ class MainWindow(QMainWindow):
         dir_box_layout.addStretch(1)
         refresh_status()
 
-        # 5 / memory: one-line box with its own steppers plus a slider
+        # 5 / memory: this machine's real range, the recommended value preselected, and a device
+        # line that says what the range came from. Same rule as the settings page
+        # (launcher.memory via gui.memory_bounds), not a fixed 0.5-64 anymore.
+        from gui.memory_bounds import memory_bounds
+        from launcher.memory import HEAP_STEP_GB
+
+        self._wz_memory_bounds = memory_bounds(java_path=cfg.java_path)
+        bounds = self._wz_memory_bounds
         self._wz_memory = NoWheelDoubleSpinBox()
         self._wz_memory.setObjectName("wizardMemory")
         # the slider is the control here: the spin box is a read-out, not a stepper
         self._wz_memory.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._wz_memory.setRange(0.5, 64.0)
-        self._wz_memory.setSingleStep(0.5)
-        self._wz_memory.setValue(cfg.memory_gb or 4.0)
+        self._wz_memory.setDecimals(1)  # one decimal, like the settings page's read-out
+        self._wz_memory.setRange(bounds.minimum_gb, bounds.maximum_gb)
+        self._wz_memory.setSingleStep(HEAP_STEP_GB)
+        self._wz_memory.setValue(bounds.recommended_gb)
         # A number, not "4.0 GB": the step heading below carries the unit.
         slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setRange(5, 640)
-        slider.setValue(int((cfg.memory_gb or 4.0) * 10))
-        slider.valueChanged.connect(lambda value: self._wz_memory.setValue(value / 10))
-        self._wz_memory.valueChanged.connect(lambda value: slider.setValue(int(value * 10)))
+        ticks = max(1, round((bounds.maximum_gb - bounds.minimum_gb) / HEAP_STEP_GB))
+        slider.setRange(0, ticks)
+        slider.setValue(round((bounds.recommended_gb - bounds.minimum_gb) / HEAP_STEP_GB))
+        self._wz_memory_slider = slider
+        self._wz_memory_updating = False
+
+        def on_slider(tick: int) -> None:
+            if self._wz_memory_updating:
+                return
+            self._wz_memory_updating = True
+            try:
+                self._wz_memory.setValue(round(bounds.minimum_gb + tick * HEAP_STEP_GB, 2))
+            finally:
+                self._wz_memory_updating = False
+
+        def on_spin(value: float) -> None:
+            if self._wz_memory_updating:
+                return
+            self._wz_memory_updating = True
+            try:
+                slider.setValue(round((float(value) - bounds.minimum_gb) / HEAP_STEP_GB))
+            finally:
+                self._wz_memory_updating = False
+
+        slider.valueChanged.connect(on_slider)
+        self._wz_memory.valueChanged.connect(on_spin)
+        self._wz_memory_device = QLabel(
+            tr("wizard.memory.device", f"{bounds.total_gb:.1f}")
+        )
+        self._wz_memory_device.setObjectName("wizardStatus")
+        self._wz_memory_cap = QLabel("")
+        self._wz_memory_cap.setObjectName("wizardStatus")
+        self._wz_memory_cap.setWordWrap(True)
+        self._wz_memory_cap.setVisible(bounds.java_32bit)
+        if bounds.java_32bit:
+            self._wz_memory_cap.setText(
+                tr("settings.memory_java32", f"{bounds.maximum_gb:g}")
+            )
         memory_box = QWidget()
         memory_layout = QVBoxLayout(memory_box)
         memory_layout.setContentsMargins(0, 0, 0, 0)
         memory_layout.setSpacing(12)
         memory_layout.addWidget(self._wz_memory)
         memory_layout.addWidget(slider)
+        memory_layout.addWidget(self._wz_memory_device)
+        memory_layout.addWidget(self._wz_memory_cap)
         memory_layout.addStretch(1)
 
         # 6 / accessibility prompt policy: the same three answers as the settings page, but its own
