@@ -686,16 +686,16 @@ class LaunchPage(QWidget):
         )
 
     def _confirm_java_download(self, major: int) -> bool:
-        from PySide6.QtWidgets import QMessageBox
+        from gui import inwindow_dialog
 
-        answer = QMessageBox.question(
+        # default_yes keeps the old QMessageBox default button: Enter accepts the download offer
+        # instead of dismissing it.
+        return inwindow_dialog.question(
             self,
             "Java",
             tr("launch.msg.java_need", major),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            default_yes=True,
         )
-        return answer == QMessageBox.StandardButton.Yes
 
     def _download_java_then_retry(self, major: int) -> None:
         from gui.workers import ProgressBridge

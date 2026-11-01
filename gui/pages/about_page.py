@@ -36,14 +36,13 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from gui import i18n
+from gui import i18n, inwindow_dialog
 from gui.widgets import (
     add_page_top_inset,
     build_download_progress,
@@ -436,13 +435,14 @@ class AboutPage(QWidget):
     # ---------- prompts ----------
 
     def _prompt_available(self, release: updates.ReleaseInfo) -> None:
-        box = QMessageBox(self)
-        box.setWindowTitle(tr("about.update.prompt.title"))
-        box.setText(tr("about.update.prompt.message", release.version))
-        open_button = box.addButton(tr("about.update.open_page"), QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(tr("about.update.prompt.later"), QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() is open_button:
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("about.update.prompt.title"),
+            tr("about.update.prompt.message", release.version),
+            accept_text=tr("about.update.open_page"),
+            reject_text=tr("about.update.prompt.later"),
+        )
+        if outcome is inwindow_dialog.Outcome.ACCEPTED:
             self._open(release.page_url)
 
     def _prompt_install(self, version: str) -> None:
@@ -450,13 +450,14 @@ class AboutPage(QWidget):
             set_app_status(self, tr("about.update.install_dev"), "warning")
             self.open_page_button.setVisible(True)
             return
-        box = QMessageBox(self)
-        box.setWindowTitle(tr("about.update.prompt.title"))
-        box.setText(tr("about.update.downloaded", version))
-        install_button = box.addButton(tr("about.update.install_now"), QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(tr("about.update.install_later"), QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() is install_button:
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("about.update.prompt.title"),
+            tr("about.update.downloaded", version),
+            accept_text=tr("about.update.install_now"),
+            reject_text=tr("about.update.install_later"),
+        )
+        if outcome is inwindow_dialog.Outcome.ACCEPTED:
             self.install_now()
 
     # ---------- install ----------

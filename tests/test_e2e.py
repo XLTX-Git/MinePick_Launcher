@@ -35,7 +35,7 @@ import httpx
 import pytest
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from launcher import config as config_mod
 from launcher.auth import AccountStore, create_offline_account
@@ -241,12 +241,8 @@ def test_e2e_version_delete_via_instances_page(app, monkeypatch, ws_tmp):
     cfg, cfg_path = config_mod.load()
     cfg.game_dir = game
     config_mod.save(cfg, cfg_path)
-    # simulate clicking "Yes" in the confirmation dialog
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
-    )
+    # simulate clicking "Yes" in the confirmation dialog, which gui/inwindow_dialog.py draws
+    monkeypatch.setattr("gui.inwindow_dialog.question", lambda *a, **k: True)
 
     from gui.main_window import NAV_KEYS, MainWindow
     from launcher.instances import list_instances
@@ -315,11 +311,8 @@ def test_e2e_launch_uses_configured_jvm_args(app, monkeypatch, ws_tmp):
         raise JavaMissingError(8)
 
     monkeypatch.setattr(launch_page_mod, "prepare_launch", fake_prepare)
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *a, **k: QMessageBox.StandardButton.No),
-    )
+    # the Java-download offer answers "No"; the card is drawn by gui/inwindow_dialog.py
+    monkeypatch.setattr("gui.inwindow_dialog.question", lambda *a, **k: False)
 
     from gui.main_window import MainWindow
 
@@ -373,11 +366,8 @@ def test_e2e_launch_uses_the_instances_direct_connect_server(app, monkeypatch, w
         raise JavaMissingError(8)
 
     monkeypatch.setattr(launch_page_mod, "prepare_launch", fake_prepare)
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *a, **k: QMessageBox.StandardButton.No),
-    )
+    # the Java-download offer answers "No"; the card is drawn by gui/inwindow_dialog.py
+    monkeypatch.setattr("gui.inwindow_dialog.question", lambda *a, **k: False)
 
     from gui.main_window import MainWindow
 

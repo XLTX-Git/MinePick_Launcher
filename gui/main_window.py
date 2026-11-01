@@ -939,38 +939,33 @@ class MainWindow(QMainWindow):
         active = downloader.active_download_count()
         if active <= 0:
             return True
-        from PySide6.QtWidgets import QMessageBox
-
+        from gui import inwindow_dialog
         from gui.i18n import tr
 
         if self._ancestor_is_kept_off_screen():
-            # Never build the box at all. Carrying WA_DontShowOnScreen onto it does NOT work: measured on
-            # this Qt/Windows build with IsWindowVisible() on the box's own handle - a plain QWidget
-            # honours the attribute (False), a childless QMessageBox with the attribute set does not
-            # (True), because it re-creates its own window. Making it a child instead does not help
-            # either. So offscreen tooling and tests must not reach the dialog at all; refusing the quit
-            # is the same conservative answer the dialog gives when nobody clicks anything.
+            # Never build the dialog at all. The question is drawn inside this window now, so the
+            # attribute would in principle carry over - but off screen there is nobody to ask, and a
+            # dialog that waits for a click nobody can make is exactly the hang this branch exists to
+            # rule out. Refusing the quit is the same conservative answer the dialog gives when
+            # nothing is clicked.
             logging.getLogger(__name__).info(
                 "quit confirmation skipped: an ancestor is WA_DontShowOnScreen, so this interaction has "
                 "no one to ask (%d download(s) active) - refusing the quit",
                 active,
             )
             return False
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle(tr("quit.busy.confirm"))
-        box.setText(tr("quit.busy.message").format(active))
-        cancel = box.addButton(tr("quit.busy.cancel"), QMessageBox.ButtonRole.RejectRole)
-        confirm = box.addButton(tr("quit.busy.confirm"), QMessageBox.ButtonRole.AcceptRole)
-        box.setDefaultButton(cancel)  # the safe choice is the default one
-        # setDefaultButton() gives the "cancel" button the role, but this build paints no default
-        # indicator for it: with a stylesheet setting the fill, both buttons rendered pixel-identical
-        # (T-0004 E8 step 3). The property is what the stylesheet keys the visible ring on - see the
-        # defaultChoice rule in gui/resources/style.qss for why the standard :default state cannot be
-        # used here.
-        cancel.setProperty("defaultChoice", True)
-        box.exec()
-        return box.clickedButton() is confirm
+        # The safe choice is the default one: Enter still answers "keep downloading" (the old box set
+        # its default button to cancel for the same reason).
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("quit.busy.confirm"),
+            tr("quit.busy.message").format(active),
+            accept_text=tr("quit.busy.confirm"),
+            reject_text=tr("quit.busy.cancel"),
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="question",
+        )
+        return outcome is inwindow_dialog.Outcome.ACCEPTED
 
     def closeEvent(self, event) -> None:
         if not getattr(self, "_quit_confirmed", False):

@@ -45,7 +45,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QStackedWidget,
     QTableWidget,
@@ -54,7 +53,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, paint_utils, theme
+from gui import i18n, inwindow_dialog, paint_utils, theme
 from gui.errors import show_fatal
 from gui.widgets import (
     EmptyState,
@@ -1428,14 +1427,14 @@ class _ContentTab(QWidget):
         game_dir = cfg.game_dir or paths.default_game_dir()
 
         if self.kind == "modpack":
-            answer = QMessageBox.question(
+            # default_yes: installing a modpack replaces the instance's mods, and the old box's
+            # default button was "Yes" - Enter keeps meaning "install".
+            if not inwindow_dialog.question(
                 self,
                 tr("mods.mp.confirm.title"),
                 tr("mods.mp.confirm.msg", mod.slug),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
+                default_yes=True,
+            ):
                 return
 
             def do_install(progress) -> object:
@@ -1486,16 +1485,14 @@ class _ContentTab(QWidget):
             )
             return
 
-        if mod.depends:
-            answer = QMessageBox.question(
-                self,
-                tr("mods.dialog.title"),
-                tr("mods.dialog.msg", "、".join(mod.depends)),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        # No default_yes on the dependency question: this installs without its dependencies, so the
+        # safe answer stays the default one, exactly as the old box's "No" default button did.
+        if mod.depends and not inwindow_dialog.question(
+            self,
+            tr("mods.dialog.title"),
+            tr("mods.dialog.msg", "、".join(mod.depends)),
+        ):
+            return
 
         def do_install() -> object:
             if self.kind == "resourcepack":

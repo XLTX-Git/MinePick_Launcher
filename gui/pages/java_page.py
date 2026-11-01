@@ -34,14 +34,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from gui import i18n, paint_utils
+from gui import i18n, inwindow_dialog, paint_utils
 from gui.widgets import (
     EmptyState,
     add_page_top_inset,
@@ -529,14 +528,11 @@ class JavaPage(QWidget):
         if major is None:
             set_app_status(self, tr("account.msg.need_select"), "warning")
             return
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("java.delete.dialog"),
             tr("java.delete.msg", major, str(self._managed.get(major, ""))),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
 
         def do_delete() -> object:

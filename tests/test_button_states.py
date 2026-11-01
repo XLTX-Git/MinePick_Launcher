@@ -239,13 +239,19 @@ def test_a_disabled_button_drops_both_rings(app, host):
 
 
 def test_the_marker_is_not_a_colour_literal(app, host):
-    """The ring's colour must come from the token table, not from a hex string in the widget code."""
+    """The ring's colour must come from the token table, not from a hex string in the widget code.
+
+    The marker used to be set by ``MainWindow._confirm_quit_while_downloading``; since every dialog is
+    drawn by ``gui/inwindow_dialog.py``, the component owns it now - and it is still a property the
+    stylesheet reacts to, not a colour baked into Python.
+    """
     import inspect
     import re
+    from pathlib import Path
 
-    from gui import main_window
+    from gui.inwindow_dialog import InWindowDialog
 
-    source = inspect.getsource(main_window.MainWindow._confirm_quit_while_downloading)
+    source = inspect.getsource(InWindowDialog._mark_default)
     assert 'setProperty("defaultChoice", True)' in source
     # Only comment lines may contain a '#'; any hex literal in the code itself would be a colour the
     # theme cannot re-tint.
@@ -253,3 +259,9 @@ def test_the_marker_is_not_a_colour_literal(app, host):
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", code), (
         "the dialog appears to hardcode a colour; the ring belongs to the stylesheet"
     )
+    # And the rule the marker keys must exist in both sheets, or the property paints nothing.
+    sheets = Path(__file__).resolve().parent.parent / "gui" / "resources"
+    for name in ("style.qss", "style_light.qss"):
+        rules = (sheets / name).read_text(encoding="utf-8")
+        assert 'QPushButton[defaultChoice="true"]' in rules, f"{name} lost the default-choice ring"
+        assert 'QPushButton[defaultChoice="true"]:disabled' in rules, name

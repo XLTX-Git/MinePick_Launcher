@@ -18,25 +18,19 @@
 """The quit confirmation must not be built at all when its window is kept off screen.
 
 Why this file exists. ``gui/main_window.py`` asked "quit while a download is running?" with a
-``QMessageBox``. That box is a top-level window of its own, so it does not inherit its parent's
+``QMessageBox``. That box was a top-level window of its own, so it did not inherit its parent's
 ``WA_DontShowOnScreen``: with the parent marked, the box was a real window (the report measured
 ``box.isVisible() = True``, ``winId = 4262432``, ``testAttribute(WA_DontShowOnScreen) = False``), and it
 only appeared while a download was in flight, which is why it was intermittent.
 
-Carrying the attribute onto the box does not fix it. Measured on this Qt/Windows build by asking the OS
-about the box's own handle (``IsWindowVisible``):
-
-  * a plain ``QWidget`` with ``WA_DontShowOnScreen`` set is *not* visible     -> the attribute works;
-  * a ``QMessageBox`` with the same attribute set *is* visible               -> it does not, because the
-    box re-creates its own window and drops the attribute.
-
-Making the box a child (``setWindowFlag(Qt.WidgetType.Widget)``) does not help either - measured visible
-as well. So the fix is to not build the box when there is nobody to ask: the window is kept off screen,
-which is exactly the case for the render tools and this suite, and refusing the quit is the same
-conservative answer the dialog gives when nothing is clicked.
+The product now draws that question with the in-window dialog (``gui/inwindow_dialog.py``), which is a
+child of the launcher window and cannot become a window of its own. The off-screen branch is kept
+anyway, and this file still pins it: off screen there is nobody to ask, and a dialog that waits for a
+click nobody can make is a hang rather than a question. Refusing the quit is the same conservative
+answer the dialog gives when nothing is clicked.
 
 These tests pin both halves: the off-screen window must skip the question (and must not block), and a
-normal window must still ask it, so only the one branch changed.
+normal window must still ask it, with its text and its safe default, so only the one branch changed.
 """
 
 from __future__ import annotations
@@ -57,14 +51,12 @@ def app():
 def asking_quit(monkeypatch, ws_tmp):
     """A real MainWindow with a download in flight, plus a non-blocking stand-in for the dialog.
 
-    ``QMessageBox`` is patched on the module object ``gui/main_window.py`` imports from, so the product
-    code path is unchanged and only ``exec`` is replaced: a modal loop here would hang the suite, which
-    is the same hazard the dialog itself carries. Each constructed box is recorded, so "was the question
-    asked?" is readable after the call.
+    ``InWindowDialog.ask`` is the dialog's single blocking entry point (see gui/inwindow_dialog.py), so
+    replacing it keeps the product's whole construction path - title, body, buttons, default marker -
+    intact and only removes the loop that waits for a click. Every dialog built is recorded, so "was
+    the question asked?" is readable after the call.
     """
-    from PySide6 import QtWidgets as widgets
-    from PySide6.QtWidgets import QMessageBox
-
+    from gui import inwindow_dialog
     from gui.main_window import MainWindow
     from launcher.net import downloader
 
@@ -72,17 +64,13 @@ def asking_quit(monkeypatch, ws_tmp):
     monkeypatch.setattr(downloader, "active_download_count", lambda: 2)
     assert downloader.active_download_count() == 2, "the download state was not set up"
 
-    made: list[QMessageBox] = []
+    made: list[object] = []
 
-    class _RecordingBox(QMessageBox):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            made.append(self)
+    def _ask(dialog):
+        made.append(dialog)
+        return inwindow_dialog.Outcome.DISMISSED  # "no button clicked": the caller must refuse
 
-        def exec(self) -> int:
-            return 0  # "no button clicked": the caller must refuse the quit
-
-    monkeypatch.setattr(widgets, "QMessageBox", _RecordingBox)
+    monkeypatch.setattr(inwindow_dialog.InWindowDialog, "ask", _ask)
 
     window = MainWindow()
     try:
@@ -114,9 +102,8 @@ def test_an_offscreen_window_does_not_build_the_quit_dialog(asking_quit, app, ca
         "answer is to refuse, which is also what the dialog returns when nothing is clicked"
     )
     assert made == [], (
-        f"the quit dialog was built for an off-screen window: {made!r}. It is a top-level window of its "
-        f"own and a QMessageBox does not honour WA_DontShowOnScreen, so building it is what put a real "
-        f"dialog on the desktop"
+        f"the quit dialog was built for an off-screen window: {made!r}. Off screen there is nobody to "
+        f"answer it, so building it can only hang the caller"
     )
     assert len(QApplication.topLevelWidgets()) == toplevels_before, (
         "a new top-level widget appeared during the close path"
@@ -166,18 +153,17 @@ def test_a_normal_window_still_asks_the_question(asking_quit, app):
     allowed = window._confirm_quit_while_downloading()
 
     assert len(made) == 1, f"the quit dialog was not built for a normal window: {made!r}"
-    box = made[0]
-    assert box.windowTitle() == tr("quit.busy.confirm"), box.windowTitle()
-    assert box.text() == tr("quit.busy.message").format(2), box.text()
+    dialog = made[0]
+    assert dialog.title_label.text() == tr("quit.busy.confirm"), dialog.title_label.text()
+    assert dialog.body_label.text() == tr("quit.busy.message").format(2), dialog.body_label.text()
     assert allowed is False, (
-        "the stand-in returns 'no button clicked', which must refuse the quit - if this is True the "
-        "product would quit on an unanswered question"
+        "the stand-in answers 'dismissed', which must refuse the quit - if this is True the product "
+        "would quit on an unanswered question"
     )
-    # Role order, not insertion order - measured: buttons() returns AcceptRole first, so the two labels
-    # are compared as a set and the *default* is what pins down which one is the safe choice.
-    labels = sorted(button.text() for button in box.buttons())
-    assert labels == sorted([tr("quit.busy.cancel"), tr("quit.busy.confirm")]), labels
-    assert box.defaultButton() is not None and box.defaultButton().text() == tr("quit.busy.cancel"), (
+    labels = [button.text() for button in dialog.buttons]
+    assert labels == [tr("quit.busy.cancel"), tr("quit.busy.confirm")], labels
+    assert dialog.default_button is not None
+    assert dialog.default_button.text() == tr("quit.busy.cancel"), (
         "the safe choice is no longer the default one"
     )
 
@@ -185,15 +171,18 @@ def test_a_normal_window_still_asks_the_question(asking_quit, app):
 def test_an_offscreen_close_does_not_block(asking_quit, app):
     """Driving the real close path off screen must return, not sit in a modal loop with nobody to answer.
 
-    The stand-in above is deliberately *not* used here: ``exec`` is left alone, so if the off-screen
+    The stand-in above is deliberately *not* used here: ``ask`` is left alone, so if the off-screen
     branch ever stopped being taken this test would hang rather than pass. It is bounded by the suite's
     own timeout behaviour, which is the point - a hang is the failure being ruled out.
     """
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QMessageBox
 
+    from gui import inwindow_dialog
+
     window, _made = asking_quit
     original_exec = QMessageBox.exec
+    original_ask = inwindow_dialog.InWindowDialog.ask
 
     calls: list[str] = []
 
@@ -201,7 +190,12 @@ def test_an_offscreen_close_does_not_block(asking_quit, app):
         calls.append("exec")
         return original_exec(self)
 
+    def _must_not_ask(self):  # pragma: no cover - running it is the failure
+        calls.append("ask")
+        return original_ask(self)
+
     QMessageBox.exec = _must_not_run
+    inwindow_dialog.InWindowDialog.ask = _must_not_ask
     try:
         window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         window.show()
@@ -212,9 +206,10 @@ def test_an_offscreen_close_does_not_block(asking_quit, app):
             app.processEvents()
     finally:
         QMessageBox.exec = original_exec
+        inwindow_dialog.InWindowDialog.ask = original_ask
 
     assert calls == [], (
-        "the off-screen close path entered QMessageBox.exec(): with nobody to answer, that is the modal "
-        "loop a person saw as a window on the desktop, and it does not return on its own"
+        "the off-screen close path entered the dialog: with nobody to answer, that is the modal loop "
+        "a person saw as a window on the desktop, and it does not return on its own"
     )
     assert window.isVisible() is True, "the refused close did not leave the window up"

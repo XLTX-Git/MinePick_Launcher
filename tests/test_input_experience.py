@@ -30,13 +30,11 @@ window-building are reused as-is, with the same offline stubs.
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QLineEdit
 
 
 @pytest.fixture(scope="module")
@@ -69,73 +67,25 @@ def window(app, monkeypatch, ws_tmp):
     win.close()
 
 
-class _FakeButton:
-    """A stand-in for the QPushButton QMessageBox.addButton returns.
+def _record_dialogs(monkeypatch):
+    """Answer the launcher's in-window dialogs without a modal loop, and return what was built.
 
-    It carries the Qt dynamic-property interface because the quit dialog marks its default button with
-    `setProperty("defaultChoice", True)` - that marker is what the stylesheet keys the visible ring on
-    (the standard `:default` pseudo-state identifies the wrong button in this build). Recording the
-    properties keeps that marker assertable here.
+    The *dialog* is real: the title, the body, the buttons and the default marker are the shipped
+    ones, which is what this file used to assert through a fake QMessageBox. Only the blocking loop is
+    replaced - ``InWindowDialog.ask`` is that loop's single entry point (see gui/inwindow_dialog.py).
+    The answer is "dismissed", i.e. the answer nobody gave, which the caller must treat as
+    "do not quit".
     """
+    from gui import inwindow_dialog
 
-    def __init__(self, text: str) -> None:
-        self._text = text
-        self.properties: dict[str, object] = {}
+    built: list[object] = []
 
-    def text(self) -> str:
-        return self._text
+    def _ask(dialog):
+        built.append(dialog)
+        return inwindow_dialog.Outcome.DISMISSED
 
-    def setProperty(self, name: str, value: object) -> None:
-        self.properties[name] = value
-
-    def property(self, name: str):
-        return self.properties.get(name)
-
-
-class _FakeMessageBox:
-    """Stands in for QMessageBox: records what the code builds, never shows anything."""
-
-    Icon = QMessageBox.Icon
-    ButtonRole = QMessageBox.ButtonRole
-
-    built: ClassVar[list[_FakeMessageBox]] = []
-    exec_result = 0
-
-    def __init__(self, parent=None) -> None:
-        self.parent = parent
-        self.title = ""
-        self.text = ""
-        self.icon = None
-        self.buttons: list[tuple[str, object]] = []
-        self.button_objects: list[_FakeButton] = []
-        self.default = None
-        self.exec_called = False
-        _FakeMessageBox.built.append(self)
-
-    def setIcon(self, icon) -> None:
-        self.icon = icon
-
-    def setWindowTitle(self, title: str) -> None:
-        self.title = title
-
-    def setText(self, text: str) -> None:
-        self.text = text
-
-    def addButton(self, text: str, role):
-        button = _FakeButton(text)
-        self.buttons.append((text, role))
-        self.button_objects.append(button)
-        return button
-
-    def setDefaultButton(self, button) -> None:
-        self.default = button
-
-    def exec(self) -> int:
-        self.exec_called = True
-        return _FakeMessageBox.exec_result
-
-    def clickedButton(self):
-        return None  # nothing was clicked: the dialog must then refuse to quit
+    monkeypatch.setattr(inwindow_dialog.InWindowDialog, "ask", _ask)
+    return built
 
 
 # ---------------------------------------------------------------- A: stray keys
@@ -184,39 +134,36 @@ def test_a_line_edit_keeps_backspace(app, window):
 
 def test_no_dialog_when_nothing_is_downloading(window, monkeypatch):
     """Zero downloads: the whole check is one comparison and nothing is constructed."""
-    _FakeMessageBox.built.clear()
-    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox", _FakeMessageBox)
+    calls: list[tuple] = []
+    monkeypatch.setattr("gui.inwindow_dialog.confirm", lambda *a, **k: calls.append(a))
     monkeypatch.setattr("launcher.net.downloader.active_download_count", lambda: 0)
     assert window._confirm_quit_while_downloading() is True
-    assert _FakeMessageBox.built == []
+    assert calls == []
 
 
 def test_dialog_content_and_safe_default(window, monkeypatch):
     """With downloads running the dialog is built from the i18n keys, defaulting to cancel."""
     from gui.i18n import tr
 
-    _FakeMessageBox.built.clear()
-    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox", _FakeMessageBox)
+    built = _record_dialogs(monkeypatch)
     monkeypatch.setattr("launcher.net.downloader.active_download_count", lambda: 3)
-    monkeypatch.setattr("gui.i18n.tr", tr)  # the module-level import inside the method
 
     result = window._confirm_quit_while_downloading()
 
-    assert len(_FakeMessageBox.built) == 1
-    box = _FakeMessageBox.built[0]
-    assert box.exec_called is True
-    assert box.text == tr("quit.busy.message").format(3)
-    assert box.title == tr("quit.busy.confirm")
-    labels = [text for text, _role in box.buttons]
-    assert labels == [tr("quit.busy.cancel"), tr("quit.busy.confirm")]
-    roles = [role for _text, role in box.buttons]
-    assert roles[0] == QMessageBox.ButtonRole.RejectRole
-    assert roles[1] == QMessageBox.ButtonRole.AcceptRole
-    assert box.default == box.buttons[0][1] or box.default is not None  # cancel is the default
-    # The default button also carries the marker the stylesheet draws the visible ring from; the other
-    # button must not, or the two would still look alike (T-0004 E8 step 3 measured them identical).
-    assert box.default.property("defaultChoice") is True
-    assert box.button_objects[1].property("defaultChoice") is None
+    assert len(built) == 1
+    dialog = built[0]
+    assert dialog.title_label.text() == tr("quit.busy.confirm")
+    assert dialog.body_label.text() == tr("quit.busy.message").format(3)
+    assert [button.text() for button in dialog.buttons] == [
+        tr("quit.busy.cancel"),
+        tr("quit.busy.confirm"),
+    ]
+    # The safe choice is the default one: it is the one Enter activates and the one that carries the
+    # marker the stylesheet draws the visible ring from. The other button must not carry it, or the
+    # two would still look alike (T-0004 E8 step 3 measured them identical).
+    assert dialog.default_button is dialog.buttons[0], "cancel is no longer the default button"
+    assert dialog.default_button.property("defaultChoice") is True
+    assert dialog.buttons[1].property("defaultChoice") is None
     assert result is False, "nothing was clicked, so the safe answer is 'do not quit'"
 
 
