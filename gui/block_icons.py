@@ -47,16 +47,54 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QTransform
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPixmap, QTransform
 from PySide6.QtWidgets import QApplication
 
-from gui import nav_icons, paint_utils
+from gui import nav_icons, paint_utils, theme
+from launcher.instances import ICON_CUSTOM_PREFIX, custom_icon_file
 from launcher.meta import block_textures
 
 #: Loader kinds that have a bundled Lucide glyph (the loader -> file mapping lives in nav_icons:
 #: forge -> anvil, fabric/quilt -> spool, neoforge -> flame).
 LOADER_GLYPHS: frozenset[str] = frozenset({"forge", "fabric", "neoforge", "quilt"})
+
+#: The eight icons a user can pin, in the order the picker shows them: the four block categories the
+#: automatic rule derives, then the four loader glyphs. The names are stored in ``Instance.icon``.
+RULE_ICON_NAMES: tuple[str, ...] = (
+    "grass",
+    "command",
+    "gold",
+    "cobble",
+    "forge",
+    "fabric",
+    "neoforge",
+    "quilt",
+)
+
+#: Rule name -> the block texture it stands for (the same blocks ``BLOCK_BY_CATEGORY`` uses).
+RULE_ICON_BLOCKS: dict[str, str] = {
+    "grass": "grass_block_side",
+    "command": "command_block_front",
+    "gold": "gold_block",
+    "cobble": "cobblestone",
+}
+
+#: Rule names that draw a loader glyph instead of a block.
+RULE_ICON_LOADERS: frozenset[str] = frozenset({"forge", "fabric", "neoforge", "quilt"})
+
+#: A custom picture is re-encoded on upload down to this edge, so a 5 MB camera JPEG cannot become
+#: the launcher's icon file. The display never scales a stored picture back up past this either.
+CUSTOM_ICON_MAX_EDGE = 512
+
+#: File suffixes accepted for a custom icon (the suffix is kept when the copy is written).
+CUSTOM_ICON_SUFFIXES: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp")
+
+#: Corner radius of a custom picture, as a fraction of its edge: 8px on the 40px cards.
+CUSTOM_ICON_RADIUS_RATIO = 0.2
+
+#: A custom picture is shown as the picture itself, never through the block cube pipeline.
+CUSTOM_ICON_PREFIX = ICON_CUSTOM_PREFIX
 
 #: Minecraft's own block shading: the top face is lit in full, the left face at 80% and the right at
 #: 60%. Keeping the game's numbers is what makes the icon read as a Minecraft block instead of a
@@ -90,6 +128,9 @@ GRASS_TINT = "#91bd59"
 _IMAGE_CACHE: dict[str, QImage] = {}
 _CUBE_CACHE: dict[tuple[str, str, int, int], QPixmap] = {}
 _ICON_CACHE: dict[tuple[str, int, int], QPixmap] = {}
+#: Custom pictures, keyed by (path, mtime, logical edge, device ratio): uploading over ``icon.png``
+#: changes the mtime, so the next paint cannot show the previous picture.
+_CUSTOM_CACHE: dict[tuple[str, int, int, int], QPixmap] = {}
 
 
 def clear_cache() -> None:
@@ -97,6 +138,7 @@ def clear_cache() -> None:
     _IMAGE_CACHE.clear()
     _CUBE_CACHE.clear()
     _ICON_CACHE.clear()
+    _CUSTOM_CACHE.clear()
 
 
 def _screen_ratio() -> float:
@@ -164,6 +206,165 @@ def loader_pixmap(loader: str, color: str, size: int = 22) -> QPixmap:
         if not icon.isNull():
             return icon.pixmap(size, size)
     return paint_utils.block_pixmap(size)
+
+
+def instance_icon_pixmap(
+    instance,
+    folder: Path,
+    size: int,
+    *,
+    game_dir: Path | None = None,
+    cache_root: Path | None = None,
+) -> QPixmap:
+    """The icon of one instance, in the order the field is read.
+
+    ``icon`` empty -> the automatic rule (grass / command block / gold / cobblestone / loader glyph);
+    a rule name -> that rule; ``custom:<file>`` -> the picture inside the instance folder, drawn as
+    the picture itself (rounded, never cubed). A custom value whose file is missing, unreadable or
+    undecodable falls back to the automatic rule and is **not** cleared from the metadata: a volume
+    that is briefly unavailable must not silently rewrite the user's choice.
+    """
+    value = str(getattr(instance, "icon", "") or "").strip()
+    if value.startswith(CUSTOM_ICON_PREFIX):
+        picture = custom_icon_pixmap(folder, value, size)
+        if picture is not None:
+            return picture
+    elif value in RULE_ICON_NAMES:
+        return rule_icon_pixmap(value, size, game_dir=game_dir, cache_root=cache_root)
+    return automatic_icon_pixmap(
+        str(getattr(instance, "id", "") or ""),
+        size,
+        game_dir=game_dir,
+        cache_root=cache_root,
+    )
+
+
+def automatic_icon_pixmap(
+    version_id: str,
+    size: int,
+    *,
+    game_dir: Path | None = None,
+    cache_root: Path | None = None,
+) -> QPixmap:
+    """The rule-derived icon for a version/profile id: loader glyph, else the category block.
+
+    The loader is read from the profile chain (so a renamed Forge instance still resolves to Forge),
+    and the block category from the version type: release -> grass, snapshot -> command block,
+    April Fools -> gold, ancient -> cobblestone. A missing texture falls back to the drawn block.
+    """
+    kind = block_textures.loader_kind(version_id, game_dir=game_dir)
+    if kind is not None:
+        return loader_pixmap(kind, _accent(), 22)
+    version_type = block_textures.version_type_for(version_id, game_dir=game_dir)
+    category = block_textures.icon_category(version_id, version_type)
+    block = block_textures.block_name_for_category(category)
+    return block_pixmap(
+        block,
+        size,
+        game_dir=game_dir,
+        version_id=version_id,
+        cache_root=cache_root,
+    )
+
+
+def rule_icon_pixmap(
+    rule: str,
+    size: int,
+    *,
+    game_dir: Path | None = None,
+    cache_root: Path | None = None,
+) -> QPixmap:
+    """One of the eight pinnable rule icons at ``size`` logical pixels.
+
+    A block rule uses the real texture (the same renderer as the automatic rule); a loader rule
+    draws its glyph centred in a transparent tile at 60% of the edge, so the four line glyphs read
+    at the same weight as the four blocks beside them.
+    """
+    block = RULE_ICON_BLOCKS.get(rule)
+    if block is not None:
+        return block_pixmap(block, size, game_dir=game_dir, cache_root=cache_root)
+    return _loader_tile(rule, size)
+
+
+def custom_icon_pixmap(folder: Path, icon: str, size: int) -> QPixmap | None:
+    """The user's picture as a rounded ``size`` tile, or ``None`` when it cannot be read.
+
+    The picture is scaled to cover the square (smoothly), centre-cropped and clipped to a rounded
+    rectangle. It is deliberately not passed through the isometric cube: a user-supplied picture is
+    a finished icon, not a 16x16 block face. The result is cached per (file, mtime, size, ratio), so
+    a list of cards decodes each upload once.
+    """
+    path = custom_icon_file(Path(folder), icon)
+    if path is None or not path.is_file():
+        return None
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return None
+    ratio = _screen_ratio()
+    key = (str(path), mtime, int(size), round(ratio * 100))
+    cached = _CUSTOM_CACHE.get(key)
+    if cached is not None:
+        return cached
+    image = QImage(str(path))
+    if image.isNull():
+        return None
+    edge = max(1, round(int(size) * ratio))
+    scaled = image.scaled(
+        edge,
+        edge,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    if scaled.isNull():
+        return None
+    # Centre-crop the covered square, then clip it; painting in device pixels (the canvas carries the
+    # ratio only afterwards) keeps the radius and the image dimensions in the same space.
+    x = max(0, (scaled.width() - edge) // 2)
+    y = max(0, (scaled.height() - edge) // 2)
+    canvas = QImage(edge, edge, QImage.Format.Format_ARGB32_Premultiplied)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    rounded = QPainterPath()
+    radius = edge * CUSTOM_ICON_RADIUS_RATIO
+    rounded.addRoundedRect(QRectF(0.0, 0.0, float(edge), float(edge)), radius, radius)
+    painter.setClipPath(rounded)
+    painter.drawImage(-x, -y, scaled)
+    painter.end()
+    pixmap = QPixmap.fromImage(canvas)
+    pixmap.setDevicePixelRatio(ratio)
+    if len(_CUSTOM_CACHE) > 64:
+        _CUSTOM_CACHE.clear()
+    _CUSTOM_CACHE[key] = pixmap
+    return pixmap
+
+
+def _loader_tile(rule: str, size: int) -> QPixmap:
+    """A loader glyph centred in a transparent ``size`` tile (the picker's 48px slot)."""
+    glyph_size = max(16, round(int(size) * 0.6))
+    glyph = loader_pixmap(rule, _accent(), glyph_size)
+    ratio = _screen_ratio()
+    edge = max(1, round(int(size) * ratio))
+    canvas = QPixmap(edge, edge)
+    canvas.fill(Qt.GlobalColor.transparent)
+    canvas.setDevicePixelRatio(ratio)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    glyph_ratio = glyph.devicePixelRatio() or 1.0
+    glyph_width = glyph.width() / glyph_ratio
+    glyph_height = glyph.height() / glyph_ratio
+    painter.drawPixmap(
+        QPointF((size - glyph_width) / 2.0, (size - glyph_height) / 2.0), glyph
+    )
+    painter.end()
+    return canvas
+
+
+def _accent() -> str:
+    """The theme's accent colour (the light palette before any theme was applied)."""
+    tokens = theme.current_tokens() or theme.theme_palette("light")
+    return tokens.get("ACCENT", "#2f9e6f")
 
 
 def isometric_pixmap(side: QImage, top: QImage | None = None, size: int = 48) -> QPixmap:

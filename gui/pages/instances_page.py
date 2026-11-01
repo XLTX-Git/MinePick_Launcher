@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import block_icons, i18n, theme
+from gui import block_icons, i18n
 from gui.pages.instance_detail import InstanceDetailPage
 from gui.pages.instance_folders import (
     FOLDER_RAIL_GAP,
@@ -281,6 +281,7 @@ class _InstanceCard(QFrame):
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setPixmap(icon_pixmap)
         icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.icon_label = icon
         # The card's text is painted by child labels, not controls. ElidedLabel enables text
         # selection, which also gives it ClickFocus - so each name/meta line entered the focus chain
         # as a focus stop with no :focus rule (the keyboard walkthrough flagged it). Mouse events
@@ -939,7 +940,7 @@ class InstancesPage(QWidget):
                 inst,
                 f"{version} · {loader}",
                 counts,
-                self._card_icon(version, loader, game_dir),
+                self._card_icon(inst, game_dir),
                 current=inst.id == current_id,
                 parent=self.groups_view,
             )
@@ -1016,31 +1017,21 @@ class InstancesPage(QWidget):
                 return card
         return None
 
-    def _card_icon(self, version: str, loader: str, game_dir: Path) -> QPixmap:
-        """Loader glyph for a modded profile, the version's own block otherwise.
+    def _card_icon(self, inst, game_dir: Path) -> QPixmap:
+        """The instance's chosen icon, or the rule-derived one.
 
-        ``card_version_loader`` already resolved the inherited Minecraft version, so the block
-        category (release / snapshot / April Fools / ancient) is read from that version rather than
-        from the display-name folder. The icon is rendered at 40px, the slot's own size, so the
-        pixmap is shown 1:1 (the version rows keep the same rule at 48px); a missing texture falls
-        back to the drawn block.
+        The whole read order lives in :func:`gui.block_icons.instance_icon_pixmap`: the instance's
+        ``icon`` field first (a rule name, or ``custom:<file>`` inside its folder), the automatic
+        rule when it is empty or the picture cannot be read. A custom picture is shown as the
+        picture (rounded at 40px), never through the isometric cube. The icon is rendered at 40px,
+        the slot's own size, so the pixmap is shown 1:1.
         """
-        kind = block_textures.loader_kind_for_label(loader)
-        tokens = theme.current_tokens() or theme.theme_palette("light")
-        if kind is not None:
-            return block_icons.loader_pixmap(kind, tokens.get("ACCENT", "#2f9e6f"), 22)
-        launcher_dir = paths.launcher_dir()
-        version_type = block_textures.version_type_for(
-            version, game_dir, cache_dir=launcher_dir / "cache"
-        )
-        category = block_textures.icon_category(version, version_type)
-        block = block_textures.block_name_for_category(category)
-        return block_icons.block_pixmap(
-            block,
+        return block_icons.instance_icon_pixmap(
+            inst,
+            instance_dir(game_dir, inst.id),
             40,
             game_dir=game_dir,
-            version_id=version,
-            cache_root=block_textures.texture_cache_root(launcher_dir),
+            cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
         )
 
     def _relayout_cards(self) -> None:

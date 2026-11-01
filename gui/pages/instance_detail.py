@@ -31,8 +31,8 @@ import time
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -54,7 +55,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, inwindow_dialog, nav_icons, theme
+from gui import block_icons, i18n, inwindow_dialog, nav_icons, theme
 from gui.accessibility_launch import (
     prepare_launch_accessibility,
     trigger_source_for_click,
@@ -93,6 +94,7 @@ from launcher.instances import (
     rename_instance,
     reset_instance_settings,
     resolve_instance,
+    set_instance_icon,
     set_instance_settings,
     update_instance,
     update_instance_note,
@@ -103,6 +105,7 @@ from launcher.launch import (
     resolve_launch_account,
     run_process,
 )
+from launcher.meta import block_textures
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
 from launcher.mods.modrinth import (
     delete_installed_content,
@@ -159,6 +162,16 @@ _SEPARATOR_BEFORE = "diagnosis"
 _BADGED_SECTIONS = ("mods", "saves")
 _LOG_TAIL_CHARS = 64 * 1024
 
+#: The overview's icon control: a 40px tile inside a 50px icon button (the stylesheet's 4px padding
+#: plus its 1px border leave exactly the 40px the cards use, so the two surfaces show the same size).
+DETAIL_ICON_SIZE = 40
+DETAIL_ICON_BUTTON_SIZE = 50
+
+#: The picker's rule tiles: 48px icons in 64px buttons, four per row (two rows of four in the card).
+ICON_PICKER_ICON = 48
+ICON_PICKER_TILE = 64
+ICON_PICKER_COLUMNS = 4
+
 
 def human_size(size: int) -> str:
     """Format a byte count with the launcher's unit strings."""
@@ -183,6 +196,58 @@ def directory_size(path: Path) -> int:
     return total
 
 
+def save_custom_icon(source: Path, folder: Path) -> str:
+    """Copy a picture into the instance folder as ``icon.<ext>``, scaled to at most 512px.
+
+    The launcher owns this copy: the picture is re-encoded instead of being referenced in place, so
+    moving or deleting the original does not break the icon. A picture larger than
+    :data:`gui.block_icons.CUSTOM_ICON_MAX_EDGE` is scaled down proportionally first, so a camera
+    JPEG cannot put megabytes into the instance folder. The write goes through a ``.tmp`` file and
+    ``Path.replace``, so an interrupted save cannot leave a truncated picture behind.
+
+    Returns the stored value (``custom:icon.png``). Raises ``ValueError`` with a user-facing reason
+    when the file is not a readable PNG/JPEG/WebP; the caller shows it in the launcher's own dialog.
+    """
+    source = Path(source)
+    suffix = source.suffix.lower()
+    if suffix not in block_icons.CUSTOM_ICON_SUFFIXES:
+        raise ValueError(tr("instances.icon.error.format"))
+    image = QImage(str(source))
+    if image.isNull():
+        raise ValueError(tr("instances.icon.error.corrupt"))
+    if max(image.width(), image.height()) > block_icons.CUSTOM_ICON_MAX_EDGE:
+        image = image.scaled(
+            block_icons.CUSTOM_ICON_MAX_EDGE,
+            block_icons.CUSTOM_ICON_MAX_EDGE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    target_suffix = ".jpg" if suffix in (".jpg", ".jpeg") else suffix
+    fmt = target_suffix[1:].upper()  # png -> PNG, jpg -> JPG, webp -> WEBP
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / ("icon" + target_suffix)
+    tmp = folder / (target.name + ".tmp")
+    try:
+        saved = image.save(str(tmp), fmt, 90 if fmt == "JPG" else -1)
+        if not saved and fmt == "WEBP":
+            # A Qt build without the WebP writer: store PNG pixels instead of failing the whole
+            # upload (the value follows the file name, so the choice keeps working).
+            fmt, target = "PNG", folder / "icon.png"
+            tmp = folder / (target.name + ".tmp")
+            saved = image.save(str(tmp), fmt)
+        if not saved:
+            raise ValueError(tr("instances.icon.error.write"))
+        tmp.replace(target)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    return block_icons.CUSTOM_ICON_PREFIX + target.name
+
+
 def _delete_content_file(resolved, subdir: str, name: str) -> int:
     """Delete one resource file; a locked file must not stop the rest of the batch."""
     try:
@@ -193,6 +258,154 @@ def _delete_content_file(resolved, subdir: str, name: str) -> int:
         logging.getLogger(__name__).warning("Cannot delete %s/%s", subdir, name, exc_info=True)
         return 0
     return 1
+
+
+class _IconChooserDialog(inwindow_dialog.InWindowDialog):
+    """The instance-icon picker: eight rule tiles, then 恢复自动 and 从文件选择….
+
+    A tile applies its rule on the click (the callback writes the metadata), so the preview in the
+    card and the card behind the backdrop change immediately; Esc closes and keeps what was applied.
+    "Restore automatic" applies the empty value and closes. "Choose from file…" closes the card and
+    returns ``wants_file``: the page then opens the native ``QFileDialog``, so a native window is
+    never stacked inside this blocking in-window card.
+
+    Keyboard: every tile and both bottom buttons are ordinary tab stops, and Tab stays trapped
+    inside the card by :class:`InWindowDialog`. Focus starts on the tile currently in force.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        *,
+        current: str,
+        previews: dict[str, QPixmap],
+        auto_pixmap: QPixmap,
+        current_pixmap: QPixmap,
+        on_pick,
+    ) -> None:
+        super().__init__(parent, title=tr("instances.icon.title"), severity="question")
+        self.current = str(current or "")
+        self.wants_file = False
+        self._previews = dict(previews)
+        self._auto_pixmap = auto_pixmap
+        self._current_pixmap = current_pixmap
+        self._on_pick = on_pick
+        self.add_body(tr("instances.icon.hint"))
+
+        preview_row = QHBoxLayout()
+        preview_row.setContentsMargins(0, 0, 0, 0)
+        preview_row.setSpacing(12)
+        self.preview = QLabel()
+        self.preview.setFixedSize(ICON_PICKER_ICON, ICON_PICKER_ICON)
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setAccessibleName(tr("instances.icon.title"))
+        self.preview_caption = QLabel("")
+        self.preview_caption.setObjectName("overlayBody")
+        self.preview_caption.setWordWrap(True)
+        preview_row.addWidget(self.preview)
+        preview_row.addWidget(self.preview_caption, 1)
+        self.card_layout.addLayout(preview_row)
+
+        self.rule_buttons: dict[str, QPushButton] = {}
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(8)
+        for index, rule in enumerate(block_icons.RULE_ICON_NAMES):
+            button = QPushButton()
+            button.setObjectName("iconButton")
+            button.setCheckable(True)
+            # Inside a QDialog every QPushButton is autoDefault by default, which would make Enter
+            # activate an arbitrary tile with an invisible default ring. Enter closes the card; Space
+            # activates the focused tile.
+            button.setAutoDefault(False)
+            button.setDefault(False)
+            button.setFixedSize(ICON_PICKER_TILE, ICON_PICKER_TILE)
+            button.setIconSize(QSize(ICON_PICKER_ICON, ICON_PICKER_ICON))
+            button.setIcon(QIcon(previews[rule]))
+            label = tr("instances.icon.rule." + rule)
+            button.setAccessibleName(label)
+            button.setToolTip(label)
+            button.clicked.connect(partial(self._pick_rule, rule))
+            self._group.addButton(button)
+            self.rule_buttons[rule] = button
+            grid.addWidget(
+                button,
+                index // ICON_PICKER_COLUMNS,
+                index % ICON_PICKER_COLUMNS,
+                Qt.AlignmentFlag.AlignCenter,
+            )
+        self.card_layout.addLayout(grid)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch(1)
+        self.auto_button = QPushButton(tr("instances.icon.auto"))
+        self.auto_button.setObjectName("secondaryButton")
+        self.auto_button.setAutoDefault(False)
+        self.auto_button.setDefault(False)
+        self.auto_button.clicked.connect(self._choose_auto)
+        self.file_button = QPushButton(tr("instances.icon.file"))
+        self.file_button.setObjectName("primaryButton")
+        self.file_button.setAutoDefault(False)
+        self.file_button.setDefault(False)
+        self.file_button.clicked.connect(self._choose_file)
+        row.addWidget(self.auto_button)
+        row.addWidget(self.file_button)
+        self.card_layout.addLayout(row)
+        self._sync_preview()
+
+    # ---------- behaviour ----------
+
+    def _pick_rule(self, rule: str) -> None:
+        """Apply a rule now; the preview only follows when the write really happened."""
+        if self._on_pick(rule):
+            self.current = rule
+            self._sync_preview()
+
+    def _choose_auto(self) -> None:
+        if self._on_pick(""):
+            self.current = ""
+            self._sync_preview()
+            self.accept()
+
+    def _choose_file(self) -> None:
+        self.wants_file = True
+        self.accept()
+
+    def _sync_preview(self) -> None:
+        """Mark the tile in force and show what it looks like, plus its name."""
+        self._group.setExclusive(False)
+        for rule, button in self.rule_buttons.items():
+            button.setChecked(rule == self.current)
+        self._group.setExclusive(True)
+        if not self.current:
+            caption = tr("instances.icon.auto.name")
+            pixmap = self._auto_pixmap
+        elif self.current in self._previews:
+            caption = tr("instances.icon.rule." + self.current)
+            pixmap = self._previews[self.current]
+        elif self.current.startswith(block_icons.CUSTOM_ICON_PREFIX):
+            caption = tr("instances.icon.custom")
+            pixmap = self._current_pixmap
+        else:
+            # A rule name this build does not know: the reader shows the automatic rule, so the
+            # preview says "automatic" rather than silently pretending it is a custom picture.
+            caption = tr("instances.icon.auto.name")
+            pixmap = self._auto_pixmap
+        self.preview.setPixmap(pixmap)
+        text = tr("instances.icon.current", caption)
+        self.preview_caption.setText(text)
+        self.preview.setAccessibleName(text)
+
+    def _focus_initial(self) -> None:
+        """Start on the rule currently in force, not on a button the user has to hunt for."""
+        target = self.rule_buttons.get(self.current)
+        if target is None:
+            target = next(iter(self.rule_buttons.values()), None)
+        if target is not None:
+            target.setFocus(Qt.FocusReason.TabFocusReason)
 
 
 class _ModsTable(QTableWidget):
@@ -244,7 +457,7 @@ class _ModsTable(QTableWidget):
 class InstanceDetail(QWidget):
     """Right-hand column of the instances page: everything about one instance."""
 
-    changed = Signal()  # metadata shown in the list changed (name / note / isolation)
+    changed = Signal()  # metadata shown in the list changed (name / note / isolation / icon)
     deleted = Signal(str)  # the instance folder is gone
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -513,7 +726,25 @@ class InstanceDetail(QWidget):
 
         card, card_layout = self._make_card()
         self.overview_card = card
-        card_layout.addWidget(self._card_heading("instances.detail.card.overview"))
+        # The icon is the card's one picture and its change control: a 40px tile in a real button
+        # (keyboard reachable, named for screen readers), with the card title beside it.
+        self.icon_button = QPushButton()
+        self.icon_button.setObjectName("iconButton")
+        self.icon_button.setFixedSize(DETAIL_ICON_BUTTON_SIZE, DETAIL_ICON_BUTTON_SIZE)
+        self.icon_button.setIconSize(QSize(DETAIL_ICON_SIZE, DETAIL_ICON_SIZE))
+        self.icon_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.icon_button.setAccessibleName(tr("instances.icon.change"))
+        self.icon_button.setToolTip(tr("instances.icon.change"))
+        self.icon_button.setEnabled(False)
+        self.icon_button.clicked.connect(self.choose_icon)
+        heading_row = QHBoxLayout()
+        heading_row.setContentsMargins(0, 0, 0, 0)
+        heading_row.setSpacing(12)
+        heading_row.addWidget(self.icon_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        heading_row.addWidget(
+            self._card_heading("instances.detail.card.overview"), 1, Qt.AlignmentFlag.AlignVCenter
+        )
+        card_layout.addLayout(heading_row)
         form = QFormLayout()
         style_form(form)
         self.overview_values: dict[str, QLabel] = {}
@@ -1177,6 +1408,8 @@ class InstanceDetail(QWidget):
         self.name_label.setText(tr("instances.detail.value.none"))
         self.id_label.setText("")
         self.dir_label.setText("")
+        self.icon_button.setIcon(QIcon())
+        self.icon_button.setEnabled(False)
         for value in self.overview_values.values():
             value.setText(tr("instances.detail.value.none"))
         self.legacy_label.setVisible(False)
@@ -1222,6 +1455,7 @@ class InstanceDetail(QWidget):
         else:
             values["last_played"].setText(tr("instances.detail.value.never"))
         values["note"].setText(inst.note or tr("instances.detail.value.no_note"))
+        self._fill_icon()
         legacy = legacy_instances_dir(self.game_dir)
         if legacy is not None:
             self.legacy_label.setText(tr("instances.detail.legacy.notice", str(legacy)))
@@ -1333,6 +1567,105 @@ class InstanceDetail(QWidget):
             set_app_status(self, tr("instances.msg.need_select"), "warning")
             return None
         return self.instance_id
+
+    def _fill_icon(self) -> None:
+        """Show the effective icon: the chosen rule / picture, else the automatic rule."""
+        if self.instance is None:
+            self.icon_button.setIcon(QIcon())
+            self.icon_button.setEnabled(False)
+            return
+        pixmap = block_icons.instance_icon_pixmap(
+            self.instance,
+            instance_dir(self.game_dir, self.instance.id),
+            DETAIL_ICON_SIZE,
+            game_dir=self.game_dir,
+            cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
+        )
+        self.icon_button.setIcon(QIcon(pixmap))
+        self.icon_button.setEnabled(True)
+
+    def choose_icon(self) -> None:
+        """Open the in-window icon picker: eight rules, 恢复自动 and 从文件选择…."""
+        if self._require_instance() is None or self.instance is None:
+            return
+        cache_root = block_textures.texture_cache_root(paths.launcher_dir())
+        folder = instance_dir(self.game_dir, self.instance.id)
+        dialog = _IconChooserDialog(
+            self,
+            current=self.instance.icon,
+            # The eight tiles are rendered once for the whole card instead of on every repaint.
+            previews={
+                rule: block_icons.rule_icon_pixmap(
+                    rule, ICON_PICKER_ICON, game_dir=self.game_dir, cache_root=cache_root
+                )
+                for rule in block_icons.RULE_ICON_NAMES
+            },
+            auto_pixmap=block_icons.automatic_icon_pixmap(
+                self.instance.id, ICON_PICKER_ICON, game_dir=self.game_dir, cache_root=cache_root
+            ),
+            current_pixmap=block_icons.instance_icon_pixmap(
+                self.instance,
+                folder,
+                ICON_PICKER_ICON,
+                game_dir=self.game_dir,
+                cache_root=cache_root,
+            ),
+            on_pick=self._apply_icon,
+        )
+        dialog.ask()
+        wants_file = dialog.wants_file
+        dialog.deleteLater()
+        if wants_file:
+            # The native picker opens after the in-window card has closed: two modal surfaces must
+            # never be stacked, and the card's job here is only to ask what comes next.
+            self._choose_icon_file()
+
+    def _apply_icon(self, value: str) -> bool:
+        """Store one icon choice and refresh the page; False when it could not be saved."""
+        if self.instance_id is None:
+            return False
+        try:
+            inst = set_instance_icon(self.instance_id, value, self.game_dir)
+        except InstancesError as exc:
+            set_app_status(self, tr("instances.icon.msg.fail", str(exc)), "error")
+            return False
+        # Only the icon changed: repaint the one control and let the list rebuild itself. A full
+        # reload here would re-scan the mods folder on every tile click, and the list's own refresh
+        # (triggered by the signal below) already re-reads the instance.
+        self.instance = inst
+        self._fill_icon()
+        self.changed.emit()  # the card list shows the new icon immediately
+        if not value:
+            set_app_status(self, tr("instances.icon.msg.auto", inst.name))
+        elif value.startswith(block_icons.CUSTOM_ICON_PREFIX):
+            set_app_status(self, tr("instances.icon.msg.saved", tr("instances.icon.custom")))
+        else:
+            set_app_status(
+                self, tr("instances.icon.msg.saved", tr("instances.icon.rule." + value))
+            )
+        return True
+
+    def _choose_icon_file(self) -> None:
+        """Pick a picture with the native dialog, then store a copy inside the instance folder."""
+        if self.instance_id is None:
+            return
+        chosen, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            tr("instances.icon.file"),
+            "",
+            tr("instances.icon.file_filter"),
+        )
+        if not chosen:
+            return
+        folder = instance_dir(self.game_dir, self.instance_id)
+        try:
+            value = save_custom_icon(Path(chosen), folder)
+        except (ValueError, OSError) as exc:
+            inwindow_dialog.warning(
+                self, tr("instances.icon.title"), tr("instances.icon.error.invalid", str(exc))
+            )
+            return
+        self._apply_icon(value)
 
     @staticmethod
     def _open_path(target: Path) -> None:
