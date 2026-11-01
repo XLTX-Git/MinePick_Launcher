@@ -8,9 +8,9 @@ Qt for Python (PySide6) is licensed under **LGPL-3.0** and is shipped as a dynam
 
 MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）。下列第三方组件与服务各自适用其自身许可与条款；版本号取自实际安装的发行版元数据。Qt for Python（PySide6）以 **LGPL-3.0** 授权，以动态库形式提供且未作修改；单文件构建在启动时会把这些 Qt 库从压缩包解压到临时目录。Qt 源码可从 <https://code.qt.io/> 与 <https://download.qt.io/official_releases/qt/> 获取。应用内的「关于」页展示同一份清单（按界面语言翻译）。
 
-Minecraft block textures - used only as version icons - are **not distributed** with MinePick Launcher. At runtime they are read from the user's own game installation (the version's client jar or assets directory), or downloaded from Mojang's official servers when available, and cached only in the user's configuration directory. Neither the source tree nor the installer contains a Minecraft image.
+Minecraft block textures - used only as version icons - belong to Mojang. MinePick Launcher does **not distribute** these images. The icon source order is: the user's own ``assets`` / ``client.jar`` → the user's local cache → fetched at runtime from mcmod.cn's image host and cached in the user's configuration directory. Neither the source tree nor the installer contains a Minecraft image.
 
-Minecraft 原版方块材质（仅用作版本图标）**不在分发范围内**：运行时从用户自己的游戏安装（该版本的客户端 jar 或 assets 目录）读取，或在可用时从 Mojang 官方服务器获取，并且只缓存在用户配置目录中。源码与安装包都不包含任何 Minecraft 图片。
+原版方块材质（仅用作版本图标）归 Mojang 所有；本项目不分发这些图片。图标的来源顺序为：用户本机的 ``assets`` / ``client.jar`` → 用户本机缓存 → 运行时从 mcmod.cn 的图床获取并缓存到用户配置目录。源码与安装包都不包含任何 Minecraft 图片。
 
 ## Dependencies / 依赖项
 

@@ -129,17 +129,17 @@ def render() -> str:
         ),
         "",
         (
-            "Minecraft block textures - used only as version icons - are **not distributed** with "
-            "MinePick Launcher. At runtime they are read from the user's own game installation (the "
-            "version's client jar or assets directory), or downloaded from Mojang's official servers "
-            "when available, and cached only in the user's configuration directory. Neither the "
+            "Minecraft block textures - used only as version icons - belong to Mojang. MinePick "
+            "Launcher does **not distribute** these images. The icon source order is: the user's own "
+            "``assets`` / ``client.jar`` → the user's local cache → fetched at runtime from "
+            "mcmod.cn's image host and cached in the user's configuration directory. Neither the "
             "source tree nor the installer contains a Minecraft image."
         ),
         "",
         (
-            "Minecraft 原版方块材质（仅用作版本图标）**不在分发范围内**：运行时从用户自己的游戏安装"
-            "（该版本的客户端 jar 或 assets 目录）读取，或在可用时从 Mojang 官方服务器获取，并且只缓存"
-            "在用户配置目录中。源码与安装包都不包含任何 Minecraft 图片。"
+            "原版方块材质（仅用作版本图标）归 Mojang 所有；本项目不分发这些图片。图标的来源顺序为："
+            "用户本机的 ``assets`` / ``client.jar`` → 用户本机缓存 → 运行时从 mcmod.cn 的图床获取"
+            "并缓存到用户配置目录。源码与安装包都不包含任何 Minecraft 图片。"
         ),
         "",
     ]
