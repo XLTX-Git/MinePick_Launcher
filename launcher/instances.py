@@ -22,9 +22,15 @@ isolation only decides whether the game's working directory is the instance
 folder itself (own saves/mods/config) or the shared game directory.
 
 Optional metadata lives inside the instance folder as `minepick.json`
-(display name, note, star flag, timestamps, isolation choice and per-instance
-setting overrides). Missing or corrupt metadata is tolerated: the folder
-structure stays the source of truth.
+(display name, note, star flag, timestamps, isolation choice, the icon choice and
+per-instance setting overrides). Missing or corrupt metadata is tolerated: the
+folder structure stays the source of truth.
+
+The icon is optional too: ``""`` means "keep deriving it from the version"
+(grass block, command block, gold block, cobblestone or the loader glyph),
+a rule name pins one of those, and ``custom:<file>`` points at a picture inside
+the instance folder. Only that relative name is stored, so renaming the instance
+or moving the game folder cannot break it.
 """
 
 from __future__ import annotations
@@ -46,6 +52,10 @@ from launcher.meta.version import load_version_json
 
 INSTANCE_META_FILENAME = "minepick.json"  # per-instance metadata inside the folder
 LEGACY_INSTANCES_DIRNAME = "instances"  # pre-0.3.0 layout, no longer used
+
+#: Prefix that marks an icon as a user picture: ``custom:icon.png`` is ``<instance folder>/icon.png``.
+#: The value is stored relative to the instance folder, never as an absolute path.
+ICON_CUSTOM_PREFIX = "custom:"
 
 # Isolation is a per-instance tri-state; "follow" uses the auto rule below.
 ISOLATION_FOLLOW = "follow"
@@ -81,6 +91,10 @@ class Instance(BaseModel):
     created_at: float = 0.0
     last_played: float = 0.0
     isolated: str = ISOLATION_FOLLOW
+    # Empty = automatic rule; a rule name ("grass" / "command" / "gold" / "cobble" / "forge" /
+    # "fabric" / "neoforge" / "quilt"); "custom:<file>" = a picture inside the instance folder.
+    # An unknown or missing value never hides the instance: the reader falls back to the rule.
+    icon: str = ""
     settings: InstanceSettings = InstanceSettings()
 
     @property
@@ -220,6 +234,39 @@ def _write_sidecar(folder: Path, inst: Instance) -> None:
     tmp.replace(folder / INSTANCE_META_FILENAME)
 
 
+def _normalize_icon(value: str) -> str:
+    """The value stored in ``Instance.icon``: empty, a rule name, or a safe ``custom:<file>``.
+
+    A custom picture has to live directly in the instance folder: a name carrying a separator or
+    ``..`` is not a name this field can point at, so it degrades to "automatic" instead of becoming
+    a path read. Unknown rule names are kept as written - the reader falls back to the automatic
+    rule, which lets a future rule name survive an older build without losing the choice.
+    """
+    text = str(value or "").strip()
+    if not text.startswith(ICON_CUSTOM_PREFIX):
+        return text
+    name = text[len(ICON_CUSTOM_PREFIX) :].strip()
+    if not name or Path(name).name != name or name in (".", ".."):
+        return ""
+    return ICON_CUSTOM_PREFIX + name
+
+
+def custom_icon_file(folder: Path, icon: str) -> Path | None:
+    """The picture an ``icon`` value points at, if that is a file name inside ``folder``.
+
+    Existence is deliberately not checked: the caller may be copying the file (and wants the
+    source path even when it is about to fail) or displaying it (and wants a missing file to fall
+    back to the rule instead of raising).
+    """
+    value = str(icon or "").strip()
+    if not value.startswith(ICON_CUSTOM_PREFIX):
+        return None
+    name = value[len(ICON_CUSTOM_PREFIX) :]
+    if not name or Path(name).name != name or name in (".", ".."):
+        return None
+    return Path(folder) / name
+
+
 def _is_instance_folder(folder: Path) -> bool:
     """A folder counts as an instance when <id>/<id>.json exists (launch-page rule)."""
     return folder.is_dir() and (folder / (folder.name + ".json")).is_file()
@@ -265,6 +312,29 @@ def update_instance(instance_id: str, *, game_dir: Path | None = None, **changes
 def update_instance_note(instance_id: str, note: str, game_dir: Path | None = None) -> Instance:
     """Update the instance note (stored in the folder metadata)."""
     return update_instance(instance_id, game_dir=game_dir, note=(note or "").strip())
+
+
+def set_instance_icon(instance_id: str, icon: str, game_dir: Path | None = None) -> Instance:
+    """Set or clear the instance icon (stored in the folder metadata).
+
+    ``""`` returns to the automatic rule, a rule name pins that icon, and ``custom:<file>`` points
+    at a picture inside the instance folder. When the choice moves away from a launcher-managed
+    copy, that copy is deleted so "restore automatic" leaves no orphan file behind; the picture is
+    only removed when it really sits directly inside this instance folder.
+    """
+    inst, folder = _require(instance_id, game_dir)
+    previous = inst.icon
+    inst.icon = _normalize_icon(icon)
+    _write_sidecar(folder, inst)
+    old_file = custom_icon_file(folder, previous)
+    if old_file is not None and old_file != custom_icon_file(folder, inst.icon):
+        try:
+            old_file.unlink()
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "Cannot remove the replaced instance icon: %s", old_file
+            )
+    return inst
 
 
 def set_instance_settings(
@@ -375,6 +445,9 @@ def create_instance(
 
     Used to keep several independent setups of the same game version; installing
     a version normally creates its instance implicitly (one folder per version).
+    The source's icon choice follows the copy: a rule name is just metadata, a
+    ``custom:`` picture is copied into the new folder under the same name. Notes,
+    stars and setting overrides are deliberately not copied.
     """
     name = validate_name(name or default_instance_name(version_id))
     target = instance_dir(game_dir, name)
@@ -404,7 +477,21 @@ def create_instance(
 
         _copy_game_jar(name, game_dir)
 
-    instance = Instance(id=name, display_name=name, created_at=time.time())
+    # The icon follows a copy: a rule name is metadata only, a custom picture is copied into the new
+    # folder (the same relative name keeps pointing at it). A picture that cannot be copied falls
+    # back to the automatic rule rather than leaving the copy with a broken icon.
+    icon = _read_sidecar(source, version_id).icon
+    picture = custom_icon_file(source, icon)
+    if picture is not None:
+        try:
+            shutil.copyfile(picture, target / picture.name)
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "Cannot copy the instance icon, falling back to the automatic rule: %s", picture
+            )
+            icon = ""
+
+    instance = Instance(id=name, display_name=name, created_at=time.time(), icon=icon)
     _write_sidecar(target, instance)
     return instance
 
@@ -445,7 +532,11 @@ def delete_instance(instance_id: str, game_dir: Path) -> None:
 
 
 def export_instance(instance_id: str, dest_zip: Path, game_dir: Path) -> Path:
-    """Export the instance to a zip archive (files plus metadata)."""
+    """Export the instance to a zip archive (files plus metadata).
+
+    A custom icon travels inside the archive as ``icon.<ext>``; the sidecar keeps the relative
+    ``custom:`` value, so the imported copy still resolves it.
+    """
     inst, source = _require(instance_id, game_dir)
     dest_zip.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest_zip.with_name(dest_zip.name + ".tmp")
@@ -511,6 +602,7 @@ def import_instance(
         created_at=meta.created_at or time.time(),
         last_played=meta.last_played,
         isolated=meta.isolated,
+        icon=_normalize_icon(meta.icon),
         settings=meta.settings,
     )
     _write_sidecar(target, inst)
