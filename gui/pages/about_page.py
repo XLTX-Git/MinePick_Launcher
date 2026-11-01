@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -113,13 +112,35 @@ class AboutPage(QWidget):
 
     # ---------- construction ----------
 
-    def _build_information(self) -> QGroupBox:
-        box = QGroupBox(tr("about.info.title"))
-        layout = QVBoxLayout(box)
-        # The card's own QSS padding (12px) is the inset; the layout adds nothing on top of it, and
-        # the rows inside a card sit 6px apart - the same rhythm the forms use.
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(6)
+    def _card(self, title_key: str) -> tuple[QFrame, QVBoxLayout]:
+        """One white card with its title *inside* it: a 15/600 heading, 8px above the body.
+
+        The page used to build ``QGroupBox`` sections. Qt draws a group box's title on the frame
+        itself, so "软件信息" / "软件更新" sat above the card border and read as if they belonged to
+        the page rather than to the card. A plain ``QFrame#pageCard`` (the same card every other page
+        uses) plus this label keeps the title inside the card's 16px padding. The title is a plain
+        label, not a focusable control, so the page's keyboard order does not change.
+        """
+        card = QFrame()
+        card.setObjectName("pageCard")
+        layout = QVBoxLayout(card)
+        # 16px on every side is the card's own inset: the old QGroupBox painted 12px of padding and
+        # let the layout add none, which left long legal lines 12px from the border. The body keeps
+        # the form rhythm of 6px between its rows; only the title-to-body step is 8px.
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+        title = QLabel(tr(title_key))
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(6)
+        layout.addWidget(body)
+        return card, body_layout
+
+    def _build_information(self) -> QFrame:
+        box, layout = self._card("about.info.title")
 
         layout.addWidget(QLabel(tr("about.info.version", __version__)))
 
@@ -175,11 +196,8 @@ class AboutPage(QWidget):
             layout.addLayout(row)
         return holder
 
-    def _build_updates(self) -> QGroupBox:
-        box = QGroupBox(tr("about.update.title"))
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(6)
+    def _build_updates(self) -> QFrame:
+        box, layout = self._card("about.update.title")
 
         versions = QHBoxLayout()
         self.current_label = QLabel(tr("about.update.current", __version__))
@@ -214,6 +232,9 @@ class AboutPage(QWidget):
         mode_title.setObjectName("formLabel")
         layout.addWidget(mode_title)
         self.mode_combo = QComboBox()
+        # The QGroupBox this card used to be gave the combo its accessible name (the group title).
+        # A plain card has no such title to inherit, so name the field explicitly (WCAG 4.1.2).
+        self.mode_combo.setAccessibleName(tr("about.update.mode.title"))
         for value, key in MODE_KEYS:
             self.mode_combo.addItem(tr(key), value)
         layout.addWidget(self.mode_combo)
@@ -223,11 +244,9 @@ class AboutPage(QWidget):
         layout.addWidget(self.mode_hint)
         return box
 
-    def _build_credits(self) -> QGroupBox:
-        box = QGroupBox(tr("about.credits.title"))
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(6)
+    def _build_credits(self) -> QFrame:
+        box, layout = self._card("about.credits.title")
+
         for group_key, entries in notices.groups():
             heading = QLabel(tr(group_key))
             heading.setObjectName("sectionTitle")

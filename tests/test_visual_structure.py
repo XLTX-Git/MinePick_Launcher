@@ -68,7 +68,9 @@ def test_dark_sheet_has_the_same_structural_blocks_as_light():
         "QWidget#settingsPage QWidget#settingsCard",
         "QWidget#settingsPage QLineEdit,",
         "QWidget#settingsPage QGroupBox",
-        "QWidget#aboutPage QGroupBox",
+        # The about page's sections are shared #pageCard cards now (the titles are labels inside
+        # them); this scoped rule is what still proves the dark sheet carries the page's own hooks.
+        "QWidget#aboutPage QLabel#aboutLink",
         "QWidget#launchPage QWidget#launchPanel",
         "QWidget#navRail",
         "QStackedWidget#pageStack",

@@ -26,7 +26,7 @@ from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
-    QGroupBox,
+    QFrame,
     QLabel,
     QStackedWidget,
     QWidget,
@@ -301,8 +301,9 @@ def test_no_top_level_page_draws_a_page_header_and_all_keep_16px(app, monkeypatc
         assert margins.top() == 16, f"{key}: top inset is {margins.top()}px, expected 16px"
         if key == "about":
             # The scroll content has its own 14/6 side margins; its top must not add a second
-            # inset on top of the page's 16px (the card border starts one pixel in).
-            first_card = page.findChildren(QGroupBox)[0]
+            # inset on top of the page's 16px (the card border starts one pixel in). The section
+            # titles now live inside these cards, so the first card is the page's first landmark.
+            first_card = page.findChildren(QFrame, "pageCard")[0]
             assert first_card.mapTo(page, QPoint(0, 0)).y() <= 18, (
                 f"about: first card starts {first_card.mapTo(page, QPoint(0, 0)).y()}px below the page top"
             )

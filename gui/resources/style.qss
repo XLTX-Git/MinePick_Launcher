@@ -1029,14 +1029,11 @@ QWidget#settingsPage QGroupBox::title {
 }
 
 /* ========================================================================== */
-/* About page: the same three cards as the light sheet, using this theme's    */
-/* card fill and border tokens. No widget, spacing or size hint changes.      */
+/* About page: the same shared #pageCard cards as the light sheet, with the   */
+/* titles inside them. The about-specific group-box fill is gone: #pageCard   */
+/* already carries this theme's card fill and border. No colour is added here. */
 /* ========================================================================== */
 
-QWidget#aboutPage QGroupBox {
-    background: __BG_LIST__;
-    border: 1px solid __BORDER_TABLE__;
-}
 QWidget#aboutPage QLabel#hint { font-size: 12px; }
 QWidget#aboutPage QLabel#aboutLink { font-size: 12px; color: __FG_HINT__; }
 

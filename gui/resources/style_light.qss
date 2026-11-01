@@ -1107,18 +1107,15 @@ QWidget#settingsPage QGroupBox::title {
 }
 
 /* ========================================================================== */
-/* About page: each section becomes a white card on the paper.                */
+/* About page: the shared #pageCard cards, with the titles inside them.       */
 /*                                                                            */
-/* The three blocks (information / updates / credits) already are QGroupBoxes */
-/* with a 1px border and 12px of padding, so this is only a fill and a border  */
-/* colour: no widget, no spacing and no size hint changes. The page had no    */
-/* card at all before - it read as one flat sheet of legal text.              */
+/* The three sections used to be QGroupBoxes. Qt paints a group box's title   */
+/* on the frame, so "软件信息" / "软件更新" sat above the card border and     */
+/* read as page headings rather than card headings. about_page.py now builds  */
+/* a plain QFrame#pageCard with a 15/600 label and 16px of layout padding;    */
+/* #pageCard supplies the same fill, border and radius as every other card,  */
+/* so this block only needs the inside-a-card text rules. No new colour.      */
 /* ========================================================================== */
-
-QWidget#aboutPage QGroupBox {
-    background: __BG_LIST__;
-    border: 1px solid __BORDER_TABLE__;
-}
 
 /* Inside a card: the explanation text is the 12px hint, and a long URL wraps under the button that
    opens it instead of stretching the card. */
