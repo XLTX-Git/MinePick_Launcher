@@ -563,6 +563,15 @@ class VersionsPage(QWidget):
         self.auto_jre_check.setObjectName("hint")
         self.progress_row, self.progress_bar, self.progress_text = build_download_progress("downloadProgress")
         self.progress_row.setVisible(False)
+        # The thin bar at the bottom of this page is gone. The download's display is the row's own
+        # progress block (and the window's task views); this bar was only ever a second copy of the
+        # same numbers, and it is the one the user asked to have removed. The install flow still shows
+        # it - ``install_version_id`` and its three callbacks are frozen, see FROZEN_INSTALL_FLOW - so
+        # the refusal lives here: the widget is in no layout, is zero-sized, and the page refuses every
+        # show request it gets, which means it never becomes visible and never takes a pixel.
+        self.progress_row.setParent(self._list_step)
+        self.progress_row.setFixedSize(0, 0)
+        self.progress_row.installEventFilter(self)
 
         top = QHBoxLayout()
         top.setSpacing(8)
@@ -619,7 +628,6 @@ class VersionsPage(QWidget):
         layout.addLayout(latest_row)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.info_label)
-        layout.addWidget(self.progress_row)
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
         buttons.addWidget(self.install_button)
@@ -667,9 +675,10 @@ class VersionsPage(QWidget):
         # The inline progress rides on the page's own bar: ``_on_progress`` keeps writing the bar (the
         # install flow is unchanged), and the row follows the same numbers.
         self.progress_bar.valueChanged.connect(self._on_progress_value)
-        # ``_on_installed``/``_on_install_error`` end a download by hiding the bar's row; that is the
-        # one moment the row's inline progress has to go away again (success rebuilds the rows).
-        self.progress_row.installEventFilter(self)
+        # The end of a download is the page's own install button being handed back (the flow re-enables
+        # it in ``on_finished``, after either callback ran). That is the moment the row's inline progress
+        # goes away again - success rebuilds the rows anyway, a failure offers the install button again.
+        self.install_button.installEventFilter(self)
         # The display name lands on the instance folder the install just created (the sidecar), before
         # the other pages are told to re-read; ``versions_changed`` is emitted at the end of
         # ``_on_installed``, where the new folders are already on disk.
@@ -895,7 +904,28 @@ class VersionsPage(QWidget):
             row.clear_install_progress()
 
     def eventFilter(self, obj, event) -> bool:
-        if obj is self.progress_row and event.type() == QEvent.Type.Hide:
+        """The two page-layer decisions that keep the frozen install flow's own widgets in order.
+
+        *The bottom bar*: the flow shows it at the start of every install and hides it at the end. This
+        page refuses the show - the widget is in no layout and stays zero-sized - so it never becomes a
+        second progress display. It is only the percentage source the row's own block reads, which is
+        why ``_on_progress`` writing it is still exactly what makes the row move.
+
+        *The install button*: the flow hands it back once the worker finished, whichever callback ran.
+        That is the page's one end-of-install signal, and it is what returns a row's inline progress to
+        its install button - the bar's own hide used to do that, and it cannot any more, because the bar
+        is never shown.
+        """
+        if obj is self.progress_row:
+            if event.type() == QEvent.Type.Show:
+                self.progress_row.hide()
+            return False
+        if (
+            obj is self.install_button
+            and event.type() == QEvent.Type.EnabledChange
+            and self.install_button.isEnabled()
+            and self._installing_version_id
+        ):
             self._finish_inline_progress()
         return super().eventFilter(obj, event)
 

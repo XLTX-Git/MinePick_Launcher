@@ -432,10 +432,11 @@ def test_the_row_shows_the_download_and_then_says_installed(page, app) -> None:
     app.processEvents()
     assert row.progress_value() == 420
 
-    # The end of a download is the bar's row going away (what _on_installed/_on_install_error do).
-    page.progress_row.setVisible(True)
+    # The end of a download is the page's install button being handed back, which is what the flow's
+    # on_finished does (the bottom bar that used to signal this is gone - see the next test).
+    page.install_button.setEnabled(False)  # what the flow does when an install starts
     app.processEvents()
-    page.progress_row.setVisible(False)
+    page.install_button.setEnabled(True)
     app.processEvents()
     assert not row.install_running()
     assert row.install.isVisible()
@@ -447,6 +448,39 @@ def test_the_row_shows_the_download_and_then_says_installed(page, app) -> None:
     done = page._row_for("rel-9")
     assert done.installed
     assert done.install.text() == i18n.tr("versions.status.installed")
+
+
+def test_the_thin_bottom_bar_can_no_longer_be_shown(page, app) -> None:
+    """The bar the user asked to have removed: refused at the page layer, in no layout, no pixels.
+
+    The install flow still calls ``progress_row.setVisible(True)`` at the start of every install and
+    ``setVisible(False)`` at the end - that code is frozen - so the page has to be the thing that says
+    no. This drives the same calls the flow makes and checks the widget never becomes visible, is not
+    in the page's layout, and takes no space, while the numbers it carries still reach the row.
+    """
+    from PySide6.QtCore import QSize
+
+    assert page.progress_row.parent() is page._list_step
+    assert page._list_step.layout().indexOf(page.progress_row) == -1, "the bar is not in the layout"
+    assert page.progress_row.size() == page.progress_row.minimumSize() == QSize(0, 0)
+    assert not page.progress_row.isVisible()
+
+    page._attach_inline_progress("rel-15")
+    page.progress_row.setVisible(True)  # what install_version_id does
+    app.processEvents()
+    assert not page.progress_row.isVisible(), "the page refuses the show"
+    assert page.progress_row.isHidden()
+
+    page.progress_bar.setRange(0, 1000)
+    page.progress_bar.setValue(250)
+    app.processEvents()
+    row = page._row_for("rel-15")
+    assert row is not None and row.progress_value() == 250, "the row still follows the same numbers"
+    assert not page.progress_row.isVisible()
+
+    page.progress_row.setVisible(False)  # what _on_installed/_on_install_error do
+    app.processEvents()
+    assert not page.progress_row.isVisible()
 
 
 def test_a_rebuild_during_a_download_reattaches_the_progress(page, app) -> None:
@@ -523,8 +557,8 @@ def test_a_chosen_loader_reaches_the_installer_and_names_its_profile(page, app, 
     the decision the page hands that body, then the loader installer it calls, then the sidecar of the
     profile that installer created (the folder stays the loader's own version id).
     """
-    from launcher import mods as mods_package
     from gui.pages import versions_page
+    from launcher import mods as mods_package
 
     game = page._game_dir()
     profile_id = "fabric-loader-0.16.9-rel-5"
