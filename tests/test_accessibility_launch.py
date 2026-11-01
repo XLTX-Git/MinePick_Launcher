@@ -85,9 +85,13 @@ def env(monkeypatch, ws_tmp):
         selected_account="account-1",
         memory_auto=False,
         memory_gb=4.0,
+        selected_instance="",
     )
     config_path = ws_tmp / "config.json"
     monkeypatch.setattr(flow.config, "load", lambda: (cfg, config_path))
+    # The launch page remembers the picked instance by saving the config; the stub above is not a
+    # real LauncherConfig, so keep the write out of this test (it asserts UI state, not persistence).
+    monkeypatch.setattr(flow.config, "save", lambda *a, **k: config_path)
     monkeypatch.setattr(dialog_mod, "tr", lambda key, *args: key.format(*args) if args else key)
     return SimpleNamespace(game=game, state=ws_tmp / "accessibility.json", cfg=cfg)
 
