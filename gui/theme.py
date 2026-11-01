@@ -185,6 +185,14 @@ def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
 NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_BUTTON_ICON": {"dark": "#1c2531", "light": "#eef0f4"},
     "BG_BUTTON_ICON_2": {"dark": "#161d27", "light": "#e2e6ec"},
+    # The pressed fill of an outlined control (secondary, warning, row actions, icon buttons). Dark
+    # cannot borrow the light recipe: in light the pressed fill steps *below* the surface, and in dark
+    # that surface is BG_LIST itself - the light sheet's value is #161d27 there, which is BG_LIST to
+    # the byte, so the button vanished into the page exactly while it was being pressed. There is no
+    # headroom left below a near-black surface, so dark presses upwards instead: one step above the
+    # hover fill, 1.29:1 from the surface at rest and 1.17:1 from hover. The light sheet keeps
+    # BG_BUTTON_SECONDARY_2 / BG_BUTTON_ICON_2, and its own values do not move.
+    "BG_BUTTON_PRESSED": {"dark": "#26313f", "light": "#e2e6ec"},
     "BG_BUTTON_SECONDARY": {"dark": "#1c2531", "light": "#f1f3f6"},
     "BG_BUTTON_SECONDARY_2": {"dark": "#161d27", "light": "#e2e6ec"},
     "BG_DISABLED": {"dark": "#131a23", "light": "#f4f6f9"},

@@ -25,8 +25,9 @@ technically styled and visually absent, and neither is a contrast failure the pa
   resting outline is ``BORDER_LAUNCH_FIELD`` - and in dark those were the same value ``#33404f``.
   Hovering the settings page's Java path changed literally no pixel, while the light sheet marked the
   hover (#c5d5e8 -> #a7b4c2, measured 1.41:1). The same collapse hides the pressed state of the
-  outlined buttons (``BG_BUTTON_SECONDARY_2`` equals ``BG_LIST`` in dark); that one needed a token of
-  its own and is still only reported, not pinned, here.
+  outlined buttons: at rest they are transparent over ``BG_LIST``, and in dark the fill they painted
+  while pressed was ``BG_LIST`` to the byte, so pressing one changed nothing at all. That one now has
+  a token of its own (``BG_BUTTON_PRESSED``) and is pinned below.
 
 * **An edge drawn against a backdrop that is not in the palette.** The in-window dialog's card sits on
   a scrim painted over a snapshot of the window (gui/overlay.py). That scrim used to be a single
@@ -234,6 +235,14 @@ def _overlay_card_declaration(sheet: Path, prop: str) -> str | None:
     return None
 
 
+def _pressed_background(sheet: Path, selector: str) -> str | None:
+    """The token a ``:pressed`` rule paints its background with."""
+    for name, declarations in _rules(sheet):
+        if name == selector:
+            return _token(declarations.get("background"))
+    return None
+
+
 def test_the_scrim_follows_the_theme(monkeypatch):
     """Light keeps the 35% black both themes used; dark dims harder, and its severities harder still.
 
@@ -329,6 +338,62 @@ def test_the_light_overlay_is_unchanged():
     # The light sheet keeps its own spelling of the rule, not the dark one's tokens.
     assert "background: __BG_LIST__;" in LIGHT_SHEET.read_text(encoding="utf-8")
     assert _overlay_card_declaration(LIGHT_SHEET, "border") == "BORDER_BUTTON_ICON"
+
+
+def test_the_dark_pressed_fill_is_a_step_away_from_rest():
+    """A pressed outlined button has to move away from the surface it sits on.
+
+    At rest the button is transparent, so what the user compares the press against is the page or card
+    behind it - ``BG_LIST``. In dark the old pressed fill was that exact colour, which is why pressing
+    changed no pixel on screen even though the stylesheet named a different token.
+    """
+    dark = theme.theme_palette("dark")
+    rest = dark["BG_LIST"]
+    assert dark["BG_BUTTON_SECONDARY_2"] == rest, (
+        "the collapse this token exists for is gone from the palette; the test below now proves less"
+    )
+    pressed = dark["BG_BUTTON_PRESSED"]
+    step = theme.contrast_ratio(pressed, rest)
+    assert step >= 1.15, (
+        f"dark: the pressed fill is only {step:.2f}:1 from the surface at rest; below 1.15:1 the "
+        f"button looks unpressed while the user holds it"
+    )
+    # The press has to clear the *hover* fill too, or pressing looks like hovering.
+    hover = dark["BG_BUTTON_SECONDARY"]
+    hover_step = theme.contrast_ratio(pressed, hover)
+    assert hover_step >= 1.10, (
+        f"dark: the pressed fill is only {hover_step:.2f}:1 from the hover fill, so pressing reads "
+        f"as hovering"
+    )
+    # Upwards, not downwards: there is no headroom below a near-black surface, and "pressed" must not
+    # become a hole or pure black. Lighter than rest means more contrast against black.
+    assert theme.contrast_ratio(pressed, "#000000") > theme.contrast_ratio(rest, "#000000"), (
+        "dark: the pressed fill went darker than the surface; below BG_LIST the next step is black"
+    )
+    assert pressed.lower() != "#000000"
+
+
+def test_the_pressed_token_is_dark_only():
+    """Light keeps the spelling and the values it shipped with; dark is the sheet that moved."""
+    light = theme.theme_palette("light")
+    assert light["BG_BUTTON_PRESSED"] == light["BG_BUTTON_SECONDARY_2"] == "#e2e6ec"
+    assert light["BG_BUTTON_ICON_2"] == "#e2e6ec"
+
+    dark_sheet = DARK_SHEET.read_text(encoding="utf-8")
+    light_sheet = LIGHT_SHEET.read_text(encoding="utf-8")
+    assert "__BG_BUTTON_SECONDARY_2__" not in dark_sheet
+    assert "__BG_BUTTON_ICON_2__" not in dark_sheet
+    assert "__BG_BUTTON_PRESSED__" in dark_sheet
+    assert "__BG_BUTTON_PRESSED__" not in light_sheet  # the light sheet was not touched
+    assert (
+        _pressed_background(DARK_SHEET, "QPushButton#secondaryButton:pressed") == "BG_BUTTON_PRESSED"
+    )
+    assert _pressed_background(DARK_SHEET, "QPushButton#iconButton:pressed") == "BG_BUTTON_PRESSED"
+    assert (
+        _pressed_background(LIGHT_SHEET, "QPushButton#secondaryButton:pressed")
+        == "BG_BUTTON_SECONDARY_2"
+    )
+    assert _pressed_background(LIGHT_SHEET, "QPushButton#iconButton:pressed") == "BG_BUTTON_ICON_2"
 
 
 def test_the_light_stylesheet_is_byte_identical():

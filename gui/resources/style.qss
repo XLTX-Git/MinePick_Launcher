@@ -184,7 +184,7 @@ QPushButton#secondaryButton:hover {
     border-color: __ACCENT__;
     color: __FG_TEXT__;
 }
-QPushButton#secondaryButton:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#secondaryButton:pressed { background: __BG_BUTTON_PRESSED__; }
 QPushButton#secondaryButton:disabled {
     background: transparent;
     color: __FG_DISABLED__;
@@ -219,7 +219,7 @@ QPushButton#warningButton {
     font-weight: 400;
 }
 QPushButton#warningButton:hover { background: __BG_BUTTON_SECONDARY__; }
-QPushButton#warningButton:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#warningButton:pressed { background: __BG_BUTTON_PRESSED__; }
 QPushButton#warningButton:disabled {
     background: transparent;
     color: __FG_DISABLED__;
@@ -805,7 +805,7 @@ QPushButton#rowAction:hover {
     border-color: __ACCENT__;
     color: __FG_TEXT__;
 }
-QPushButton#rowAction:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#rowAction:pressed { background: __BG_BUTTON_PRESSED__; }
 QPushButton#rowAction:disabled {
     color: __FG_DISABLED__;
     border-color: __BORDER_BUTTON_SECONDARY_2__;
@@ -821,7 +821,7 @@ QPushButton#iconButton {
     padding: 4px;
 }
 QPushButton#iconButton:hover { background: __BG_BUTTON_ICON__; border-color: __ACCENT__; }
-QPushButton#iconButton:pressed { background: __BG_BUTTON_ICON_2__; }
+QPushButton#iconButton:pressed { background: __BG_BUTTON_PRESSED__; }
 /* The button is borderless at rest, so the generic QPushButton:focus rule cannot show through: an
    id-scoped rule wins. The 1px border already exists at rest, so focusing shifts nothing. */
 QPushButton#iconButton[keyboardFocus="true"]:focus { border: 1px solid __FOCUS_RING__; }
@@ -1069,7 +1069,7 @@ QWidget#settingsPage QPushButton#secondaryButton:hover {
     color: __FG_TEXT__;
 }
 QWidget#settingsPage QPushButton#secondaryButton:pressed {
-    background: __BG_BUTTON_SECONDARY_2__;
+    background: __BG_BUTTON_PRESSED__;
 }
 QWidget#settingsPage QPushButton#secondaryButton:disabled {
     background: __BG_LIST__;
@@ -1152,7 +1152,7 @@ QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:hover {
     border-color: transparent;
 }
 QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:pressed {
-    background: __BG_BUTTON_SECONDARY_2__;
+    background: __BG_BUTTON_PRESSED__;
 }
 QWidget#launchPage QPushButton#iconButton[accountSwitch="true"][keyboardFocus="true"] {
     border-color: __FOCUS_RING__;
@@ -1184,7 +1184,7 @@ QWidget#launchPage QPushButton#secondaryButton:hover {
     color: __FG_LAUNCH__;
 }
 QWidget#launchPage QPushButton#secondaryButton:pressed {
-    background: __BG_BUTTON_SECONDARY_2__;
+    background: __BG_BUTTON_PRESSED__;
 }
 QWidget#launchPage QPushButton#secondaryButton:disabled {
     background: __BG_LIST__;
@@ -1214,7 +1214,7 @@ QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:hover {
     color: __FG_LAUNCH__;
 }
 QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:pressed {
-    background: __BG_BUTTON_SECONDARY_2__;
+    background: __BG_BUTTON_PRESSED__;
 }
 QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:checked {
     color: __FG_LAUNCH__;
@@ -1375,7 +1375,7 @@ QPushButton#rowInstall:hover {
     border-color: __ACCENT__;
     color: __FG_TEXT__;
 }
-QPushButton#rowInstall:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#rowInstall:pressed { background: __BG_BUTTON_PRESSED__; }
 QPushButton#rowInstall:disabled {
     color: __FG_DISABLED__;
     border-color: __BORDER_BUTTON_SECONDARY_2__;

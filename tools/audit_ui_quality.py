@@ -112,9 +112,16 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     ("FG_OPTION_2", "BG_OPTION", 4.5, True),
     ("FG_BUTTON_SECONDARY", "BG_BUTTON_SECONDARY", 4.5, True),
     ("FG_BUTTON_SECONDARY", "BG_BUTTON_SECONDARY_2", 4.5, True),
+    # The pressed fill the dark sheet paints instead (BG_BUTTON_SECONDARY_2 is the light one now): the
+    # outlined variants keep their label colour while pressed, so the label has to clear this fill too.
+    ("FG_BUTTON_SECONDARY", "BG_BUTTON_PRESSED", 4.5, True),
     ("FG_CARD_LATEST", "BG_SECTION", 4.5, True),
     ("FG_OVERLAY_BODY", "BG_OVERLAY_CODE", 4.5, True),
     ("FG_OVERLAY_CODE", "BG_OVERLAY_CODE", 4.5, True),
+    # The overlay card is its own surface (BG_OVERLAY_CARD), not a page: its title inherits FG_TEXT and
+    # its body is FG_OVERLAY_BODY, so both have to be measured against the card, not against BG_LIST.
+    ("FG_OVERLAY_BODY", "BG_OVERLAY_CARD", 4.5, True),
+    ("FG_TEXT", "BG_OVERLAY_CARD", 4.5, True),
     ("DANGER_FG", "BG_WINDOW", 4.5, True),
     ("DANGER_FG", "BG_LIST", 4.5, True),
     ("DANGER_FG", "BG_PAGE", 4.5, True),
@@ -176,6 +183,10 @@ NON_TEXT_PAIRS: tuple[Pair, ...] = (
     ("BORDER_TABLE", "BG_LIST", 3.0, False),  # token currently unused by the sheets
     ("BORDER_SWATCH", "BG_OPTION", 3.0, False),
     ("BORDER_OVERLAY_CODE", "BG_OVERLAY_CODE", 3.0, False),
+    # The overlay card's frame: decoration around a surface that already separates itself from the
+    # scrim (the fill clears the dimmed page by 2.22:1), so 1.4.11 does not require a ratio here. It is
+    # paired so the token is checked and a future change has a number to compare against.
+    ("BORDER_OVERLAY_CARD", "BG_OVERLAY_CARD", 3.0, False),
     ("BG_SEPARATOR", "BG_WINDOW", 3.0, False),
     ("BG_SEPARATOR", "BG_SECTION", 3.0, False),
     # The one hairline between the rail and the paper: decoration, not a control boundary, so 1.4.11
