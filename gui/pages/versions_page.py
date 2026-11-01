@@ -20,18 +20,17 @@ the instance page."""
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QLocale, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QDate, QEvent, QLocale, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QCheckBox,
-    QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -40,12 +39,22 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from gui import block_icons, i18n, paint_utils
 from gui.errors import show_fatal
+from gui.pages import versions_install_flow
+from gui.pages.versions_install_flow import (
+    CAN_ADD,
+    CHECKING,
+    FETCH_FAILED,
+    LOADER_ROWS,
+    NO_VERSION,
+    InstallStep,
+)
 from gui.widgets import (
     add_page_top_inset,
     add_search_icon,
@@ -64,9 +73,17 @@ from gui.workers import (
 )
 from launcher import config, paths
 from launcher.install import install_version, list_installed_versions
+from launcher.instances import (
+    InstancesError,
+    get_instance,
+    list_instances,
+    update_instance,
+)
 from launcher.meta import block_textures, fetch_manifest, version_category
 
 tr = i18n.tr
+
+_log = logging.getLogger(__name__)
 
 # Display name per type column
 _TYPE_LABELS = {
@@ -111,39 +128,35 @@ def human_date(release_time: str) -> str:
     return locale.toString(date, pattern)
 
 
-class _LoaderPromptDialog(QDialog):
-    """Ask whether a mod loader is needed when installing a version."""
+class _LoaderChoice:
+    """The loader decision one install runs with - the object the install body asks for it.
 
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(tr("versions.loader.dialog.title"))
-        self.combo = QComboBox()
-        for label, data in (
-            (tr("versions.loader.none"), None),
-            ("Fabric", "fabric"),
-            ("Forge", "forge"),
-            ("NeoForge", "neoforge"),
-        ):
-            self.combo.addItem(label, data)
-        hint = QLabel(tr("versions.loader.dialog.hint"))
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("instances.create.ok"))
-        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(
-            tr("instances.create.cancel")
-        )
-        self.buttons.accepted.connect(self.accept)
-        self.buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(hint)
-        layout.addWidget(self.combo)
-        layout.addWidget(self.buttons)
+    It used to be a modal dialog. The choice is a step of this page now (the version list is replaced
+    by ``InstallStep``, not covered by a window), so what the install body receives is the answer that
+    step already recorded: ``exec()`` reports "accepted" - the step's own back button is the only way
+    to say no, and taking it never calls the install body at all - and ``selected_loader()`` returns
+    the loader the user picked, ``None`` meaning the vanilla version.
+
+    Why the install body still asks an object rather than reading the field: ``install_version_id`` is
+    the install flow this change must not touch (``_on_progress`` / ``_on_installed`` /
+    ``_on_install_error`` and the download closure around them are byte for byte the same), and that
+    body opens with these three lines. The decision moved; the body did not.
+    """
+
+    def __init__(self, page: VersionsPage) -> None:
+        self._page = page
+
+    def exec(self) -> QDialog.DialogCode:
+        """Never opens a window: the choice was made before the install body was entered."""
+        return QDialog.DialogCode.Accepted
 
     def selected_loader(self) -> str | None:
-        return self.combo.currentData()
+        return self._page._pending_loader
+
+
+#: The name the unchanged install body constructs. It is a decision carrier now, not a window; the
+#: alias is what keeps ``install_version_id`` byte-identical to the commit before this one.
+_LoaderPromptDialog = _LoaderChoice
 
 
 class _VersionRow(QWidget):
@@ -164,6 +177,9 @@ class _VersionRow(QWidget):
     GAP = 12
     RADIUS = 8
     TAG_HEIGHT = 18
+    #: The width of the progress block that stands in for the install button while a download runs.
+    PROGRESS_WIDTH = 112
+    PROGRESS_HEIGHT = 32
 
     def __init__(
         self,
@@ -189,14 +205,19 @@ class _VersionRow(QWidget):
         self._selected = False
         self._hover = False
         self._icon = icon
+        self._install_running = False
+        self._progress_value = 0
 
-        self.install = QPushButton(tr("versions.install.short"))
+        # An installed row keeps its button - it is the reinstall path, and the step it opens hides the
+        # name field - but it says so instead of offering "Install" again.
+        label = tr("versions.status.installed") if installed else tr("versions.install.short")
+        self.install = QPushButton(label)
         self.install.setObjectName("rowInstall")
         self.install.setFixedHeight(32)
         self.install.setCursor(Qt.CursorShape.PointingHandCursor)
         # A wall of buttons that all read "Install" is useless with a screen reader; the version name
         # is what tells them apart.
-        self.install.setAccessibleName(tr("versions.install.short") + " · " + version_id)
+        self.install.setAccessibleName(label + " · " + version_id)
         self.install.clicked.connect(self._activate)
         self.setFixedHeight(self.SLOT_HEIGHT)
         row = QHBoxLayout(self)
@@ -207,6 +228,33 @@ class _VersionRow(QWidget):
         self.setToolTip(self._tooltip_text())
 
     # ---------- data ----------
+
+    def icon(self) -> QPixmap:
+        """The 48px block this row drew (the install step shows it at 32px)."""
+        return self._icon
+
+    def install_running(self) -> bool:
+        return self._install_running
+
+    def progress_value(self) -> int:
+        """The value on the row's progress block (0-1000, the scale the page's bar uses)."""
+        return self._progress_value
+
+    def set_install_progress(self, value: int) -> None:
+        """Show this row's download as ``[■■■□□ 42%]`` in place of its install button."""
+        self._progress_value = max(0, min(1000, int(value)))
+        if not self._install_running:
+            self._install_running = True
+            self.install.setVisible(False)
+        self.update()
+
+    def clear_install_progress(self) -> None:
+        """Back to the ordinary row: the install button returns (a failed download offers it again)."""
+        self._progress_value = 0
+        if self._install_running:
+            self._install_running = False
+            self.install.setVisible(True)
+        self.update()
 
     def _meta_text(self) -> str:
         if self.installed and self.status_text:
@@ -222,10 +270,20 @@ class _VersionRow(QWidget):
             parts.append(meta)
         return "\n".join(parts)
 
+    def _trailing_left(self) -> int:
+        """Where the name/meta text has to stop: the install button, or the progress block in its place.
+
+        The button is hidden while a download runs, so the layout stops reserving its slot; the block
+        that replaced it is drawn at the same right edge instead.
+        """
+        if self._install_running:
+            return max(0, self.width() - self.PADDING - self.PROGRESS_WIDTH)
+        return self.install.x()
+
     def text_width(self) -> int:
         """Width available to the name and the meta line (what the 20-character names must fit)."""
         text_left = self.PADDING + self.ICON + self.GAP
-        return max(0, self.install.x() - self.GAP - text_left)
+        return max(0, self._trailing_left() - self.GAP - text_left)
 
     def set_selected(self, selected: bool) -> None:
         if self._selected != selected:
@@ -282,7 +340,7 @@ class _VersionRow(QWidget):
         painter.drawPixmap(icon_rect.toRect(), self._icon)
 
         text_left = self.PADDING + self.ICON + self.GAP
-        text_right = max(text_left, self.install.x() - self.GAP)
+        text_right = max(text_left, self._trailing_left() - self.GAP)
         width = text_right - text_left
         if width <= 0:
             painter.end()
@@ -335,7 +393,56 @@ class _VersionRow(QWidget):
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
             meta,
         )
+        if self._install_running:
+            self._paint_progress(painter, tokens, hint_color)
         painter.end()
+
+    def _paint_progress(self, painter: QPainter, tokens: dict[str, str], text_color: QColor) -> None:
+        """The install button's stand-in while this row downloads: ``[■■■□□ 42%]``.
+
+        Segments rather than a bar: at 32px tall a bar's fill edge says little, while five steps say
+        "one file in five" at a glance and still read as the page's progress language beside the
+        percentage. The percentage sits on the block's own flat surface, never on the moving fill, for
+        the reason ``build_download_progress`` moves the page's label out of its bar: a token that
+        contrasts with the unfilled half cannot contrast with the accent fill.
+        """
+        block = QRectF(
+            self.width() - self.PADDING - self.PROGRESS_WIDTH,
+            (self.HEIGHT - self.PROGRESS_HEIGHT) / 2.0,
+            self.PROGRESS_WIDTH,
+            self.PROGRESS_HEIGHT,
+        )
+        painter.setPen(QPen(QColor(tokens.get("BORDER_LIST", "#c9d2dc")), 1.0))
+        painter.setBrush(QColor(tokens.get("BG_SECTION", "#f1f3f6")))
+        painter.drawRoundedRect(block, 6, 6)
+
+        segments, filled = 5, self._progress_value / 1000.0 * 5
+        width, height, gap = 9.0, 8.0, 3.0
+        left = block.left() + 8.0
+        middle = block.center().y()
+        painter.setPen(Qt.PenStyle.NoPen)
+        for index in range(segments):
+            rect = QRectF(left + index * (width + gap), middle - height / 2.0, width, height)
+            done = index + 1 <= int(filled)
+            painter.setBrush(
+                QColor(
+                    tokens.get("ACCENT", "#2f9e6f")
+                    if done
+                    else tokens.get("BG_RAIL_DOT", "#b6c1cd")
+                )
+            )
+            painter.drawRoundedRect(rect, 2, 2)
+
+        percent_font = QFont(self.font())
+        percent_font.setPixelSize(11)
+        painter.setFont(percent_font)
+        painter.setPen(text_color)
+        text_left = left + segments * (width + gap) + 2.0
+        painter.drawText(
+            QRectF(text_left, block.top(), block.right() - 8.0 - text_left, block.height()),
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            f"{round(self._progress_value / 10)}%",
+        )
 
 
 class _VersionList(QListWidget):
@@ -373,6 +480,20 @@ class VersionsPage(QWidget):
         #: visible metadata per version id: (type label, human date, status text)
         self._meta: dict[str, tuple[str, str, str]] = {}
         self.rows: list[_VersionRow] = []
+        # The install step's state: the version being set up, the loader the user picked (None =
+        # vanilla), the name the step collected, and what the row progress is attached to.
+        self._pending_version_id = ""
+        self._pending_loader: str | None = None
+        self._pending_display_name = ""
+        self._install_before_ids: set[str] = set()
+        self._installing_version_id = ""
+        self._installing_row: _VersionRow | None = None
+        self._probe_generation = 0
+        self._list_scroll = 0
+        self._list_row = -1
+        # The step replaces this container, so the list and every filter widget live inside it.
+        self._list_step = QWidget()
+        self._list_step.setObjectName("versionsListStep")
 
         # Category chips: all / release / snapshot / april fools / legacy
         self.tab_group = QButtonGroup(self)
@@ -490,9 +611,9 @@ class VersionsPage(QWidget):
             latest_row.addWidget(card)
         latest_row.addStretch(1)
 
-        layout = QVBoxLayout(self)
-        style_page_layout(layout)
-        add_page_top_inset(layout)
+        layout = QVBoxLayout(self._list_step)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         layout.addLayout(top)
         layout.addLayout(tabs_row)
         layout.addLayout(latest_row)
@@ -509,6 +630,22 @@ class VersionsPage(QWidget):
         layout.addLayout(buttons)
         layout.addWidget(self.auto_jre_check)
 
+        # The install step replaces the list instead of covering it: the list widget itself keeps its
+        # filter, its selection and its scroll position, which is what the breadcrumb's back arrow has
+        # to come home to.
+        self.step = InstallStep()
+        self.stack = QStackedWidget()
+        self.stack.setObjectName("versionsStack")
+        self.stack.addWidget(self._list_step)
+        self.stack.addWidget(self.step)
+        outer = QVBoxLayout(self)
+        # The page keeps the shared outer margin and the 16px top air; the steps inside it supply their
+        # own rhythm, because either one may be the visible page.
+        style_page_layout(outer)
+        add_page_top_inset(outer)
+        outer.setSpacing(0)
+        outer.addWidget(self.stack)
+
         self.refresh_button.clicked.connect(self.refresh)
         self.tab_group.buttonClicked.connect(lambda *_a: self._refilter())
         # Debounce: re-filter only after 200ms of typing inactivity
@@ -517,12 +654,26 @@ class VersionsPage(QWidget):
         self._search_timer.timeout.connect(self._refilter)
         self.search_edit.textChanged.connect(lambda _t: self._search_timer.start(200))
         self.list.currentRowChanged.connect(self._on_select)
-        self.install_button.clicked.connect(self.install_selected)
+        # Every entry into an install opens the step; the step's own button starts the download.
+        self.install_button.clicked.connect(self._begin_install_selected)
         self.open_instance_button.clicked.connect(self.open_instance_selected)
         self.detail_button.clicked.connect(self.show_details)
         self.launch_button.clicked.connect(
             lambda: self.launch_requested.emit(self._selected_id() or "")
         )
+        self.step.back_requested.connect(self._leave_step)
+        self.step.start_requested.connect(self._start_from_step)
+        self.step.retry_requested.connect(self._probe_loader)
+        # The inline progress rides on the page's own bar: ``_on_progress`` keeps writing the bar (the
+        # install flow is unchanged), and the row follows the same numbers.
+        self.progress_bar.valueChanged.connect(self._on_progress_value)
+        # ``_on_installed``/``_on_install_error`` end a download by hiding the bar's row; that is the
+        # one moment the row's inline progress has to go away again (success rebuilds the rows).
+        self.progress_row.installEventFilter(self)
+        # The display name lands on the instance folder the install just created (the sidecar), before
+        # the other pages are told to re-read; ``versions_changed`` is emitted at the end of
+        # ``_on_installed``, where the new folders are already on disk.
+        self.versions_changed.connect(self._apply_pending_display_name)
         self._rate = RateTracker()
         self._fetch_started = False
         self._refresh_installed()
@@ -583,18 +734,205 @@ class VersionsPage(QWidget):
         latest = getattr(self.manifest, "latest", None) or {}
         version_id = (latest.get(kind) or "").strip()
         if version_id:
-            self.install_version_id(version_id)
+            self.begin_install(version_id)
 
     def _on_row_install(self, version_id: str) -> None:
-        """Row install: the same ``install_version_id`` the selected-version button calls.
+        """Row install: open the install step for this version.
 
-        The button that owns the install lifecycle disables itself while a download runs; using it as
-        the busy signal keeps the row's shortcut from starting a second download without touching the
-        install flow itself.
+        The row used to start the download straight away behind a modal loader question. That question
+        is the page's second step now, so the row's button is an entry into the step, and the download
+        itself still starts from exactly one place (``install_version_id``, called by the step's pill).
+        The button that owns the install lifecycle stays the busy signal that keeps a second download
+        from starting while one runs.
         """
         if not self.install_button.isEnabled():
             return
+        self.begin_install(version_id)
+
+    # ---------- install step: choose a loader, name the instance, then download ----------
+
+    def begin_install(self, version_id: str) -> None:
+        """Show the install step for ``version_id`` (the row, the latest card and the page button).
+
+        The list is not destroyed, only replaced: its filter, its selection and its scroll offset are
+        remembered here so the breadcrumb's back arrow returns to exactly the list the user left.
+        """
+        if not self.install_button.isEnabled():
+            return
+        self._pending_version_id = version_id
+        self._pending_loader = None
+        self._pending_display_name = ""
+        self._list_scroll = self.list.verticalScrollBar().value()
+        self._list_row = self.list.currentRow()
+        index = self._row_index(version_id)
+        if index >= 0:
+            self.list.setCurrentRow(index)
+        row = self._row_for(version_id)
+        self.step.prepare(
+            version_id,
+            row.icon() if row is not None else None,
+            editable=version_id not in self._installed,
+            name=version_id,
+            taken=self._display_names(),
+        )
+        self.stack.setCurrentWidget(self.step)
+        self.step.name_edit.setFocus()
+        self._probe_loaders(version_id)
+
+    def _begin_install_selected(self) -> None:
+        """The page's own install button: the selected version, through the same step."""
+        version_id = self._selected_id()
+        if version_id is None:
+            set_app_status(self, tr("versions.msg.need_select"), "warning")
+            return
+        self.begin_install(version_id)
+
+    def _leave_step(self) -> None:
+        """Back to the list, exactly where the user left it."""
+        self._probe_generation += 1  # answers for the step that was just left are not shown
+        self.stack.setCurrentWidget(self._list_step)
+        if 0 <= self._list_row < self.list.count():
+            self.list.setCurrentRow(self._list_row)
+        self.list.verticalScrollBar().setValue(self._list_scroll)
+
+    def _start_from_step(self) -> None:
+        """The step's pill button: record the answer, go back to the list, start the download.
+
+        The next step is in the list itself: the row's install button becomes a progress block, so the
+        user watches the download where they asked for it. There is no progress page and no task bar.
+        """
+        if not self.install_button.isEnabled() or not self.step.name_valid():
+            return
+        self._pending_loader = self.step.selected_loader()
+        self._pending_display_name = (
+            self.step.instance_name() if self.step.name_editable() else ""
+        )
+        self._probe_generation += 1
+        version_id = self._pending_version_id
+        self._install_before_ids = set(self._installed)
+        self.stack.setCurrentWidget(self._list_step)
+        self._attach_inline_progress(version_id)
+        # The one install entry the page has always used (the loader decision is read from the field
+        # the step filled in), so the download, its callbacks and its status text are untouched.
         self.install_version_id(version_id)
+
+    def _probe_loaders(self, version_id: str) -> None:
+        """Ask every loader row whether it can add this version (one background query per loader)."""
+        self._probe_generation += 1
+        for loader in LOADER_ROWS:
+            self._probe_loader(loader)
+
+    def _probe_loader(self, loader: str) -> None:
+        """Query one loader's versions for the pending version; a row can also ask for a retry."""
+        version_id = self._pending_version_id
+        if not version_id or loader not in LOADER_ROWS:
+            return
+        generation = self._probe_generation
+        self.step.set_loader_status(loader, CHECKING)
+
+        def do_probe() -> object:
+            return versions_install_flow.probe_loader(loader, version_id)
+
+        def on_result(versions) -> None:
+            if generation != self._probe_generation:
+                return  # the step moved on: an answer for an abandoned version is not shown
+            # Empty is a real answer ("none for this version"), not a failure: the two states must
+            # never be folded together, because only one of them is worth retrying.
+            state = CAN_ADD if versions else NO_VERSION
+            self.step.set_loader_status(loader, state)
+
+        def on_error(message: str) -> None:
+            if generation != self._probe_generation:
+                return
+            self.step.set_loader_status(loader, FETCH_FAILED, message)
+
+        run_in_background(do_probe, on_result=on_result, on_error=on_error)
+
+    # ---------- row progress and the instance name ----------
+
+    def _row_index(self, version_id: str) -> int:
+        for index in range(self.list.count()):
+            if self.list.item(index).data(Qt.UserRole) == version_id:
+                return index
+        return -1
+
+    def _row_for(self, version_id: str) -> _VersionRow | None:
+        return next((row for row in self.rows if row.version_id == version_id), None)
+
+    def _attach_inline_progress(self, version_id: str) -> None:
+        self._installing_version_id = version_id
+        self._installing_row = self._row_for(version_id)
+        if self._installing_row is not None:
+            self._installing_row.set_install_progress(0)
+
+    def _sync_install_row(self) -> None:
+        """Re-attach the running progress to the row a rebuild just created.
+
+        A rebuild can happen during a download (typing in the search box re-filters the list); the
+        progress bar still holds the value, so the new row picks the download up where it is.
+        """
+        if not self._installing_version_id:
+            return
+        self._installing_row = self._row_for(self._installing_version_id)
+        if self._installing_row is not None:
+            self._installing_row.set_install_progress(self.progress_bar.value())
+
+    def _on_progress_value(self, value: int) -> None:
+        if self._installing_row is not None:
+            self._installing_row.set_install_progress(value)
+
+    def _finish_inline_progress(self) -> None:
+        """The download ended (success or failure): give the row its install button back.
+
+        The loader decision is dropped here too, so a later install that did not come through the step
+        cannot silently reuse the previous answer.
+        """
+        row = self._installing_row
+        self._installing_row = None
+        self._installing_version_id = ""
+        self._pending_loader = None
+        if row is not None:
+            row.clear_install_progress()
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.progress_row and event.type() == QEvent.Type.Hide:
+            self._finish_inline_progress()
+        return super().eventFilter(obj, event)
+
+    def _display_names(self) -> set[str]:
+        """Every display name an instance already carries (what a new name must not repeat)."""
+        try:
+            return {instance.name for instance in list_instances(self._game_dir()).values()}
+        except OSError:
+            return set()
+
+    def _apply_pending_display_name(self) -> None:
+        """Write the name the step collected onto the instance the install just created.
+
+        The folder stays ``versions/<version id>``: the name is the *display* name, stored in the
+        instance's own ``minepick.json`` sidecar (``launcher.instances``), which is what the instances
+        page renders. A name the user already set is never overwritten, and a reinstall collects no
+        name at all, so it cannot rename anything either.
+        """
+        name = self._pending_display_name.strip()
+        version_id = self._pending_version_id
+        self._pending_display_name = ""
+        if not name or not version_id:
+            return
+        created = self._installed - self._install_before_ids
+        # A loader install creates its own profile next to the vanilla folder; that profile is the
+        # instance the user will start, so it takes the name.
+        target = next((vid for vid in created if vid != version_id), version_id)
+        if target not in self._installed:
+            return
+        game_dir = self._game_dir()
+        try:
+            existing = get_instance(target, game_dir=game_dir)
+            if existing is not None and existing.display_name.strip():
+                return  # a name the user already gave this instance is never overwritten
+            update_instance(target, game_dir=game_dir, display_name=name)
+        except (InstancesError, OSError):
+            _log.warning("versions: could not store the instance name for %s", target, exc_info=True)
 
     def _refilter(self) -> None:
         if self.manifest is None:
@@ -682,6 +1020,8 @@ class VersionsPage(QWidget):
             )
             self.list.setCurrentRow(index)
         self._sync_row_selection(self.list.currentRow())
+        # A rebuild during a download (a search keystroke) hands the new row the running progress.
+        self._sync_install_row()
         # The page may still be inside its first layout pass here; re-apply the viewport width once
         # the widget hierarchy has settled (see _VersionList).
         QTimer.singleShot(0, self.list.sync_item_widths)
