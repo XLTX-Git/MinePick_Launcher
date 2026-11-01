@@ -69,6 +69,20 @@ def ws_tmp():
 
 
 @pytest.fixture(autouse=True)
+def _no_disk_http_cache(monkeypatch):
+    """Keep the suite off the developer's real HTTP cache.
+
+    The shared client carries a disk cache under the launcher data directory. Without this, a test that
+    happens to hit a real URL could read or write the user's cache - and an unrelated test could then
+    pass or fail depending on what the developer browsed last. ``tests/test_http_cache.py`` turns the
+    layer back on for itself; it measures the cache, so it must not be bypassed there.
+    """
+    from launcher.net import http_cache
+
+    monkeypatch.setattr(http_cache, "_enabled", False)
+
+
+@pytest.fixture(autouse=True)
 def _no_startup_update_check(monkeypatch):
     """Keep the tests off the network and off slow real IO.
 
