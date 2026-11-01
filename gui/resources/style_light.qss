@@ -579,6 +579,49 @@ QListWidget#versionList::item {
 }
 QListWidget#versionList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
 
+/* ---------- versions page: the install step (instance name + loader choice) ---------- */
+/* The list is replaced by this step (not covered by a window): one breadcrumb card, one row per
+   loader, one pill button. The loader rows paint their own surface in code, like the version rows
+   above; the rule below exists for the focus contract the keyboard walkthrough reads, and the row
+   paints the same ring from the same property. */
+
+QFrame#installBreadcrumb {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+    border-radius: __RADIUS_LG__;
+}
+QWidget#versionsPage QLabel#installFixedName {
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 0 12px;
+}
+QWidget#versionsPage QLabel#installNameHint { color: __FG_HINT__; font-size: 12px; }
+QWidget#versionsPage QLabel#installNameHint[error="true"] { color: __DANGER_FG__; }
+QWidget#versionsPage QLabel#installStepHint { color: __FG_HINT__; font-size: 12px; }
+QWidget#versionsPage QLabel#installFieldLabel { color: __FG_HINT__; font-size: 12px; }
+QWidget#versionsPage QLineEdit[invalid="true"] {
+    border-color: __DANGER_FG__;
+    color: __DANGER_FG__;
+}
+
+/* The one primary action of the step: a centred pill, 48px tall, fully rounded. */
+QPushButton#installPrimary {
+    background: __ACCENT_BUTTON__;
+    color: __FG_SELECTED__;
+    border: 1px solid transparent;
+    border-radius: 24px;
+    padding: 0 24px;
+    font-size: 15px;
+    font-weight: 600;
+}
+QPushButton#installPrimary:hover { background: __ACCENT_BUTTON_HOVER__; }
+QPushButton#installPrimary:pressed { background: __ACCENT_BUTTON_PRESS__; }
+QPushButton#installPrimary:disabled { background: __BG_DISABLED__; color: __FG_DISABLED__; }
+QPushButton#installPrimary[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+QAbstractButton#loaderChoiceRow[keyboardFocus="true"] { border: 1px solid __FOCUS_RING__; }
+
 /* ---------- shared page cards (java / account) ---------- */
 /* One white card holding a 15px section title and a list of dense rows. The rows paint their own
    hover/selection tint and the hairline between two of them; the card owns the surface. */
