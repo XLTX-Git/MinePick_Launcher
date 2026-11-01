@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Width audit: every screen at 1050 / 1400 / 1800 px, offscreen, one line per (width, screen).
+"""Width audit: every screen at 1000 / 1050 / 1400 / 1800 px, offscreen, one line per (width, screen).
 
 The minimum-width gate (tools/measure_min_width.py) only measures the *floor*: the narrowest window
 that still fits. What a window does when it is *wide* was untested, and that is where the reported
@@ -66,9 +66,10 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parent.parent
-#: The three widths the audit renders. 1050 is just under the old 1180 budget's comfort zone, and
-#: 1800 is wider than the user's own 1644 window, so a layout that only works at one size shows up.
-DEFAULT_WIDTHS = (1050, 1400, 1800)
+#: The four widths the audit renders. 1000 is the window's product floor (MainWindow.setMinimumWidth),
+#: 1050 is just under the old 1180 budget's comfort zone, and 1800 is wider than the user's own 1644
+#: window, so a layout that only works at one size shows up.
+DEFAULT_WIDTHS = (1000, 1050, 1400, 1800)
 WINDOW_HEIGHT = 915
 DEFAULT_LANGUAGE = "zh_cn"
 DEFAULT_THEME = "light"
@@ -681,11 +682,11 @@ def _parse_whitelist(path: Path) -> tuple[dict[str, str], ...]:
 
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(errors="replace")
-    parser = argparse.ArgumentParser(description="Render every screen at three widths and audit them.")
+    parser = argparse.ArgumentParser(description="Render every screen at four widths and audit them.")
     parser.add_argument(
         "--widths",
         default=",".join(str(width) for width in DEFAULT_WIDTHS),
-        help="comma-separated window widths (default: 1050,1400,1800)",
+        help="comma-separated window widths (default: 1000,1050,1400,1800)",
     )
     parser.add_argument("--theme", default=DEFAULT_THEME, choices=("light", "dark"))
     parser.add_argument("--language", default=DEFAULT_LANGUAGE)

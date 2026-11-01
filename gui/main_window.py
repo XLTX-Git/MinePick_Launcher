@@ -152,6 +152,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("MinePick Launcher")
         self.resize(1000, 600)
+        self.setMinimumWidth(1000)
         # The floor is the layout's own requirement, and it is enforced in resizeEvent - never pinned to a
         # constant. It used to be `setMinimumSize(1000, 610)`, which is below what the layout needs in six
         # of the nine languages (fr_fr reaches 1164px, ru_ru 1152, es_es 1155, de_de 1110, ja_jp 1085,

@@ -113,9 +113,9 @@ def test_gate_lists_elision_without_failing(app):
         page.deleteLater()
 
 
-def test_gate_ships_the_three_widths_and_nine_screens():
-    """The gate's own scope: three widths, the eight pages and the instance detail view."""
-    assert audit.DEFAULT_WIDTHS == (1050, 1400, 1800)
+def test_gate_ships_the_four_widths_and_nine_screens():
+    """The gate's own scope: four widths, the eight pages and the instance detail view."""
+    assert audit.DEFAULT_WIDTHS == (1000, 1050, 1400, 1800)
     assert len(audit.SCREENS) == 9
     assert "instances/detail" in audit.SCREENS
     assert set(audit.SCREENS) >= {
