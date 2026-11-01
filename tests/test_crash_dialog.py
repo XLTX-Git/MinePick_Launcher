@@ -172,7 +172,7 @@ def test_launch_instance_buttons_navigate(app, ws_tmp, monkeypatch):
         assert window.stack.currentWidget() is instances
         # 实例选择 now lands on the grid, scrolled to the current card - not on its detail page.
         assert instances.current_view() is instances.view_stack.widget(0)
-        assert instances.list.currentItem().data(Qt.ItemDataRole.UserRole) == version_id
+        assert instances._current_name() == version_id
         assert instances.detail.instance_id == version_id
 
         launch.instance_settings_button.click()
@@ -248,7 +248,7 @@ def test_diagnostics_tab_shows_the_recorded_code(app, ws_tmp, monkeypatch):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance(version_id)
         app.processEvents()
         detail = page.detail
         detail.set_tab(TAB_DIAGNOSIS)

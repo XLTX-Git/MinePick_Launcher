@@ -654,8 +654,8 @@ def test_instance_name_via_userrole(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        assert page.list.count() == 1
-        page.list.setCurrentRow(0)
+        assert page.card_ids() == ["tricky"]
+        assert page.select_instance("tricky")
         assert page._current_name() == "tricky"  # not misparsed because the note contains "   ["
     finally:
         if window is not None:
@@ -1429,7 +1429,7 @@ def test_instance_open_folder_button(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["instances"]
         assert page.open_folder_button is not None
-        page.list.setCurrentRow(0)
+        assert page.select_instance("t")
         page._open_folder()
         assert opened == [str(ws_tmp / "mc" / "instances" / "t").replace("\\", "/")] or True
         assert "已打开" in window.status_label.text()
@@ -1477,7 +1477,7 @@ def test_instances_mods_panel_loads(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["instances"]
         assert page.mods_table.columnCount() == 6
-        page.list.setCurrentRow(0)
+        assert page.select_instance("t")
         import time
 
         for _ in range(100):
@@ -1570,10 +1570,13 @@ def test_instances_page_lists_base_versions(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        items = [page.list.item(i).text() for i in range(page.list.count())]
-        assert "1.20.1" in items
-        assert any("Fabric 0.15.11-1.20.1" in t for t in items)
-        assert any(t.startswith("红石测试") for t in items)  # display name wins over the id
+        # One card per instance: the display name is the card's title, the version + loader line is
+        # its meta, so the two old row-text facts still have to hold.
+        names = [card.name_label.text() for card in page.cards()]
+        metas = [card.meta_label.text() for card in page.cards()]
+        assert "1.20.1" in names
+        assert any("Fabric 0.15.11" in meta for meta in metas)
+        assert any(name.startswith("红石测试") for name in names)  # display name wins over the id
     finally:
         if window is not None:
             window.close()
@@ -1614,7 +1617,7 @@ def test_instance_detail_fills_on_selection(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         assert page.detail_stack.currentWidget() is detail
         assert detail.instance_id == "1.20.1"
@@ -1652,7 +1655,7 @@ def test_instance_tab_row_switches_stacked_pages(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         assert detail.stack.currentIndex() == 0
         for index in range(len(detail.tabs)):
@@ -1686,7 +1689,7 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         detail.set_tab(4)
         # The per-instance memory field is a number; "GB" belongs to its row label.
@@ -1763,7 +1766,7 @@ def test_instance_settings_reset_clears_overrides(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         detail.set_tab(4)
         assert detail.memory_spin.value() == 8.0
@@ -1801,7 +1804,7 @@ def test_instance_not_isolated_banner_and_one_click(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         assert detail.overview_values["isolation"].text().startswith(i18n.tr("common.off"))
         # the banner sits on top of the 模组 and 资源 tabs (a stacked page is only visible when current)
@@ -1827,8 +1830,6 @@ def test_instance_not_isolated_banner_and_one_click(app, monkeypatch, ws_tmp):
 def test_instances_search_filters_the_list(app, monkeypatch, ws_tmp):
     """The search box filters by display name / id / profile label and reports an empty result."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_search"))
-    from PySide6.QtCore import Qt
-
     from launcher import config as config_mod
 
     game = ws_tmp / "mc"
@@ -1843,23 +1844,22 @@ def test_instances_search_filters_the_list(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        assert page.list.count() == 2
+        assert len(page.cards()) == 2
         page.search_edit.setText("红石")
         page._on_search_changed()
-        assert page.list.count() == 1
-        assert page.list.item(0).data(Qt.ItemDataRole.UserRole) == "fabric-loader-0.15.11-1.20.1"
+        assert page.card_ids() == ["fabric-loader-0.15.11-1.20.1"]
         # the profile label is searchable too
         page.search_edit.setText("Fabric")
         page._on_search_changed()
-        assert page.list.count() == 1
+        assert page.card_ids() == ["fabric-loader-0.15.11-1.20.1"]
         page.search_edit.setText("nothing-matches")
         page._on_search_changed()
-        assert page.list.count() == 0
+        assert page.cards() == []
         assert page.list_stack.currentWidget() is page.empty_search
         page.search_edit.clear()
         page._on_search_changed()
-        assert page.list.count() == 2
-        assert page.list_stack.currentWidget() is page.list
+        assert len(page.cards()) == 2
+        assert page.list_stack.currentWidget() is page.content_scroll
     finally:
         if window is not None:
             window.close()

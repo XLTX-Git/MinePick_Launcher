@@ -400,15 +400,10 @@ def test_switching_the_folder_refreshes_instances_versions_and_the_status_label(
     cfg.game_dir = game_a
     config_mod.save(cfg, cfg_path)
 
-    from PySide6.QtCore import Qt
-
     from gui.main_window import NAV_KEYS, MainWindow
 
     def instance_ids(page) -> set[str]:
-        return {
-            page.list.item(index).data(Qt.ItemDataRole.UserRole)
-            for index in range(page.list.count())
-        }
+        return set(page.card_ids())
 
     window = MainWindow()
     try:

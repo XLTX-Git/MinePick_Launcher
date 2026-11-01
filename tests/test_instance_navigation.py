@@ -157,11 +157,10 @@ def _close(app, window) -> None:
 
 
 def _card_by_id(page, instance_id: str):
-    for index in range(page.list.count()):
-        item = page.list.item(index)
-        if item.data(Qt.ItemDataRole.UserRole) == instance_id:
-            return page.list.itemWidget(item)
-    raise AssertionError(f"card for {instance_id!r} not found")
+    card = page.card_for(instance_id)
+    if card is None:
+        raise AssertionError(f"card for {instance_id!r} not found")
+    return card
 
 
 def test_cards_are_a_responsive_grid_and_open_the_detail_page(app, monkeypatch, ws_tmp):
@@ -172,20 +171,24 @@ def test_cards_are_a_responsive_grid_and_open_the_detail_page(app, monkeypatch, 
         page = window.pages["instances"]
         assert page.current_view() is page.view_stack.widget(0)
         assert page.detail_page.isHidden()
-        assert page.list.count() == 4
+        assert len(page.cards()) == 4
 
-        xs = {
-            page.list.visualItemRect(page.list.item(i)).x()
-            for i in range(page.list.count())
-        }
-        assert len(xs) == 3, (
-            f"expected 3 columns at 1180px, got x positions {sorted(xs)}; "
-            f"window={window.width()} page={page.width()} viewport={page.list.viewport().width()} "
-            f"rects={[page.list.visualItemRect(page.list.item(i)).getRect() for i in range(page.list.count())]}"
+        # The 200px folder rail takes the width the old three-column floor used, so the two-level
+        # layout draws two columns at the 1180px window and adds a third only when the pane can hold
+        # three 320px cards. The four instances split into 正式版 (3) and 带加载器 (1), and the
+        # release group's own x positions are what state the column count.
+        release_cards = page.groups_view.sections()[0].cards
+        assert len(release_cards) == 3
+        xs = {card.mapTo(page, QPoint(0, 0)).x() for card in release_cards}
+        assert len(xs) == 2, (
+            f"expected 2 columns at 1180px, got x positions {sorted(xs)}; "
+            f"window={window.width()} page={page.width()} "
+            f"viewport={page.content_scroll.viewport().width()} "
+            f"cards={[(card.width(), card.mapTo(page, QPoint(0, 0)).x()) for card in release_cards]}"
         )
+        assert len({card.width() for card in release_cards}) == 1
 
-        for index in range(page.list.count()):
-            card = page.list.itemWidget(page.list.item(index))
+        for card in page.cards():
             assert card is not None
             assert card.objectName() == "instanceCard"
             assert card.accessibleName().strip()

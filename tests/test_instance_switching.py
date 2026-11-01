@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QPoint, Qt, QThreadPool
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -119,14 +119,14 @@ def _close(app, window) -> None:
 
 
 def _cards(page) -> list:
-    return [page.list.itemWidget(page.list.item(index)) for index in range(page.list.count())]
+    return page.cards()
 
 
 def _card_by_id(page, instance_id: str):
-    for card in _cards(page):
-        if card.instance_id == instance_id:
-            return card
-    raise AssertionError(f"card for {instance_id!r} not found")
+    card = page.card_for(instance_id)
+    if card is None:
+        raise AssertionError(f"card for {instance_id!r} not found")
+    return card
 
 
 def _show_instances(window) -> None:
@@ -244,14 +244,15 @@ def test_select_instance_scrolls_the_current_card_into_view(app, monkeypatch, ws
 
         assert window.stack.currentWidget() is page
         assert page.current_view() is page.view_stack.widget(0)  # the card grid
-        item = page.list.currentItem()
-        assert item is not None
-        assert item.data(Qt.ItemDataRole.UserRole) == "1.20.9"
-        assert page.list.verticalScrollBar().value() > 0, "the grid did not scroll at all"
-        rect = page.list.visualItemRect(item)
-        viewport = page.list.viewport().rect()
-        assert rect.top() >= viewport.top(), (rect.getRect(), viewport.getRect())
-        assert rect.bottom() <= viewport.bottom(), (rect.getRect(), viewport.getRect())
+        assert page._current_name() == "1.20.9"
+        card = page.card_for("1.20.9")
+        assert card is not None
+        scroll = page.content_scroll.verticalScrollBar()
+        assert scroll.value() > 0, "the grid did not scroll at all"
+        viewport = page.content_scroll.viewport()
+        top = card.mapTo(viewport, QPoint(0, 0)).y()
+        assert top >= 0, (top, viewport.rect())
+        assert top + card.height() <= viewport.height(), (top, card.height(), viewport.rect())
     finally:
         if window is not None:
             _close(app, window)
