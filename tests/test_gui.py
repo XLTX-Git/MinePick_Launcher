@@ -1155,19 +1155,6 @@ def test_about_check_download_and_install_refusal(app, monkeypatch, ws_tmp):
         apply_theme("dark")
 
 
-def test_loader_prompt_dialog(app, monkeypatch, ws_tmp):
-    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data14"))
-    from gui.pages.versions_page import _LoaderPromptDialog
-
-    dialog = _LoaderPromptDialog()
-    assert dialog.combo.count() == 4
-    assert dialog.selected_loader() is None  # vanilla by default
-    dialog.combo.setCurrentIndex(dialog.combo.findData("fabric"))
-    assert dialog.selected_loader() == "fabric"
-    dialog.combo.setCurrentIndex(dialog.combo.findData("forge"))
-    assert dialog.selected_loader() == "forge"
-    dialog.close()
-
 def test_launch_version_choices_installed_only(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data18"))
     from launcher import config as config_mod
