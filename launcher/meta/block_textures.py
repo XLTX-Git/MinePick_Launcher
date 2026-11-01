@@ -273,6 +273,34 @@ def find_cached_texture(
     return None
 
 
+def store_texture_bytes(block_name: str, data: bytes, cache_root: Path | None) -> Path | None:
+    """Write a texture that was just read from a local source into the user cache.
+
+    The GUI reads a version's PNG out of its ``client.jar`` (Mojang's asset index does not list
+    block textures), which opens and scans a 25 MB archive for a few KB of pixels. Once those
+    bytes are copied here, the next lookup finds ``<cache>/block-textures/modern/<block>.png`` and
+    never touches the jar again. The write is a temporary file plus ``replace``, so a crash cannot
+    leave a half-written PNG behind, and an already-cached file is left alone (it may be newer).
+
+    Returns the cache path when the texture is in the cache afterwards, ``None`` when the input
+    was not a PNG or the write failed - a cache that cannot be written must never break the icon.
+    """
+    if cache_root is None or not block_name:
+        return None
+    if not data or not data.startswith(PNG_SIGNATURE):
+        return None
+    if any(part in block_name for part in ("/", "\\", "..")):
+        return None
+    destination = Path(cache_root) / MODERN_BUCKET / (block_name + ".png")
+    if _is_texture(destination):
+        return destination
+    try:
+        _store_texture(destination, data)
+    except (OSError, ValueError):
+        return None
+    return destination if _is_texture(destination) else None
+
+
 def jar_texture_bytes(
     block_name: str,
     *,

@@ -17,8 +17,11 @@
 
 """Block and loader glyphs for the instance cards, the dense version rows and the launch page.
 
-The real texture comes from ``launcher.meta.block_textures``: the version's own ``assets``, then its
-own client jar, then the user's cache. When none of them has it, the accent block painted by
+The real texture comes from ``launcher.meta.block_textures``: the version's own ``assets``, then the
+user's cache, then its own client jar. The jar is the last resort and the only expensive read (a 25 MB
+archive for a few KB of pixels), so the first successful jar read is copied into
+``<launcher data dir>/cache/block-textures/modern/``; from the next lookup on the cache answers first
+and the jar is not opened again. When none of them has it, the accent block painted by
 :func:`gui.paint_utils.block_pixmap` is used, so the pages keep working on a fresh install with no
 game files and no network.
 
@@ -318,12 +321,25 @@ def _load_texture(
 ) -> tuple[str, QImage] | None:
     """Resolve one block texture: ``(cache key, image)`` or ``None`` when it is nowhere.
 
-    The returned key identifies the exact bytes (a path's mtime is part of the file key, a client jar's
-    location and profile id are part of the jar key), so the caller's cube cache cannot serve pixels
-    from a texture that has since changed.
+    Order: the version's own assets, then the user cache, then the version's client jar. The cache
+    sits before the jar on purpose: a jar read is a 25 MB archive scan, and once this method has
+    copied a jar texture into the cache (see :meth:`block_textures.store_texture_bytes`) the next
+    lookup must stop at the cheap copy instead of opening the jar again.
+
+    The returned key identifies the exact bytes (a path's mtime is part of the file key, a client
+    jar's location and profile id are part of the jar key), so the caller's cube cache cannot serve
+    pixels from a texture that has since changed.
     """
     path = block_textures.find_asset_texture(
         block_name, game_dir=game_dir, version_id=version_id
+    )
+    if path is not None:
+        loaded = _load_path(path)
+        if loaded is not None:
+            return loaded
+
+    path = block_textures.find_cached_texture(
+        block_name, cache_root=cache_root, version_id=version_id
     )
     if path is not None:
         loaded = _load_path(path)
@@ -343,15 +359,11 @@ def _load_texture(
             if not image.isNull():
                 image = _first_frame(image)
                 _remember(source, image)
+                # First read from the jar: leave the pixels in the cache so the next launch (and the
+                # next card of the same version) does not open the archive again. A failure is
+                # silent - the icon is already decoded either way.
+                block_textures.store_texture_bytes(block_name, data, cache_root)
                 return source, image
-
-    path = block_textures.find_cached_texture(
-        block_name, cache_root=cache_root, version_id=version_id
-    )
-    if path is not None:
-        loaded = _load_path(path)
-        if loaded is not None:
-            return loaded
     return None
 
 

@@ -259,8 +259,12 @@ def test_unknown_loader_still_returns_an_icon():
     assert _painted(pixmap) > 0
 
 
-def test_lookup_order_is_assets_then_jar_then_cache(ws_tmp):
-    """The version's own files win over the user cache, so an old version keeps its old texture."""
+def test_lookup_order_is_assets_then_cache_then_jar(ws_tmp):
+    """The version's own files win, then the cache, then the jar.
+
+    The cache sits before the jar because the jar is the expensive source: once a version's texture
+    has been copied there (see the next test), opening the 25 MB archive again would be pure waste.
+    """
     game = ws_tmp / "game"
     cache = bt.texture_cache_root(ws_tmp / "data")
     _solid_png(cache / bt.MODERN_BUCKET / "grass_block_side.png", "#33aa33")
@@ -304,13 +308,51 @@ def test_lookup_order_is_assets_then_jar_then_cache(ws_tmp):
 
     assert _colours(icon()) == cube_colours("#cc2222")  # own assets
     object_path.unlink()
-    assert _colours(icon()) == cube_colours("#2244cc")  # own client jar
-    assert _colours(
-        block_icons.block_pixmap(
-            "grass_block_side",
-            48,
-            game_dir=ws_tmp / "no-game",
-            version_id="1.20.1",
-            cache_root=cache,
+    assert _colours(icon()) == cube_colours("#33aa33")  # the user cache beats the jar
+
+
+def test_first_jar_read_is_cached_and_the_second_read_never_opens_the_jar(ws_tmp, monkeypatch):
+    """Requirement: the first read from client.jar lands in cache/block-textures/modern/."""
+    game = ws_tmp / "game"
+    jar_bytes = _solid_png_bytes(ws_tmp / "jar-source.png", "#2244cc")
+    jar = game / "versions" / "1.20.1" / "1.20.1.jar"
+    jar.parent.mkdir(parents=True)
+    with zipfile.ZipFile(jar, "w") as archive:
+        archive.writestr("assets/minecraft/textures/block/grass_block_side.png", jar_bytes)
+        archive.writestr("assets/minecraft/textures/block/grass_block_top.png", jar_bytes)
+
+    cache = bt.texture_cache_root(ws_tmp / "data")
+    calls: list[str] = []
+    real = bt.jar_texture_bytes
+
+    def counting(block_name, **kwargs):
+        calls.append(block_name)
+        return real(block_name, **kwargs)
+
+    monkeypatch.setattr(bt, "jar_texture_bytes", counting)
+
+    def icon():
+        block_icons.clear_cache()
+        return block_icons.block_pixmap(
+            "grass_block_side", 48, game_dir=game, version_id="1.20.1", cache_root=cache
         )
-    ) == cube_colours("#33aa33")  # user cache
+
+    cube_colours = {
+        "#2244cc",
+        _shaded("#2244cc", block_icons.CUBE_LEFT_LIGHT),
+        _shaded("#2244cc", block_icons.CUBE_RIGHT_LIGHT),
+    }
+    assert _colours(icon()) == cube_colours
+    # Grass is the two-texture block: the side and the top both come out of the jar on this read.
+    assert calls == ["grass_block_side", "grass_block_top"]
+
+    root = cache / bt.MODERN_BUCKET
+    for name in ("grass_block_side", "grass_block_top"):
+        stored = root / (name + ".png")
+        assert stored.is_file()
+        assert stored.read_bytes() == jar_bytes  # the exact jar pixels, written atomically
+    assert not list(root.glob("*.tmp"))
+
+    # Second read: the cache answers both faces, the jar is not opened again.
+    assert _colours(icon()) == cube_colours
+    assert calls == ["grass_block_side", "grass_block_top"]

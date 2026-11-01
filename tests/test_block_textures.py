@@ -202,6 +202,38 @@ def test_no_assets_and_no_cache_returns_none(ws_tmp):
     )
 
 
+def test_store_texture_bytes_writes_the_modern_bucket_atomically(ws_tmp):
+    """The GUI's first jar read calls this; the file must be a complete PNG in modern/."""
+    root = bt.texture_cache_root(ws_tmp / "data")
+    written = bt.store_texture_bytes("gold_block", PNG, root)
+    assert written == root / bt.MODERN_BUCKET / "gold_block.png"
+    assert written.read_bytes() == PNG
+    assert not list((root / bt.MODERN_BUCKET).glob("*.tmp"))
+
+    # A later read finds it through the same lookup the pages use.
+    assert (
+        bt.find_cached_texture("gold_block", cache_root=root, version_id="1.20.1")
+        == written
+    )
+    assert bt.find_cached_texture("gold_block", cache_root=root) == written
+
+
+def test_store_texture_bytes_rejects_non_png_and_keeps_existing_files(ws_tmp):
+    root = bt.texture_cache_root(ws_tmp / "data")
+    assert bt.store_texture_bytes("gold_block", b"<html>not a png</html>", root) is None
+    assert not (root / bt.MODERN_BUCKET / "gold_block.png").exists()
+
+    first = bt.store_texture_bytes("gold_block", PNG, root)
+    assert first is not None
+    # An existing cache entry is never replaced: it may be newer than the source being read.
+    again = bt.store_texture_bytes("gold_block", PNG + b"different", root)
+    assert again == first
+    assert first.read_bytes() == PNG
+    # A name that could escape the cache directory is refused.
+    assert bt.store_texture_bytes("../evil", PNG, root) is None
+    assert not (root / "evil.png").exists()
+
+
 def _write_client_jar(path: Path, block_names: list[str], payload: bytes = PNG) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
