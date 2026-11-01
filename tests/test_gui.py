@@ -1744,7 +1744,6 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
 def test_instance_settings_reset_clears_overrides(app, monkeypatch, ws_tmp):
     """重置本实例设置 drops every override (and the isolation choice) after confirmation."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_reset"))
-    from PySide6.QtWidgets import QMessageBox
 
     from launcher import config as config_mod
     from launcher.instances import get_instance, set_instance_settings, update_instance
@@ -1756,11 +1755,8 @@ def test_instance_settings_reset_clears_overrides(app, monkeypatch, ws_tmp):
     config_mod.save(cfg, cfg_path)
     set_instance_settings("1.20.1", game_dir=game, memory_gb=8.0, jvm_args="-Xss4M")
     update_instance("1.20.1", game_dir=game, isolated="off")
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
-    )
+    # "Yes" in the reset confirmation, which gui/inwindow_dialog.py draws over the window.
+    monkeypatch.setattr("gui.inwindow_dialog.question", lambda *a, **k: True)
     from gui.main_window import MainWindow
 
     window = None

@@ -41,10 +41,8 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -56,7 +54,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, nav_icons, theme
+from gui import i18n, inwindow_dialog, nav_icons, theme
 from gui.accessibility_launch import (
     prepare_launch_accessibility,
     trigger_source_for_click,
@@ -1392,11 +1390,11 @@ class InstanceDetail(QWidget):
         if self._require_instance() is None:
             return
         old_id = self.instance_id
-        new_id, ok = QInputDialog.getText(
+        new_id, ok = inwindow_dialog.get_text(
             self,
             tr("instances.rename.dialog"),
             tr("instances.rename.prompt"),
-            text=old_id,
+            value=old_id,
         )
         new_id = new_id.strip()
         if not ok or not new_id or new_id == old_id:
@@ -1414,11 +1412,14 @@ class InstanceDetail(QWidget):
     def edit_note(self) -> None:
         if self._require_instance() is None:
             return
-        text, ok = QInputDialog.getMultiLineText(
+        # multiline: a note is free text. The old getMultiLineText() returned "" for an emptied box
+        # with ok=True, which clears the note - get_text() keeps that.
+        text, ok = inwindow_dialog.get_text(
             self,
             tr("instances.note"),
             tr("instances.note.prompt"),
-            self.instance.note if self.instance else "",
+            value=self.instance.note if self.instance else "",
+            multiline=True,
         )
         if not ok:
             return
@@ -1468,14 +1469,13 @@ class InstanceDetail(QWidget):
             dependents = []
         if dependents:
             message += "\n\n" + tr("instances.detail.delete.dependents", ", ".join(dependents))
-        answer = QMessageBox.question(
+        # No default_yes: delete_instance() cannot be undone, so the safe answer stays the default
+        # one, exactly as the old box's "No" default button did.
+        if not inwindow_dialog.question(
             self,
             tr("instances.delete.dialog"),
             message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             delete_instance(instance_id, self.game_dir)
@@ -1494,14 +1494,11 @@ class InstanceDetail(QWidget):
             return
         if self.isolation_combo.currentData() == self.instance.isolated:
             return
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("instances.detail.settings.isolation.title"),
             tr("instances.detail.settings.isolation.msg"),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        ):
             self._isolation_warned = True
             return
         self._filling = True
@@ -1567,14 +1564,11 @@ class InstanceDetail(QWidget):
         if self._require_instance() is None:
             return
         instance_id = self.instance_id
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("instances.detail.settings.reset.title"),
             tr("instances.detail.settings.reset.msg", instance_id),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             reset_instance_settings(instance_id, self.game_dir)
@@ -1689,14 +1683,11 @@ class InstanceDetail(QWidget):
             item = self.mods_table.item(row, 5)
             if item:
                 files.append(item.text())
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("instances.mods.delete"),
             tr("instances.mods.delete.confirm", len(files)),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         deleted = 0
         for name in files:
@@ -1792,14 +1783,11 @@ class InstanceDetail(QWidget):
         if not names:
             set_app_status(self, tr("instances.detail.res.msg.need_select"), "warning")
             return
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("instances.mods.delete"),
             tr("instances.detail.res.delete.confirm", len(names)),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         resolved = self.resolved
 

@@ -68,6 +68,12 @@ def _unlock_token_vault() -> None:
         pass
     from PySide6.QtWidgets import QInputDialog, QLineEdit
 
+    # Deliberately the only QInputDialog left in the app, and deliberately still the native one: it
+    # runs *before* the main window exists (create_app() calls this, the window is built afterwards),
+    # and the in-window dialogs in gui/inwindow_dialog.py draw inside a window by definition - there is
+    # no window to draw in yet, so a "frameless card" here would be a window on the desktop with no
+    # backdrop behind it. The password prompt for unlocking the account vault is a pre-window modal on
+    # purpose; every dialog that belongs to a page uses the in-window card.
     for _attempt in range(3):
         text, ok = QInputDialog.getText(
             None,

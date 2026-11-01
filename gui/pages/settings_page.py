@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n
+from gui import i18n, inwindow_dialog
 from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve_theme
 from gui.widgets import (
     AccessibilityPreferenceGroup,
@@ -837,21 +837,19 @@ class SettingsPage(QWidget):
             self.encrypt_button.setText(tr("settings.encrypt_set"))
 
     def _prompt_new_password(self) -> str | None:
-        from PySide6.QtWidgets import QInputDialog, QLineEdit
-
-        first, ok = QInputDialog.getText(
+        first, ok = inwindow_dialog.get_text(
             self,
             tr("settings.encrypt_set"),
             tr("settings.encrypt.password.prompt"),
-            QLineEdit.EchoMode.Password,
+            password=True,
         )
         if not ok or not first:
             return None
-        second, ok2 = QInputDialog.getText(
+        second, ok2 = inwindow_dialog.get_text(
             self,
             tr("settings.encrypt_set"),
             tr("settings.encrypt.password.confirm"),
-            QLineEdit.EchoMode.Password,
+            password=True,
         )
         if not ok2 or first != second:
             set_app_status(self, tr("settings.encrypt.password.mismatch"))
@@ -859,13 +857,11 @@ class SettingsPage(QWidget):
         return first
 
     def _prompt_current_password(self) -> str | None:
-        from PySide6.QtWidgets import QInputDialog, QLineEdit
-
-        text, ok = QInputDialog.getText(
+        text, ok = inwindow_dialog.get_text(
             self,
             tr("settings.encrypt_change"),
             tr("settings.encrypt.current.prompt"),
-            QLineEdit.EchoMode.Password,
+            password=True,
         )
         if not ok or not text:
             return None
