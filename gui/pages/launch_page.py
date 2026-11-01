@@ -521,9 +521,23 @@ class LaunchPage(QWidget):
         self.instance_settings_requested.emit(version_id)
 
     def set_version_id(self, version_id: str) -> None:
-        """Show/launch this profile (the versions and instances pages hand one over)."""
+        """Show/launch this profile (the versions and instances pages hand one over).
+
+        The launch page is the one place that decides which profile the launcher will run, so the
+        choice is written to ``config.selected_instance`` here instead of being kept in memory only.
+        """
         self._version_id = str(version_id or "").strip()
+        self._remember_selected_instance(self._version_id)
         self._refresh_version_block()
+
+    def _remember_selected_instance(self, instance_id: str) -> None:
+        """Persist the launch target (empty = keep the historical first-installed behaviour)."""
+        cfg, cfg_path = config.load()
+        target = str(instance_id or "").strip()
+        if str(cfg.selected_instance or "").strip() == target:
+            return
+        cfg.selected_instance = target
+        config.save(cfg, cfg_path)
 
     def _game_dir(self) -> Path:
         cfg, _ = config.load()
@@ -535,14 +549,23 @@ class LaunchPage(QWidget):
         )
 
     def _populate_versions(self) -> None:
-        """List only installed versions/profiles, keeping the current one when it still exists."""
+        """List only installed versions/profiles, keeping the stored/current one when it still exists."""
         from launcher.install import list_installed_versions
         from launcher.instances import display_version_name
 
+        cfg, _ = config.load()
+        stored = str(cfg.selected_instance or "").strip()
         installed = sorted(list_installed_versions(self._game_dir()))
         self._version_choices = [(display_version_name(vid), vid) for vid in installed]
         ids = [version_id for _label, version_id in self._version_choices]
-        if self._version_id and self._version_id not in ids:
+        if stored and stored in ids:
+            self._version_id = stored
+        elif stored:
+            # The chosen instance was deleted or renamed: forget the dangling id and fall back to
+            # the historical rule instead of showing a profile that no longer exists.
+            self._remember_selected_instance("")
+            self._version_id = ids[0] if ids else ""
+        elif self._version_id and self._version_id not in ids:
             # The profile disappeared (uninstalled/renamed): fall back to the first one, or to the
             # empty state when nothing is installed.
             self._version_id = ids[0] if ids else ""

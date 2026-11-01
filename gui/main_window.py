@@ -296,12 +296,16 @@ class MainWindow(QMainWindow):
             "account": [("account_changed", self._on_account_changed)],
             "launch": [
                 ("account_changed", self._on_launch_account_changed),
-                ("instance_requested", self._goto_instance),
+                # 实例选择 opens the card grid (where an instance can actually be chosen), not the
+                # detail page of the profile that happens to be current; 实例设置 still drills in.
+                ("instance_requested", self._goto_instances_list),
                 ("instance_settings_requested", self._goto_instance_settings),
                 ("account_requested", self._goto_account),
             ],
             "instances": [
                 ("instance_open_requested", self._goto_instance),
+                # 使用 on a card: make it the launch target and go back to the launch page.
+                ("instance_use_requested", self._on_instance_use_requested),
                 ("back_requested", self._on_instances_back),
                 # The instance detail page replaces the main rail with its own sidebar: the page says
                 # which of its two views is on screen, and the window shows exactly one rail.
@@ -489,6 +493,20 @@ class MainWindow(QMainWindow):
     def _goto_launch(self, version_id: str) -> None:
         self.pages["launch"].set_version_id(version_id)
         self.sidebar.setCurrentRow(0)
+
+    def _goto_instances_list(self, version_id: str = "") -> None:
+        """Open the card grid scrolled to one instance (the launch page's 实例选择)."""
+        from launcher import config
+
+        self.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
+        cfg, _ = config.load()
+        wanted = str(version_id or "").strip() or str(cfg.selected_instance or "").strip()
+        self.pages["instances"].reveal_instance(wanted)
+
+    def _on_instance_use_requested(self, instance_id: str) -> None:
+        """A card's 使用: store it as the launch target and return to the launch page."""
+        self.pages["launch"].set_version_id(instance_id)  # writes config.selected_instance
+        self.sidebar.setCurrentRow(NAV_KEYS.index("launch"))
 
     def _goto_instance(self, version_id: str) -> None:
         """Open one instance's detail page, whichever page asked for it."""

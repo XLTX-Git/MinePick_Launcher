@@ -1395,19 +1395,23 @@ QListWidget#instanceCardList::item:selected:focus {
     padding: 0;
     margin: 0;
 }
-QPushButton#instanceCard {
+QFrame#instanceCard {
     background: __BG_LIST__;
     border: 1px solid __BORDER_LIST__;
     border-radius: __RADIUS_LG__;
-    padding: 0;
-    text-align: left;
 }
-QPushButton#instanceCard:hover {
+QFrame#instanceCard:hover {
     background: __BG_LIST__;
     border-color: __ACCENT__;
 }
-QPushButton#instanceCard:pressed { background: __BG_LIST_2__; }
-QPushButton#instanceCard[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+/* The current instance speaks the detail sidebar's selection language: a 3px accent bar on the
+   left plus the pale accent wash. Declared after :hover so a hover cannot repaint the bar away. */
+QFrame#instanceCard[current="true"],
+QFrame#instanceCard[current="true"]:hover {
+    background: __ACCENT_TINT__;
+    border-color: __ACCENT__;
+    border-left: 3px solid __ACCENT__;
+}
 QLabel#instanceCardName {
     background: transparent;
     color: __FG_TEXT__;
@@ -1424,17 +1428,28 @@ QLabel#instanceCardIcon {
     background: transparent;
     border-radius: __RADIUS_SM__;
 }
-QLabel#instanceCardManage {
+/* 使用 is the card's primary action: it keeps the base accent fill and states only its metrics. */
+QPushButton#instanceCardUse {
+    padding: 0 12px;
+    font-size: 12px;
+}
+/* 管理 stays the quiet outline the whole card used to draw for it. */
+QPushButton#instanceCardManage {
     background: transparent;
     color: __FG_BUTTON_SECONDARY__;
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
     border-radius: __RADIUS_SM__;
-    padding: 4px 12px;
+    padding: 0 12px;
     font-size: 12px;
     font-weight: 400;
 }
-QPushButton#instanceCard:hover QLabel#instanceCardManage {
+QPushButton#instanceCardManage:hover {
     border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QPushButton#instanceCardManage[keyboardFocus="true"]:focus {
+    background: transparent;
+    border-color: __FOCUS_RING__;
     color: __FG_TEXT__;
 }
 

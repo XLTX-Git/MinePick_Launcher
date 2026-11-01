@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QPoint, Qt, QThreadPool
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from gui import i18n
 from launcher import config as config_mod
@@ -191,9 +191,12 @@ def test_cards_are_a_responsive_grid_and_open_the_detail_page(app, monkeypatch, 
             assert card.accessibleName().strip()
             name = card.findChild(QLabel, "instanceCardName")
             meta = card.findChild(QLabel, "instanceCardMeta")
-            manage = card.findChild(QLabel, "instanceCardManage")
+            use = card.findChild(QPushButton, "instanceCardUse")
+            manage = card.findChild(QPushButton, "instanceCardManage")
             assert name is not None and name.text()
             assert meta is not None and " · " in meta.text()
+            # Both actions are real buttons side by side: 使用 is the primary, 管理 the outline.
+            assert use is not None and use.text() == i18n.tr("instances.card.use")
             assert manage is not None and manage.text() == i18n.tr("instances.card.manage")
 
         fabric = _card_by_id(page, "fabric-loader-0.19.3-1.21.11")
@@ -203,8 +206,12 @@ def test_cards_are_a_responsive_grid_and_open_the_detail_page(app, monkeypatch, 
         assert "Fabric 0.19.3" in fabric.findChild(QLabel, "instanceCardMeta").text()
         assert "1.21.11" in fabric.findChild(QLabel, "instanceCardMeta").text()
 
-        # Clicking the card (not the decorative 管理 label) opens the detail page.
+        # Single-clicking the card body is not an action any more (使用/管理 are the two actions);
+        # 管理 is what opens the detail page.
         QTest.mouseClick(fabric, Qt.MouseButton.LeftButton)
+        _settle(app, window)
+        assert page.current_view() is page.view_stack.widget(0)
+        fabric.findChild(QPushButton, "instanceCardManage").click()
         _settle(app, window)
         assert page.current_view() is page.detail_page
         assert page.detail.instance_id == "fabric-loader-0.19.3-1.21.11"

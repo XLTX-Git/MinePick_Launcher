@@ -26,17 +26,18 @@ never embeds it, and the detail page is shown only after a deliberate drill-down
 from __future__ import annotations
 
 import json
-from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -168,8 +169,17 @@ def instance_counts(instance, cfg, game_dir: Path) -> tuple[int, int]:
     return mods, saves
 
 
-class _InstanceCard(QPushButton):
-    """One white card. The whole surface is the button; 管理 is its visual affordance, not a fake action."""
+class _InstanceCard(QFrame):
+    """One white card: 使用 is its primary action, 管理 opens the detail page.
+
+    The card used to be one big button whose only affordance was 管理, so there was no way to say
+    "run this one". Now the two actions are real buttons, the card body answers a double-click with
+    使用, and the instance the launcher is set to run carries the same 3px accent bar the detail
+    sidebar uses for its selected row (one selection language across the app).
+    """
+
+    use_requested = Signal(str)
+    manage_requested = Signal(str)
 
     def __init__(
         self,
@@ -178,17 +188,29 @@ class _InstanceCard(QPushButton):
         counts: str,
         icon_pixmap: QPixmap,
         *,
+        current: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.instance_id = instance.id
         self.setObjectName("instanceCard")
-        self.setAccessibleName(tr("instances.card.open", instance.name))
-        description = meta + (" · " + counts if counts else "")
-        self.setAccessibleDescription(description)
-        self.setToolTip(f"{instance.name}\n{description}")
+        # A QFrame only paints a QSS background when it is told to; the card's white fill depends on it.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # The card is a surface, not a control: the two real buttons are the keyboard stops.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # The "current" marker is the detail sidebar's 3px accent bar plus its pale accent wash,
+        # painted by the stylesheet through this property; keeping it a property means the card can
+        # be re-marked without rebuilding the widget.
+        self.setProperty("current", bool(current))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        description = meta + (" · " + counts if counts else "")
+        self.setAccessibleName(tr("instances.card.open", instance.name))
+        accessible = description
+        if current:
+            accessible += " · " + tr("instances.card.current")
+        self.setAccessibleDescription(accessible)
+        self.setToolTip(f"{instance.name}\n{description}")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -203,12 +225,12 @@ class _InstanceCard(QPushButton):
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setPixmap(icon_pixmap)
         icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        # The card button is the one focus stop; its text is painted by child labels, not controls.
-        # ElidedLabel enables text selection, which also gives it ClickFocus - so each name/meta line
-        # entered the focus chain as a second stop with no :focus rule (the keyboard walkthrough
-        # flagged it). Mouse events already pass through to the card (WA_TransparentForMouseEvents),
-        # so selecting this text was unreachable anyway. Turn focus off on exactly these two card
-        # labels; keep the class default for the detail page's path/ID labels, which stay selectable.
+        # The card's text is painted by child labels, not controls. ElidedLabel enables text
+        # selection, which also gives it ClickFocus - so each name/meta line entered the focus chain
+        # as a focus stop with no :focus rule (the keyboard walkthrough flagged it). Mouse events
+        # already pass through to the card, so selecting this text was unreachable anyway. Turn focus
+        # off on exactly these two card labels; keep the class default for the detail page's
+        # path/ID labels, which stay selectable.
         name = ElidedLabel(instance.name)
         name.setObjectName("instanceCardName")
         name.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -232,16 +254,36 @@ class _InstanceCard(QPushButton):
         counts_label.setWordWrap(False)
         counts_label.setVisible(bool(counts))
         counts_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        manage = QLabel(tr("instances.card.manage"))
-        manage.setObjectName("instanceCardManage")
-        manage.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        manage.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # The primary action. It keeps the button base rule (accent fill, white text), so it reads as
+        # "the" action on the card without a second colour vocabulary.
+        self.use_button = QPushButton(tr("instances.card.use"))
+        self.use_button.setObjectName("instanceCardUse")
+        self.use_button.setAccessibleName(
+            tr("instances.card.use") + " " + instance.name
+        )
+        self.use_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.use_button.setFixedHeight(28)
+        self.use_button.clicked.connect(lambda: self.use_requested.emit(self.instance_id))
+        # The secondary sibling: the same quiet outline the card used to draw for 管理.
+        self.manage_button = QPushButton(tr("instances.card.manage"))
+        self.manage_button.setObjectName("instanceCardManage")
+        self.manage_button.setAccessibleName(tr("instances.card.open", instance.name))
+        self.manage_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.manage_button.setFixedHeight(28)
+        self.manage_button.clicked.connect(lambda: self.manage_requested.emit(self.instance_id))
         bottom.addWidget(counts_label)
         bottom.addStretch(1)
-        bottom.addWidget(manage)
+        bottom.addWidget(self.use_button)
+        bottom.addWidget(self.manage_button)
         layout.addLayout(bottom)
 
-        self.manage_label = manage
+    def mouseDoubleClickEvent(self, event) -> None:
+        """Double-clicking the card body uses the instance (the buttons keep their own clicks)."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.use_requested.emit(self.instance_id)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class _CardListWidget(QListWidget):
@@ -337,6 +379,8 @@ class InstancesPage(QWidget):
 
     #: A card (or the 管理 affordance drawn on it) asks the window to open the detail page.
     instance_open_requested = Signal(str)
+    #: A card's 使用 button (or a double-click on the card) asks the window to make it current.
+    instance_use_requested = Signal(str)
     #: The detail page's back control asks to return to the grid.
     back_requested = Signal()
     #: The detail view is on screen. The window uses this to hide the main navigation rail, because
@@ -454,19 +498,41 @@ class InstancesPage(QWidget):
         return True
 
     def show_list(self) -> None:
-        """Return to the card grid, putting keyboard focus back on the current card.
+        """Return to the card grid, putting keyboard focus back on the current card's 使用 button.
 
-        Focus lands on a control that stays visible: the current card when there is one, otherwise the
-        search field. It used to stay on the back button whenever the grid was empty, which left the
-        window with focus on a widget inside the now-hidden detail page.
+        Focus lands on a control that stays visible: the current card's primary action when there is
+        one, otherwise the search field. It used to stay on the back button whenever the grid was
+        empty, which left the window with focus on a widget inside the now-hidden detail page.
         """
         self.view_stack.setCurrentWidget(self.view_stack.widget(0))
         if self.isVisible():
             item = self.list.currentItem()
             card = self.list.itemWidget(item) if item is not None else None
-            target = card if card is not None else self.search_edit
+            target = card.use_button if card is not None else self.search_edit
             target.setFocus(Qt.FocusReason.OtherFocusReason)
         self.list_shown.emit()
+
+    def reveal_instance(self, instance_id: str) -> bool:
+        """Show the grid scrolled to one instance, make it the current row, then focus its card.
+
+        This is what arriving from the launch page's 实例选择 does: the stored instance is selected
+        and scrolled into the viewport instead of the page opening at the top of a long grid.
+        """
+        wanted = str(instance_id or "").strip()
+        self.refresh(select=wanted or None)
+        row = self.list.currentRow()
+        item = self.list.item(row) if row >= 0 else None
+        if item is None:
+            self.show_list()
+            return False
+        self.list.scrollToItem(item, QAbstractItemView.ScrollHint.EnsureVisible)
+        self.show_list()
+        return True
+
+    def reveal_current_instance(self) -> bool:
+        """Scroll to the instance the launcher is set to start on (no-op when none is stored)."""
+        cfg, _ = config.load()
+        return self.reveal_instance(str(cfg.selected_instance or "").strip())
 
     def current_view(self) -> QWidget:
         return self.view_stack.currentWidget()
@@ -487,6 +553,7 @@ class InstancesPage(QWidget):
         game_dir = cfg.game_dir or paths.default_game_dir()
         instances = list_instances(game_dir)
         self._instances = instances
+        current_id = str(cfg.selected_instance or "").strip()
         ordered = sorted(instances.values(), key=self._sort_key)
         needle = self.search_edit.text().strip().lower()
         self.list.blockSignals(True)
@@ -516,9 +583,11 @@ class InstancesPage(QWidget):
                     f"{version} · {loader}",
                     counts,
                     self._card_icon(version, loader, game_dir),
+                    current=inst.id == current_id,
                     parent=self.list,
                 )
-                card.clicked.connect(partial(self._open_requested, inst.id))
+                card.use_requested.connect(self.instance_use_requested)
+                card.manage_requested.connect(self._open_requested)
                 self.list.setItemWidget(item, card)
                 shown += 1
         finally:

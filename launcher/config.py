@@ -68,6 +68,13 @@ class LauncherConfig(BaseModel):
     )
     max_concurrent_downloads: int = Field(default=4, ge=1, le=32, description="Download concurrency")
     selected_account: str | None = Field(default=None, description="Account id selected by default")
+    selected_instance: str = Field(
+        default="",
+        description=(
+            "Instance id (the versions/<id> folder name) the launch page starts on; empty keeps the "
+            "historical behaviour of showing the first installed profile"
+        ),
+    )
     auto_install_java: bool = Field(default=False, description="Auto-download Java from Adoptium when missing")
     msa_client_id: str | None = Field(
         default=None,

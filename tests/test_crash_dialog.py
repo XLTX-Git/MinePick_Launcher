@@ -140,7 +140,7 @@ def test_a_stale_blur_setting_cannot_turn_the_blur_off(app, ws_tmp, monkeypatch)
 
 
 def test_launch_instance_buttons_navigate(app, ws_tmp, monkeypatch):
-    """实例选择 jumps to the instances page; 实例设置 opens that profile's settings tab."""
+    """实例选择 opens the card grid on the current instance; 实例设置 opens its settings tab."""
     import json
 
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_nav"))
@@ -170,6 +170,9 @@ def test_launch_instance_buttons_navigate(app, ws_tmp, monkeypatch):
         launch.select_instance_button.click()
         app.processEvents()
         assert window.stack.currentWidget() is instances
+        # 实例选择 now lands on the grid, scrolled to the current card - not on its detail page.
+        assert instances.current_view() is instances.view_stack.widget(0)
+        assert instances.list.currentItem().data(Qt.ItemDataRole.UserRole) == version_id
         assert instances.detail.instance_id == version_id
 
         launch.instance_settings_button.click()
