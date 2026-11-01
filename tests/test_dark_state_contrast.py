@@ -1,4 +1,4 @@
-﻿# SPDX-FileCopyrightText: 2026 WDNDXLTX
+# SPDX-FileCopyrightText: 2026 WDNDXLTX
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # This file is part of MinePick Launcher.
@@ -17,8 +17,8 @@
 
 """Dark-theme sweep: a state or an edge whose dark value erases the difference it exists for.
 
-The page-by-page dark sweep (tmp/dark_sweep/REPORT.md) found a defect class
-that is not a contrast failure the pair audit can see:
+The page-by-page dark sweep (tmp/dark_sweep/REPORT.md) found two defects of one class. Both were
+technically styled and visually absent, and neither is a contrast failure the pair audit can see:
 
 * **A state that repaints in the colour it already had.** ``QLineEdit:hover`` sets
   ``border-color: BORDER_HOVER``, but on the launch, versions, settings and resources pages the
@@ -28,6 +28,11 @@ that is not a contrast failure the pair audit can see:
   buttons (``BG_BUTTON_SECONDARY_2`` equals ``BG_LIST`` in dark) and the hovered slider handle
   (``BG_HOVER`` equals ``BG_LIST_2``); those two need a token that does not exist yet, so they are
   reported rather than pinned, and only the border case has a value here.
+
+* **An edge drawn against a backdrop that is not in the palette.** The in-window dialog's card sits
+  on a theme-blind 35% black scrim (gui/overlay.py SCRIM). That tint leaves a white card 2.59:1 clear
+  of the backdrop in the light sheet and ``BG_LIST`` 1.15:1 clear of it in dark, so the card's outline
+  is the only thing that carries its silhouette there.
 
 These tests pin the measurements; they do not restate the QSS. Every value is read back out of the
 sheets and the palette, because the defect was exactly that the two agreed when they should not have.
@@ -58,6 +63,8 @@ BORDER_PROPS = (
 TOKEN = re.compile(r"__([A-Z0-9_]+)__")
 COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 
+# The scrim the in-window dialogs paint over the window (gui/overlay.py SCRIM["normal"]): 35% black.
+SCRIM_ALPHA = 90
 
 
 def _rules(path: Path) -> list[tuple[str, dict[str, str]]]:
@@ -194,3 +201,57 @@ def test_every_dark_hover_rule_repaints_its_border_somewhere_new():
             f"hover is invisible:\n  " + "\n  ".join(sorted(set(flat)))
         )
 
+
+def _overlay_card_outline(sheet: Path) -> str | None:
+    for selector, declarations in _rules(sheet):
+        if selector == "QWidget#overlayCard":
+            return _token(declarations.get("border"))
+    return None
+
+
+def _scrim_over(colour: str) -> str:
+    """The scrim's tint applied over `colour`, the way paintEvent composites it (source-over black)."""
+    alpha = SCRIM_ALPHA / 255
+    value = colour.lstrip("#")
+    red, green, blue = (int(value[index : index + 2], 16) for index in (0, 2, 4))
+    return f"#{round(red * (1 - alpha)):02x}{round(green * (1 - alpha)):02x}{round(blue * (1 - alpha)):02x}"
+
+
+def test_the_dark_overlay_card_edge_carries_the_silhouette():
+    """The dialog card's silhouette against the scrim, in the one theme where the fill cannot carry it.
+
+    The scrim is theme-blind, so the card's *fill* clears it by 2.59:1 in light and 1.15:1 in dark -
+    which is why the dark sheet draws the stronger outline. 2.0:1 is the floor: below it the card's
+    edge and the dimmed page read as one surface (the sweep measured 1.46:1 before the change).
+    """
+    token = _overlay_card_outline(DARK_SHEET)
+    assert token is not None, "style.qss no longer outlines the overlay card"
+    ratio = theme.contrast_ratio(_colour("dark", token), _scrim_over(_colour("dark", "BG_PAGE")))
+    assert ratio >= 2.0, (
+        f"dark: the overlay card's outline {token} lights up at {ratio:.2f}:1 against the scrim, so "
+        f"the card has no visible silhouette"
+    )
+
+
+def test_the_light_sheet_keeps_its_own_overlay_outline():
+    """The sweep's contract: the light theme is unchanged. Its card keeps the quiet outline.
+
+    Light does not need the stronger edge, because its card *fill* is what separates it from the
+    scrim (2.59:1); the measured outline is pinned here so a later change to the light sheet has to
+    come with a decision attached to it.
+    """
+    assert _overlay_card_outline(LIGHT_SHEET) == "BORDER_BUTTON_ICON"
+    ratio = theme.contrast_ratio(
+        _colour("light", "BORDER_BUTTON_ICON"), _scrim_over(_colour("light", "BG_PAGE"))
+    )
+    assert 1.60 <= ratio <= 1.80, (
+        f"light: the overlay outline moved to {ratio:.2f}:1 against the scrim"
+    )
+    assert theme.NEUTRAL_TOKENS["BORDER_HOVER"]["light"] == "#a7b4c2"
+    assert theme.NEUTRAL_TOKENS["BORDER_SWATCH"]["light"] == "#b6c1cd"
+
+
+def test_the_dark_palette_values_the_sweep_set():
+    """Pin the two dark values so a later edit is a decision, not a drift."""
+    assert theme.NEUTRAL_TOKENS["BORDER_HOVER"]["dark"] == "#46566a"
+    assert theme.contrast_ratio("#46566a", "#33404f") >= 1.30
