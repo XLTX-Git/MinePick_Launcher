@@ -92,9 +92,10 @@ from launcher.mods.search import (
     collect_all_sources,
     merge_same_titles,
     page_offset,
+    rank_hits,
     source_has_next,
 )
-from launcher.mods.zh_names import has_cjk, search_local
+from launcher.mods.zh_names import english_query, has_cjk, search_local, zh_name
 
 tr = i18n.tr
 
@@ -195,6 +196,22 @@ def _tokens() -> dict[str, str]:
     return tokens or theme.theme_palette("light")
 
 
+def display_titles(entry: object) -> tuple[str, str, bool]:
+    """The two text lines of one result row: ``(title, second line, is Chinese title)``.
+
+    A project that the bundled table knows keeps its Chinese name as the headline and the project's
+    own English title underneath - the reverse would put a name the user did not search for on top.
+    Everything else keeps the API's title and its description, exactly as before.
+    """
+    title = str(getattr(entry, "title", "") or getattr(entry, "slug", "") or "")
+    description = str(getattr(entry, "description", "") or "")
+    slug = str(getattr(entry, "slug", "") or "")
+    chinese = zh_name(slug)
+    if not chinese or chinese.casefold() == title.casefold():
+        return title, description, False
+    return chinese, title, True
+
+
 def _fetch_icon_bytes(url: str) -> bytes:
     """Download one project icon (small, short timeout, capped) for the background worker."""
     import httpx
@@ -241,7 +258,9 @@ class _ResourceRow(QWidget):
         super().__init__(parent)
         self.entry = entry
         self.icon_url = str(getattr(entry, "icon_url", "") or "").strip()
-        self.title = str(getattr(entry, "title", "") or getattr(entry, "slug", ""))
+        # Two lines only, and only their wording changes with the table: the headline is the
+        # Chinese name when we have one, the second line is then the project's English title.
+        self.title, self.subtitle, _chinese = display_titles(entry)
         self.description = str(getattr(entry, "description", "") or "")
         self._kind_label = kind_label
         self._on_select = on_select
@@ -286,7 +305,9 @@ class _ResourceRow(QWidget):
 
     def _tooltip_text(self) -> str:
         lines = [self.title]
-        if self.description:
+        if self.subtitle and self.subtitle != self.title:
+            lines.append(self.subtitle)
+        if self.description and self.description not in lines:
             lines.append(self.description)
         meta = " · ".join(text for _glyph, text in self._meta)
         if meta:
@@ -407,7 +428,7 @@ class _ResourceRow(QWidget):
         painter.setPen(hint_color)
         desc_metrics = QFontMetrics(desc_font)
         description = desc_metrics.elidedText(
-            self.description.replace("\n", " "), Qt.TextElideMode.ElideRight, int(width)
+            self.subtitle.replace("\n", " "), Qt.TextElideMode.ElideRight, int(width)
         )
         painter.drawText(
             QRectF(text_left, 28, width, 16),
@@ -915,7 +936,8 @@ class _ContentTab(QWidget):
         for index, entry in enumerate(entries):
             # The item's own text is the accessible/testable representation and keeps the exact counts
             # (the card paints the human-readable form on top). This is what test_e2e asserts on.
-            text = getattr(entry, "title", "")
+            main, second, chinese = display_titles(entry)
+            text = main if not chinese else f"{main} · {second}"
             if isinstance(entry, ModSearchHit) and entry.downloads:
                 text += "   | " + tr("mods.search.downloads", f"{entry.downloads:,}")
             item = QListWidgetItem(text)
@@ -976,7 +998,9 @@ class _ContentTab(QWidget):
         if isinstance(entry, ModSearchHit):
             self._hit = entry
             self._current = None
-            self.title_label.setText(entry.title)
+            main, second, chinese = display_titles(entry)
+            # Same order as the row: the Chinese name is the headline, the English title follows it.
+            self.title_label.setText(f"{main} · {second}" if chinese else main)
             self.desc_label.setText(entry.description)
             self.dep_required.setText("")
             meta = " · ".join(text for _glyph, text in self._row_meta(row))
@@ -994,7 +1018,9 @@ class _ContentTab(QWidget):
 
     def _show_mod(self, mod: ModInfo) -> None:
         self._current = mod
-        self.title_label.setText(mod.title)
+        # Same two lines as the row: a project the table knows leads with its Chinese name.
+        main, second, chinese = display_titles(mod)
+        self.title_label.setText(f"{main} · {second}" if chinese else main)
         self.desc_label.setText(mod.description)
         none_tag = '<span style="color:#8b9bb4;">' + tr("mods.dep.none") + "</span>"
         self.dep_required.setText(
@@ -1114,8 +1140,11 @@ class _ContentTab(QWidget):
                 ]
                 pages, errors = collect_all_sources(sources)
                 # Deliberately no de-duplication: "Sodium" from both sources stays two rows, and the
-                # merge puts them next to each other with Modrinth first.
-                merged = merge_same_titles(hit for source_page in pages for hit in source_page)
+                # merge puts them next to each other with Modrinth first. Ranking runs before the
+                # merge so a group keeps its two rows adjacent (the merge only groups neighbours).
+                merged = merge_same_titles(
+                    self._ranked((hit for source_page in pages for hit in source_page), query, sort)
+                )
                 has_next = any(
                     source_has_next(source_page, offset, ALL_PAGE_SIZE) for source_page in pages
                 )
@@ -1136,7 +1165,11 @@ class _ContentTab(QWidget):
                 )
             else:
                 hits = self._modrinth_page(query, offset, PAGE_SIZE, sort, project_type)
-            return PageOutcome(list(hits), source_has_next(hits, offset, PAGE_SIZE), [])
+            return PageOutcome(
+                self._ranked(list(hits), query, sort),
+                source_has_next(hits, offset, PAGE_SIZE),
+                [],
+            )
 
         run_in_background(
             do_page,
@@ -1145,6 +1178,19 @@ class _ContentTab(QWidget):
             on_finished=lambda: self._on_page_finished(request_id),
         )
 
+    @staticmethod
+    def _ranked(hits, query: str, sort: str) -> list[ModSearchHit]:
+        """Search results with the name-matching rows on top; an explicit sort is left alone.
+
+        The APIs order by their own English relevance model, so a Chinese query lands wherever it
+        lands. Ordering only changes for a search under the default "relevance" sort: picking
+        "downloads" or "updated" still means what it says.
+        """
+        ordered = list(hits)
+        if not query or sort != "relevance":
+            return ordered
+        return rank_hits(ordered, query)
+
     def _modrinth_page(
         self, query: str, offset: int, limit: int, sort: str, project_type: str
     ) -> SearchHits:
@@ -1152,6 +1198,13 @@ class _ContentTab(QWidget):
             query, limit=limit, offset=offset, sort=sort, project_type=project_type
         )
         if has_cjk(query) and offset == 0:
+            english = english_query(query)
+            if english and not hits:
+                # Modrinth's index holds English names: "投影" matches nothing there, while the
+                # table's answer "litematica" does. One extra request, only when the first was empty.
+                hits = search_projects(
+                    english, limit=limit, offset=offset, sort=sort, project_type=project_type
+                )
             hits = SearchHits(
                 self._with_local_chinese(list(hits), query),
                 total=int(getattr(hits, "total", 0) or 0),

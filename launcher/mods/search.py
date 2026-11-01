@@ -28,6 +28,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 
 from launcher.mods.models import ModSearchHit, SearchHits
+from launcher.mods.zh_names import name_match, zh_aliases
 
 #: One page of a single-source search. The "All" source uses ``ALL_PAGE_SIZE`` per source, so its
 #: merged page still holds about one page of rows.
@@ -36,6 +37,9 @@ ALL_PAGE_SIZE = 15
 
 #: The semantic sort keys the dropdown offers. Each client maps them to its own API vocabulary.
 SORT_CHOICES: tuple[str, ...] = ("relevance", "downloads", "updated", "newest")
+
+#: Rank of a hit whose name has nothing to do with the query: shown, but under every name match.
+_UNRELATED = 3
 
 _SOURCE_RANK = {"modrinth": 0, "curseforge": 1}
 
@@ -85,6 +89,37 @@ def source_has_next(page: Sequence[ModSearchHit], offset: int, page_size: int) -
     if total > 0:
         return offset + len(page) < total
     return len(page) >= page_size
+
+
+def rank_hits(
+    hits: Iterable[ModSearchHit],
+    query: str,
+    *,
+    names: dict[str, tuple[str, ...]] | None = None,
+) -> list[ModSearchHit]:
+    """Put the rows whose name answers the query first, then order each layer by downloads.
+
+    The source APIs order a page by their own relevance model, which knows English only: searching
+    "投影" puts unrelated projects above Litematica, and searching "实体渲染优化" puts nothing
+    useful anywhere. Here every hit's names (slug, title and the bundled Chinese aliases) are
+    matched with the same three layers the local table uses, so an exact name outranks a partial
+    one, a partial one outranks a word-by-word hit, and any of them outranks a download count. The
+    download count orders the rows inside one layer; the source's own order is the last tie-break,
+    so an unchanged page keeps its order.
+    """
+    text = (query or "").strip()
+    ordered = list(hits)
+    if not text:
+        return ordered
+    table = zh_aliases() if names is None else names
+    keyed: list[tuple[tuple[int, int, int], ModSearchHit]] = []
+    for index, hit in enumerate(ordered):
+        found = name_match(text, (hit.slug, hit.title, *table.get(hit.slug, ())))
+        tier = found[0] if found is not None else _UNRELATED
+        downloads = int(getattr(hit, "downloads", 0) or 0)
+        keyed.append(((tier, -downloads, index), hit))
+    keyed.sort(key=lambda item: item[0])
+    return [hit for _key, hit in keyed]
 
 
 def collect_all_sources(
