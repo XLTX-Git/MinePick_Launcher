@@ -70,6 +70,13 @@ DEFAULT_MODE = "download_notify"
 FAILURE_CODES = ("network", "http", "parse", "no_asset", "size", "signature")
 PROGRESS_STEP = 1 << 20  # report download progress about once per MB
 
+#: Space between a section title and the content it introduces: one blank line's worth. Every title
+#: on this page uses it - the three cards' own titles and the legal blocks inside the first card -
+#: so a heading always reads as belonging to the text under it instead of running into it.
+TITLE_BODY_GAP = 8
+#: Space between two rows of ordinary body content (the form rhythm every other page uses).
+BODY_ROW_GAP = 6
+
 
 class AboutPage(QWidget):
     """About / update page (see the module docstring)."""
@@ -127,14 +134,14 @@ class AboutPage(QWidget):
         # let the layout add none, which left long legal lines 12px from the border. The body keeps
         # the form rhythm of 6px between its rows; only the title-to-body step is 8px.
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        layout.setSpacing(TITLE_BODY_GAP)
         title = QLabel(tr(title_key))
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
         body = QWidget()
         body_layout = QVBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(6)
+        body_layout.setSpacing(BODY_ROW_GAP)
         layout.addWidget(body)
         return card, body_layout
 
@@ -177,10 +184,14 @@ class AboutPage(QWidget):
         # 6px above every block: the card's own 6px spacing plus this makes two blocks sit 12px apart,
         # while the rows inside one block stay at the form rhythm of 6px.
         layout.setContentsMargins(0, 6, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(BODY_ROW_GAP)
         title = QLabel(tr(title_key))
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
+        # The title gets the same 8px step to its body as the card titles get: 6px of layout spacing
+        # plus these 2px. Without it the heading sat as tight against its paragraph as two body rows
+        # sit against each other, so it read as part of the text instead of as a heading over it.
+        layout.addSpacing(TITLE_BODY_GAP - BODY_ROW_GAP)
         body = QLabel(tr(body_key))
         body.setObjectName("hint")
         body.setWordWrap(True)

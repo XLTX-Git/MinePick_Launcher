@@ -25,6 +25,8 @@ table made each of them look like a data dump.
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -72,6 +74,35 @@ def provider_label(token: str) -> str:
     """The display name of a runtime's source; an unknown token is shown as the probe reported it."""
     key = _PROVIDER_KEYS.get((token or "").strip().lower())
     return tr(key) if key else (token or "")
+
+
+#: Horizontal padding inside a provider chip: 6px on each side of the label.
+TAG_PADDING_X = 12
+
+#: Chip widths already measured, keyed by (family, pixel size, weight): the width of the longest
+#: provider label plus its padding does not depend on the row, so it is measured once per font.
+_TAG_CHIP_WIDTHS: dict[tuple[str, int, int], int] = {}
+
+
+def provider_chip_width(font: QFont) -> int:
+    """The chip width that fits the longest provider label, measured once for ``font``.
+
+    The chip used to be sized from its own label and then elided against ``width - 12``, i.e. against
+    the text width again after the padding had already been added. ``int()`` truncated the fraction,
+    so a label whose advance was 25.6px got a 25px elide window and came out as "PA..." - the padding
+    was subtracted twice and the label lost the width it needed. Measuring the longest label once and
+    never subtracting the padding again fixes every row at the same time, and makes the chips line up.
+    """
+    key = (font.family(), font.pixelSize(), int(font.weight()))
+    cached = _TAG_CHIP_WIDTHS.get(key)
+    if cached is not None:
+        return cached
+    metrics = QFontMetrics(font)
+    widest = max(metrics.horizontalAdvance(provider_label(token)) for token in _PROVIDER_KEYS)
+    # ceil, not int: truncating the fraction is what made the label exactly one pixel too narrow.
+    width = math.ceil(widest) + TAG_PADDING_X
+    _TAG_CHIP_WIDTHS[key] = width
+    return width
 
 
 def _enable_if_alive(button: QPushButton | None) -> None:
@@ -213,6 +244,56 @@ class _JavaRow(QWidget):
         self.update()
         super().leaveEvent(event)
 
+    def _row_fonts(self) -> tuple[QFont, QFont, QFont]:
+        """The row's three text roles: 15/600 name, 11px chip label, 12px path."""
+        title_font = QFont(self.font())
+        title_font.setPixelSize(15)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        tag_font = QFont(self.font())
+        tag_font.setPixelSize(11)
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(12)
+        return title_font, tag_font, meta_font
+
+    def _text_box(self) -> tuple[int, int]:
+        """Left/right edge of the text area: right of the tile, left of the row's action."""
+        text_left = self.ICON + self.GAP
+        text_right = self.action.x() - self.GAP if self.action is not None else self.width() - 8
+        return text_left, text_right
+
+    def elided_texts(self) -> list[tuple[str, str]]:
+        """The (shown, full) pairs this row is cutting right now.
+
+        The row paints itself, so there is no QLabel whose text could be compared with its width;
+        tools/audit_window_widths.py reads this instead of re-deriving the row's arithmetic. The fonts
+        and widths are the ones paintEvent uses, so a report from here is what the pixels show.
+        """
+        title_font, tag_font, meta_font = self._row_fonts()
+        text_left, text_right = self._text_box()
+        width = max(0, int(text_right - text_left))
+        if width <= 0:
+            return []
+        title_metrics = QFontMetrics(title_font)
+        tag_metrics = QFontMetrics(tag_font)
+        meta_metrics = QFontMetrics(meta_font)
+        tag_width = min(width, provider_chip_width(tag_font))
+        title = title_metrics.elidedText(self.title, Qt.TextElideMode.ElideRight, width)
+        title_width = title_metrics.horizontalAdvance(title)
+        candidates = (
+            (self.title, title),
+            (
+                self.tag,
+                tag_metrics.elidedText(self.tag, Qt.TextElideMode.ElideRight, int(tag_width)),
+            ),
+            (self.meta, meta_metrics.elidedText(self.meta, Qt.TextElideMode.ElideMiddle, width)),
+        )
+        found = [(shown, full) for full, shown in candidates if full and shown != full]
+        # A chip that no longer fits next to the title is not painted at all, so it is just as
+        # invisible as an elided one - report it with an empty "shown" side.
+        if self.tag and text_left + title_width + 8 + tag_width > text_right:
+            found.append(("", self.tag))
+        return found
+
     def paintEvent(self, event) -> None:
         tokens = paint_utils._tokens()
         painter = QPainter(self)
@@ -238,8 +319,7 @@ class _JavaRow(QWidget):
         icon_rect = QRectF(0, (self.HEIGHT - self.ICON) / 2.0, self.ICON, self.ICON)
         painter.drawPixmap(icon_rect.toRect(), self._icon)
 
-        text_left = self.ICON + self.GAP
-        text_right = self.action.x() - self.GAP if self.action is not None else self.width() - 8
+        text_left, text_right = self._text_box()
         width = max(0, int(text_right - text_left))
         if width <= 0:
             painter.end()
@@ -247,14 +327,13 @@ class _JavaRow(QWidget):
 
         text_color = QColor(tokens.get("FG_TEXT", "#1f2a36"))
         hint_color = QColor(tokens.get("FG_HINT", "#4f6070"))
-        title_font = QFont(self.font())
-        title_font.setPixelSize(15)
-        title_font.setWeight(QFont.Weight.DemiBold)
+        title_font, tag_font, meta_font = self._row_fonts()
         title_metrics = QFontMetrics(title_font)
-        tag_font = QFont(self.font())
-        tag_font.setPixelSize(11)
         tag_metrics = QFontMetrics(tag_font)
-        tag_width = min(width, tag_metrics.horizontalAdvance(self.tag) + 12)
+        meta_metrics = QFontMetrics(meta_font)
+        # One chip width for every row, from the longest provider label: measuring each label
+        # separately then eliding it against its own width minus the padding cut "PATH" to "PA...".
+        tag_width = min(width, provider_chip_width(tag_font))
 
         painter.setFont(title_font)
         painter.setPen(text_color)
@@ -275,12 +354,9 @@ class _JavaRow(QWidget):
             painter.drawText(
                 tag_rect,
                 int(Qt.AlignmentFlag.AlignCenter),
-                tag_metrics.elidedText(self.tag, Qt.TextElideMode.ElideRight, int(tag_width) - 12),
+                tag_metrics.elidedText(self.tag, Qt.TextElideMode.ElideRight, int(tag_width)),
             )
 
-        meta_font = QFont(self.font())
-        meta_font.setPixelSize(12)
-        meta_metrics = QFontMetrics(meta_font)
         painter.setFont(meta_font)
         painter.setPen(hint_color)
         painter.drawText(
