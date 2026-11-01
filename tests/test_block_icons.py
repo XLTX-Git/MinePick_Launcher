@@ -22,8 +22,11 @@ from __future__ import annotations
 import json
 import math
 import zipfile
+from pathlib import Path
 
+import httpx
 import pytest
+from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QColor, QImage
 
 from gui import block_icons, nav_icons
@@ -116,6 +119,24 @@ def _solid_png(path, colour: str, height: int = 16):
 
 def _solid_png_bytes(path, colour: str) -> bytes:
     return _solid_png(path, colour).read_bytes()
+
+
+def _encoded_png(colour: str, edge: int = 16) -> bytes:
+    """A complete PNG in memory (the network tests must serve real bytes, not a bare signature)."""
+    image = QImage(edge, edge, QImage.Format.Format_ARGB32)
+    image.fill(QColor(colour))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, "PNG")
+    return bytes(buffer.data())
+
+
+def _write_jar(game: Path, block: str, payload: bytes) -> Path:
+    jar = game / "versions" / "1.20.1" / "1.20.1.jar"
+    jar.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(jar, "w") as archive:
+        archive.writestr(f"assets/minecraft/textures/block/{block}.png", payload)
+    return jar
 
 
 def test_texture_is_rendered_as_a_48px_cube_without_smoothing(texture_cache):
@@ -356,3 +377,135 @@ def test_first_jar_read_is_cached_and_the_second_read_never_opens_the_jar(ws_tmp
     # Second read: the cache answers both faces, the jar is not opened again.
     assert _colours(icon()) == cube_colours
     assert calls == ["grass_block_side", "grass_block_top"]
+
+
+def test_lookup_order_is_assets_cache_jar_network_then_the_drawn_block(ws_tmp):
+    """The four sources win in this order, and only an empty machine reaches the network.
+
+    The machine is built four times over: the version's assets (red), the user cache (green), the
+    client jar (blue) and, once all of those are gone, a fake CDN response (a yellow 128px finished
+    icon - the shape mcmod.cn actually serves). Removing one level at a time moves the icon to the
+    next, so the order is asserted rather than described. The last step serves a 404 and expects the
+    drawn block, with no exception.
+    """
+    game = ws_tmp / "game"
+    cache = bt.texture_cache_root(ws_tmp / "data")
+    root = cache / bt.MODERN_BUCKET
+    block = "cobblestone"
+
+    # level 1: the version's own assets (index + hashed object)
+    digest = "ab" + "0" * 38
+    (game / "assets" / "indexes").mkdir(parents=True)
+    (game / "assets" / "indexes" / "1.20.1.json").write_text(
+        json.dumps(
+            {"objects": {f"minecraft/textures/block/{block}.png": {"hash": digest, "size": 1}}}
+        ),
+        encoding="utf-8",
+    )
+    (game / "versions" / "1.20.1").mkdir(parents=True)
+    (game / "versions" / "1.20.1" / "1.20.1.json").write_text(
+        json.dumps(
+            {"id": "1.20.1", "assetIndex": {"id": "1.20.1", "url": "https://example.invalid/"}}
+        ),
+        encoding="utf-8",
+    )
+    asset = game / "assets" / "objects" / digest[:2] / digest
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(_encoded_png("#cc2222"))
+
+    # level 2: the user cache, level 3: the client jar
+    _solid_png(root / f"{block}.png", "#33aa33")
+    jar = _write_jar(game, block, _encoded_png("#2244cc"))
+
+    # level 4: the network, answered by a MockTransport - no socket is opened here.
+    yellow = _encoded_png("#ffcc00", 128)
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, content=yellow, request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    def cube(colour: str) -> set[str]:
+        return {
+            colour,
+            _shaded(colour, block_icons.CUBE_LEFT_LIGHT),
+            _shaded(colour, block_icons.CUBE_RIGHT_LIGHT),
+        }
+
+    def icon():
+        block_icons.clear_cache()
+        return block_icons.block_pixmap(
+            block, 48, game_dir=game, version_id="1.20.1", cache_root=cache
+        )
+
+    try:
+        assert _colours(icon()) == cube("#cc2222")  # level 1 wins
+        assert requested == []
+        asset.unlink()
+        assert _colours(icon()) == cube("#33aa33")  # level 2 beats the jar
+        assert requested == []
+        (root / f"{block}.png").unlink()
+        assert _colours(icon()) == cube("#2244cc")  # level 3 beats the network
+        assert requested == []
+
+        # All local levels gone. The jar read above re-cached its pixels, so that copy goes too.
+        jar.unlink()
+        (root / f"{block}.png").unlink()
+        # Keep the prefetch focused: every other name is already in the cache.
+        for name in bt.TEXTURE_NAMES:
+            if name != block:
+                _solid_png(root / f"{name}.png", "#888888")
+        assert bt.prefetch_missing_textures(ws_tmp / "data", game_dir=game, client=client) == 1
+        assert requested == [bt.NETWORK_SOURCES[block]]  # level 4: exactly one icon request
+        pixmap = icon()
+        assert _pixel(pixmap, (0, 0)).alpha() == 255  # a finished square icon, not a cube
+        assert _colours(pixmap) == {"#ffcc00"}
+
+        # level 5: the network fails as well -> the drawn accent block, and no exception.
+        (root / f"{block}.png").unlink()
+
+        def not_found(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, request=request)
+
+        failing = httpx.Client(transport=httpx.MockTransport(not_found))
+        try:
+            assert (
+                bt.prefetch_missing_textures(ws_tmp / "data", game_dir=game, client=failing) == 0
+            )
+        finally:
+            failing.close()
+        drawn = icon()
+        assert not drawn.isNull()
+        assert _pixel(drawn, (0, 0)).alpha() == 0
+        assert _painted(drawn) > 0
+    finally:
+        client.close()
+
+
+def test_a_cached_texture_never_reaches_the_network(ws_tmp):
+    """With all five textures in the cache, the prefetch asks for nothing and paints locally."""
+    cache = bt.texture_cache_root(ws_tmp / "data")
+    root = cache / bt.MODERN_BUCKET
+    for name in bt.TEXTURE_NAMES:
+        _solid_png(root / f"{name}.png", "#33aa33")
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, content=b"", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        assert bt.prefetch_missing_textures(ws_tmp / "data", client=client) == 0
+        block_icons.clear_cache()
+        pixmap = block_icons.block_pixmap("cobblestone", 48, cache_root=cache)
+        assert _colours(pixmap) == {
+            "#33aa33",
+            _shaded("#33aa33", block_icons.CUBE_LEFT_LIGHT),
+            _shaded("#33aa33", block_icons.CUBE_RIGHT_LIGHT),
+        }
+        assert requested == []
+    finally:
+        client.close()

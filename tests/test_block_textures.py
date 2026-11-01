@@ -15,10 +15,11 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Version-type -> block mapping, the three-step lookup, and the background prefetch.
+"""Version-type -> block mapping, the lookup, the background prefetch and the network fallback.
 
-No test here opens a socket: every network interaction goes through a small duck-typed client, which
-also proves the "a cached texture is never fetched again" rule by counting the calls it receives.
+No test here opens a socket: every network interaction goes through a small duck-typed client or an
+``httpx.MockTransport``, which also proves the "a cached texture is never fetched again" rule by
+counting the requests the client receives.
 """
 
 from __future__ import annotations
@@ -30,10 +31,34 @@ from pathlib import Path
 
 import httpx
 import pytest
+from PySide6.QtCore import QBuffer, QIODevice
+from PySide6.QtGui import QColor, QImage, QImageWriter
 
 from launcher.meta import block_textures as bt
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"icon"
+
+
+def _real_png(colour: str = "#cc2222", edge: int = 16) -> bytes:
+    """A complete PNG (signature through IEND), unlike the lightweight ``PNG`` constant above."""
+    image = QImage(edge, edge, QImage.Format.Format_ARGB32)
+    image.fill(QColor(colour))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, "PNG")
+    return bytes(buffer.data())
+
+
+def _webp(colour: str = "#ffcc00", edge: int = 128) -> bytes:
+    """The gold icon arrives as WebP; Qt's plugin is what the conversion uses."""
+    if b"webp" not in QImageWriter.supportedImageFormats():
+        pytest.skip("Qt's WebP image plugin is not installed")
+    image = QImage(edge, edge, QImage.Format.Format_ARGB32)
+    image.fill(QColor(colour))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, "WEBP")
+    return bytes(buffer.data())
 
 
 def _write_png(path: Path, payload: bytes = PNG) -> Path:
@@ -128,7 +153,7 @@ def test_version_type_reads_the_profile_then_the_cached_manifest(ws_tmp):
 
 
 # ---------------------------------------------------------------------------
-# 2. three-step lookup order
+# 2. lookup order
 # ---------------------------------------------------------------------------
 
 
@@ -301,7 +326,7 @@ class _ExplodingClient:
         self.urls: list[str] = []
         self.closed = False
 
-    def get(self, url: str):
+    def get(self, url: str, **_kwargs):
         self.urls.append(url)
         raise httpx.ConnectError("offline", request=httpx.Request("GET", url))
 
@@ -310,16 +335,19 @@ class _ExplodingClient:
 
 
 class _FakeClient:
-    """Serves canned responses by URL and records every request."""
+    """Serves canned responses by URL and records every request (404 for an unlisted URL)."""
 
     def __init__(self, responses: dict[str, httpx.Response]) -> None:
         self.responses = responses
         self.urls: list[str] = []
         self.closed = False
 
-    def get(self, url: str) -> httpx.Response:
+    def get(self, url: str, **_kwargs) -> httpx.Response:
         self.urls.append(url)
-        return self.responses[url]
+        response = self.responses.get(url)
+        if response is not None:
+            return response
+        return httpx.Response(404, request=httpx.Request("GET", url))
 
     def close(self) -> None:
         self.closed = True
@@ -433,6 +461,170 @@ def test_a_non_png_response_is_rejected_without_leaving_a_file(ws_tmp):
     root = bt.texture_cache_root(ws_tmp / "data") / bt.MODERN_BUCKET
     assert not (root / "gold_block.png").exists()
     assert not root.exists() or not list(root.glob("*.tmp"))
+
+
+def test_network_sources_are_the_four_modern_icons():
+    """The network level covers exactly the four category blocks (and no fifth name)."""
+    assert set(bt.NETWORK_SOURCES) == {
+        "grass_block_side",
+        "cobblestone",
+        "command_block_front",
+        "gold_block",
+    }
+    assert set(bt.NETWORK_SOURCES) <= set(bt.TEXTURE_NAMES)
+    for url in bt.NETWORK_SOURCES.values():
+        assert url.startswith("https://i.mcmod.cn/")
+    assert bt.NETWORK_SOURCES["gold_block"].endswith(".webp")
+    assert "Mozilla/5.0" in bt.NETWORK_USER_AGENT
+    assert 0 < bt.NETWORK_TIMEOUT <= 10
+
+
+def test_network_fetch_sends_a_browser_user_agent_and_returns_the_png():
+    png = _real_png("#ffcc00", 128)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=png, request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        # A name with no CDN entry is answered before a request is built.
+        assert bt.network_texture_bytes("grass_block_top", client=client) is None
+        assert bt.network_texture_bytes("cobblestone", client=client) == png
+    finally:
+        client.close()
+    assert [str(request.url) for request in requests] == [bt.NETWORK_SOURCES["cobblestone"]]
+    assert "Mozilla/5.0" in requests[0].headers["user-agent"]
+    assert "Windows NT" in requests[0].headers["user-agent"]
+
+
+def test_network_fetch_is_bounded_and_silent_on_timeout():
+    calls: list[dict] = []
+
+    class _TimeoutClient:
+        def get(self, url: str, **kwargs):
+            calls.append({"url": url, **kwargs})
+            raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", url))
+
+    assert bt.network_texture_bytes("gold_block", client=_TimeoutClient()) is None
+    assert calls[0]["timeout"] == bt.NETWORK_TIMEOUT
+    assert calls[0]["headers"]["User-Agent"] == bt.NETWORK_USER_AGENT
+    assert calls[0]["url"] == bt.NETWORK_SOURCES["gold_block"]
+
+
+def test_prefetch_falls_back_to_mcmod_and_then_stops_asking(ws_tmp):
+    """Only the texture the cache and jars could not supply is fetched, and only once."""
+    root = bt.texture_cache_root(ws_tmp / "data") / bt.MODERN_BUCKET
+    for name in bt.TEXTURE_NAMES:
+        if name != "gold_block":
+            _write_png(root / (name + ".png"), b"keep-me")
+    png = _real_png("#ffcc00", 128)
+    urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        return httpx.Response(200, content=png, request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        assert bt.prefetch_missing_textures(ws_tmp / "data", client=client) == 1
+        # Second start: the cache answers, so nothing is requested at all.
+        assert bt.prefetch_missing_textures(ws_tmp / "data", client=client) == 0
+    finally:
+        client.close()
+    assert urls == [bt.NETWORK_SOURCES["gold_block"]]
+    stored = root / "gold_block.png"
+    assert stored.read_bytes() == png  # the CDN's own PNG, unmodified
+    assert bt.missing_textures(ws_tmp / "data") == []
+    assert not list(root.glob("*.tmp"))
+
+
+def test_a_loose_asset_texture_is_local_and_is_not_fetched(ws_tmp):
+    """The game's own assets folder is already a local source: the network level stays silent."""
+    game = ws_tmp / "game"
+    loose = game / "assets" / "minecraft" / "textures" / "block" / "cobblestone.png"
+    loose.parent.mkdir(parents=True)
+    loose.write_bytes(_real_png())
+    root = bt.texture_cache_root(ws_tmp / "data") / bt.MODERN_BUCKET
+    for name in bt.TEXTURE_NAMES:
+        if name != "cobblestone":
+            _write_png(root / (name + ".png"), b"keep-me")
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, content=_real_png(), request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        assert bt.prefetch_missing_textures(ws_tmp / "data", game_dir=game, client=client) == 0
+    finally:
+        client.close()
+    assert requested == []
+    assert not (root / "cobblestone.png").exists()
+
+
+@pytest.mark.parametrize("failure", ("timeout", "404", "html", "truncated-png"))
+def test_network_failures_are_silent_and_leave_the_cache_empty(ws_tmp, failure):
+    """Every failure path leaves the pages on their drawn block and raises nothing."""
+    png = _real_png()
+
+    if failure == "timeout":
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("timed out", request=request)
+
+    elif failure == "404":
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, request=request)
+
+    elif failure == "html":
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"<html>blocked by the WAF</html>", request=request)
+
+    else:
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=png[:-8], request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        assert bt.network_texture_bytes("cobblestone", client=client) is None
+        assert bt.prefetch_missing_textures(ws_tmp / "data", client=client) == 0
+    finally:
+        client.close()
+    assert not (
+        bt.texture_cache_root(ws_tmp / "data") / bt.MODERN_BUCKET / "cobblestone.png"
+    ).exists()
+
+
+def test_webp_icon_is_converted_to_png_before_it_is_cached(ws_tmp):
+    """The gold icon is WebP on the CDN; the cache must still hold a PNG that QImage can open."""
+    webp = _webp("#ffcc00", 128)
+    assert webp[:4] == b"RIFF" and webp[8:12] == b"WEBP"
+    root = bt.texture_cache_root(ws_tmp / "data") / bt.MODERN_BUCKET
+    for name in bt.TEXTURE_NAMES:
+        if name != "gold_block":
+            _write_png(root / (name + ".png"), b"keep-me")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=webp, request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        assert bt.prefetch_missing_textures(ws_tmp / "data", client=client) == 1
+    finally:
+        client.close()
+    stored = root / "gold_block.png"
+    data = stored.read_bytes()
+    assert data.startswith(bt.PNG_SIGNATURE)
+    assert data.endswith(b"IEND\xaeB`\x82")
+    image = QImage(str(stored))
+    assert not image.isNull()
+    assert (image.width(), image.height()) == (128, 128)
 
 
 def test_start_prefetch_uses_a_daemon_thread(ws_tmp, monkeypatch):

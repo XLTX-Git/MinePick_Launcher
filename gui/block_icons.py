@@ -18,12 +18,13 @@
 """Block and loader glyphs for the instance cards, the dense version rows and the launch page.
 
 The real texture comes from ``launcher.meta.block_textures``: the version's own ``assets``, then the
-user's cache, then its own client jar. The jar is the last resort and the only expensive read (a 25 MB
-archive for a few KB of pixels), so the first successful jar read is copied into
+user's cache, then its own client jar. The jar is the last local resort and the only expensive read (a
+25 MB archive for a few KB of pixels), so the first successful jar read is copied into
 ``<launcher data dir>/cache/block-textures/modern/``; from the next lookup on the cache answers first
-and the jar is not opened again. When none of them has it, the accent block painted by
-:func:`gui.paint_utils.block_pixmap` is used, so the pages keep working on a fresh install with no
-game files and no network.
+and the jar is not opened again. A machine with no Minecraft at all gets the cache filled by the same
+background prefetch from mcmod.cn's icon CDN - never while a page is painting. When none of them has
+it, the accent block painted by :func:`gui.paint_utils.block_pixmap` is used, so the pages keep
+working on a fresh install with no game files and no network.
 
 A 16x16 texture is shown the way Minecraft shows a block in the inventory: as an isometric cube with a
 diamond top, two side faces and the game's own face shading (top 100%, left 80%, right 60%). The three
@@ -31,9 +32,14 @@ faces are painted as affinely transformed copies of the texture - one ``QPainter
 so the artwork is the real thing, not a flat square and not a hand-drawn stand-in. Grass is the one
 block with two textures: ``grass_block_top`` for the top and ``grass_block_side`` for both sides.
 
-Scaling is deliberately nearest-neighbour: the source is 16x16 pixel art, and a smoothed scale would
-turn it into mush. The cube is cached per (source, mtime, size, device ratio), so a list of a thousand
-manifest rows decodes each texture once.
+A source that is already a finished picture of a cube (mcmod.cn's 128px icons, or its 300px gold one)
+is drawn as it is: cubing a picture of a cube would paint a little cube on every face. The threshold
+is :data:`ICON_SOURCE_EDGE`, far above every 16x16 vanilla texture.
+
+Scaling is deliberately nearest-neighbour for the 16x16 faces: the source is pixel art, and a
+smoothed scale would turn it into mush. A finished icon is an ordinary picture and is scaled smoothly.
+The cube is cached per (source, mtime, size, device ratio), so a list of a thousand manifest rows
+decodes each texture once.
 """
 
 from __future__ import annotations
@@ -62,8 +68,13 @@ CUBE_RIGHT_LIGHT = 0.6
 #: Half the cube's width as a fraction of the icon's edge. The top rhombus is then the classic 2:1
 #: isometric diamond, and the side height (2 / sqrt(3) * half) makes all three visible edges the same
 #: projected length: a cube, not a squashed box. The cube is 0.86 x 0.93 of the icon, which leaves a
-#: little air around it at every size the pages use (30, 32 and 48 px).
+#: little air around it at every size the pages use (30, 40 and 48 px).
 CUBE_HALF_WIDTH_RATIO = 0.43
+
+#: A source at least this many pixels on its short edge is a finished icon, not a 16x16 face: the
+#: network fallback's mcmod icons are 128px (the gold one 300px) renders of a whole cube. Feeding one
+#: of those through the face renderer would paint a small cube on every face, so it is scaled as-is.
+ICON_SOURCE_EDGE = 64
 
 #: The one block whose top face is a different texture: the side is dirt with a grass fringe, the top is
 #: grass seen from above. Everything else (stone, gold, command block) uses one texture on all faces.
@@ -78,12 +89,14 @@ GRASS_TINT = "#91bd59"
 #: Bumped whenever a cached pixmap would have to be redrawn; the key carries everything that decides it.
 _IMAGE_CACHE: dict[str, QImage] = {}
 _CUBE_CACHE: dict[tuple[str, str, int, int], QPixmap] = {}
+_ICON_CACHE: dict[tuple[str, int, int], QPixmap] = {}
 
 
 def clear_cache() -> None:
     """Drop decoded textures and rendered cubes (tests and theme-independent reloads)."""
     _IMAGE_CACHE.clear()
     _CUBE_CACHE.clear()
+    _ICON_CACHE.clear()
 
 
 def _screen_ratio() -> float:
@@ -103,17 +116,21 @@ def block_pixmap(
     version_id: str | None = None,
     cache_root: Path | None = None,
 ) -> QPixmap:
-    """A real block texture rendered as an isometric cube, the drawn accent block otherwise.
+    """A real block texture as an isometric cube (a finished icon as-is), the drawn block otherwise.
 
     ``size`` is the displayed (logical) edge in pixels; the returned pixmap carries the screen's
-    device pixel ratio, so 48px stays 48px on a 125% display without a blurred upscale. The lookup
-    order is block_textures' own: the version's assets, its client jar, the user's cache.
+    device pixel ratio, so 40px stays 40px on a 125% display without a blurred upscale. The lookup
+    order is block_textures': the version's assets, the user's cache (which the background prefetch
+    also fills from client jars and, on a machine with no game files, from mcmod.cn), then its client
+    jar. A source that is already a finished icon is scaled as-is, not cubed.
     """
     side = _load_texture(
         block_name, game_dir=game_dir, version_id=version_id, cache_root=cache_root
     )
     if side is None:
         return paint_utils.block_pixmap(size)
+    if _is_finished_icon(side[1]):
+        return _finished_icon(side[0], side[1], size, _screen_ratio())
 
     top = side
     top_block = TOP_FACE_BLOCK.get(block_name)
@@ -160,6 +177,37 @@ def isometric_pixmap(side: QImage, top: QImage | None = None, size: int = 48) ->
     return _render_cube(
         side, top if top is not None else side, size, _screen_ratio()
     ) or QPixmap()
+
+
+def _is_finished_icon(image: QImage) -> bool:
+    """Is this a pre-rendered icon rather than a 16x16 face texture?
+
+    The network fallback stores mcmod.cn's 128px cube renders (300px for gold) in the same cache as
+    the jar's 16x16 faces; the short edge is what separates them, because a vanilla texture is 16 or
+    an animated 16xN strip (cropped to its first frame before this runs).
+    """
+    return min(image.width(), image.height()) >= ICON_SOURCE_EDGE
+
+
+def _finished_icon(source: str, image: QImage, size: int, ratio: float) -> QPixmap:
+    """Scale a finished icon into the tile: smooth (it is a picture), ratio-aware, cached."""
+    key = (source, int(size), round(ratio * 100))
+    cached = _ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
+    edge = max(1, round(int(size) * ratio))
+    scaled = image.scaled(
+        edge,
+        edge,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    pixmap = QPixmap.fromImage(scaled)
+    pixmap.setDevicePixelRatio(ratio)
+    if len(_ICON_CACHE) > 64:
+        _ICON_CACHE.clear()
+    _ICON_CACHE[key] = pixmap
+    return pixmap
 
 
 def _render_cube(
@@ -324,7 +372,9 @@ def _load_texture(
     Order: the version's own assets, then the user cache, then the version's client jar. The cache
     sits before the jar on purpose: a jar read is a 25 MB archive scan, and once this method has
     copied a jar texture into the cache (see :meth:`block_textures.store_texture_bytes`) the next
-    lookup must stop at the cheap copy instead of opening the jar again.
+    lookup must stop at the cheap copy instead of opening the jar again. The cache is also where the
+    background prefetch puts mcmod.cn's icons on a machine with no game files; painting never waits
+    for that request and never makes one itself.
 
     The returned key identifies the exact bytes (a path's mtime is part of the file key, a client
     jar's location and profile id are part of the jar key), so the caller's cube cache cannot serve
