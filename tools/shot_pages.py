@@ -19,7 +19,12 @@
 # eye-checking layout work. Reads a project tree read-only; all preview config/data live
 # inside the preview folder.
 
-"""Offscreen page renderer for the launcher UI."""
+"""Offscreen page renderer for the launcher UI.
+
+``--warm-cache`` fills the project-icon disk cache before the window is built, so the resource rows
+paint real icons instead of letter tiles; ``--expect-icons`` refuses to save any page whose rows are
+still showing a tile. They can be combined in one run: warm first, then render and verify.
+"""
 
 from __future__ import annotations
 
@@ -48,6 +53,45 @@ FAKE_MODS = [
     ("appleskin", "AppleSkin", "Food-related HUD information: hunger, saturation and exhaustion", 57_330_000),
     ("journeymap", "JourneyMap", "Real-time mapping in game or in a web browser", 69_150_000),
 ]
+
+#: Real project icons for the demo rows, keyed by slug. The resource page is the only rendered page
+#: whose rows carry an image, and a letter tile is not a usable README screenshot. Kept out of
+#: ``FAKE_MODS`` so the four-tuple stays the shared contract for the other render/measure tools.
+FAKE_MOD_ICONS = {
+    "sodium": "https://cdn.modrinth.com/data/AANobbMI/icon.png",
+    "iris": "https://cdn.modrinth.com/data/YL57xq9U/icon.png",
+    "lithium": "https://cdn.modrinth.com/data/gvQqBUqZ/icon.png",
+    "fabric-api": "https://cdn.modrinth.com/data/P7dR8mSH/icon.png",
+    "jei": (
+        "https://cdn.modrinth.com/data/u6dRKJwZ/"
+        "4a3f18ac0d096c9f8e9176984c44be4e58f94c89_96.webp"
+    ),
+    "modmenu": (
+        "https://cdn.modrinth.com/data/mOgUt4GM/"
+        "5a20ed1450a0e1e79a1fe04e61bb4e5878bf1d20.png"
+    ),
+    "cloth-config": "https://cdn.modrinth.com/data/9s6osm5g/icon.png",
+    "roughly-enough-items": "https://cdn.modrinth.com/data/nfn13YXA/icon.png",
+    "create": (
+        "https://cdn.modrinth.com/data/LNytGWDc/"
+        "61d716699bcf1ec42ed4926a9e1c7311be6087e2_96.webp"
+    ),
+    "xaeros-minimap": (
+        "https://cdn.modrinth.com/data/1bokaNcj/"
+        "354080f65407e49f486fcf9c4580e82c45ae63b8_96.webp"
+    ),
+    "appleskin": "https://cdn.modrinth.com/data/EsAfCjCV/icon.png",
+    "journeymap": (
+        "https://cdn.modrinth.com/data/lfHFW1mp/"
+        "a1c571a21a88f6fa59eab67829f216f65ab393ee_96.webp"
+    ),
+}
+
+#: The icon prefetch is network-bound; eight at a time keeps a cold run short without opening a
+#: connection per row at once. Each URL is retried because this project's CDN is occasionally slow.
+ICON_WARM_CONCURRENCY = 8
+ICON_WARM_ATTEMPTS = 3
+
 
 FAKE_VERSIONS = [
     ("1.21.11", "release", "2025-12-09"),
@@ -232,6 +276,102 @@ def wait_for_workers(app, pool, seconds: float = 20.0) -> None:
         time.sleep(0.05)
 
 
+def wait_until(pred, timeout_ms: int = 8000) -> bool:
+    """Pump the Qt event loop until ``pred()`` is true, or return False on the deadline.
+
+    Rendering cannot use ``QThreadPool.waitForDone`` alone for this: a worker's result reaches the
+    GUI through a queued signal, so the last hop only happens while the event loop is pumped. This
+    helper is the small, testable loop around that - it returns the predicate's final value instead
+    of raising, so a caller can decide whether a timeout is fatal (``--expect-icons``) or not.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000.0
+    while True:
+        if pred():
+            return True
+        if time.monotonic() >= deadline:
+            return bool(pred())
+        if app is not None:
+            app.processEvents()
+        time.sleep(0.02)
+
+
+def resource_rows(page) -> list:
+    """Every ``_ResourceRow`` the page currently holds (only the resource pages have any)."""
+    from gui.pages.mods_page import _ResourceRow
+
+    return list(page.findChildren(_ResourceRow))
+
+
+def missing_icons(page) -> list:
+    """Rows whose project icon never arrived; these are exactly the rows still painting a letter tile."""
+    return [row for row in resource_rows(page) if row._icon is None]
+
+
+def icons_ready(page) -> bool:
+    """True when every resource row on the page has a real project icon."""
+    return not missing_icons(page)
+
+
+def assert_icons_loaded(page, where: str) -> None:
+    """Refuse to save a picture whose rows still show letter tiles."""
+    rows = resource_rows(page)
+    missing = [row for row in rows if row._icon is None]
+    if not missing:
+        return
+    titles = ", ".join(str(getattr(row, "title", "?")) for row in missing[:8])
+    raise SystemExit(
+        f"refusing to save {where}: {len(missing)} of {len(rows)} resource icon(s) did not load "
+        f"({titles}); use --warm-cache or fix the icon URL"
+    )
+
+
+def warm_icon_cache(urls, *, workers: int = ICON_WARM_CONCURRENCY) -> None:
+    """Download every URL into the project-icon disk cache before the window is built.
+
+    ``launcher.net.http_cache.fetch_icon_bytes`` is the same store the resource rows read, so once
+    this returns the rows paint real icons synchronously (``_ContentTab._load_icon`` peeks at the
+    cache first). Work is bounded: at most ``workers`` requests run at a time, and a URL that fails
+    is retried a few times. A URL that still fails is fatal - rendering it would produce the letter
+    tile this option exists to avoid.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from launcher.net.http_cache import fetch_icon_bytes
+
+    unique = list(dict.fromkeys(str(url) for url in urls if url))
+    if not unique:
+        return
+
+    def fetch(url: str):
+        last: Exception | None = None
+        for attempt in range(ICON_WARM_ATTEMPTS):
+            try:
+                fetch_icon_bytes(url, timeout=8.0)
+                return url, None
+            except Exception as exc:  # noqa: BLE001 - report what the network said, then retry
+                last = exc
+                time.sleep(0.5 * (attempt + 1))
+        return url, last
+
+    failures: list[tuple[str, Exception | None]] = []
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(unique)))) as pool:
+        for url, error in pool.map(fetch, unique):
+            if error is None:
+                print(f"warm-cache: {url}")
+            else:
+                failures.append((url, error))
+                print(f"warm-cache: FAILED {url}: {error}")
+    if failures:
+        raise SystemExit(
+            f"warm-cache: {len(failures)} of {len(unique)} icon(s) could not be cached; "
+            "refusing to render a page that would show letter tiles"
+        )
+    print(f"warm-cache: {len(unique)} icon(s) ready")
+
+
 def _scroll_page_to_bottom(page) -> None:
     """Scroll a page's QScrollArea to the end (settings page) so the lower rows are visible."""
     from PySide6.QtWidgets import QScrollArea
@@ -393,6 +533,16 @@ def main() -> int:
         help="also render the crash diagnosis dialog over the instances page",
     )
     parser.add_argument(
+        "--warm-cache",
+        action="store_true",
+        help="download every result icon into the disk cache before building the window",
+    )
+    parser.add_argument(
+        "--expect-icons",
+        action="store_true",
+        help="refuse to save a page while any of its result icons is still a letter tile",
+    )
+    parser.add_argument(
         "--preview",
         default="",
         help="where to keep _preview data (defaults to --root; point at the work folder when rendering the released tree)",
@@ -458,9 +608,20 @@ def main() -> int:
         ],
     )
     hits = [
-        ModSearchHit(slug=slug, title=title, description=desc, downloads=dl)
+        ModSearchHit(
+            slug=slug,
+            title=title,
+            description=desc,
+            downloads=dl,
+            icon_url=FAKE_MOD_ICONS.get(slug, ""),
+        )
         for slug, title, desc, dl in FAKE_MODS
     ]
+
+    # The rows read this store synchronously when it is warm (see _ContentTab._load_icon), so warming
+    # before the window exists is what keeps the images from being letter tiles at grab time.
+    if args.warm_cache:
+        warm_icon_cache(hit.icon_url for hit in hits)
 
     # offline stubs so rendering never waits on the network
     versions_page.fetch_manifest = lambda cache_path=None: manifest  # type: ignore[assignment]
@@ -558,12 +719,23 @@ def main() -> int:
             for _ in range(4):
                 app.processEvents()
                 time.sleep(0.05)
+        target = out_dir / f"{prefix}{index}_{name}.png"
+        if args.expect_icons:
+            page = window.pages[name]
+            if name == "mods" and not resource_rows(page):
+                target.unlink(missing_ok=True)  # never leave a stale picture behind a failed check
+                raise SystemExit(
+                    "refusing to save page 'mods': it rendered no resource rows, "
+                    "so --expect-icons cannot prove a single icon"
+                )
+            if not wait_until(lambda page=page: icons_ready(page), timeout_ms=8000):
+                target.unlink(missing_ok=True)
+                assert_icons_loaded(page, f"page '{name}'")
         # No focus ring can reach a published picture: defocus first, then refuse to save if any
         # keyboardFocus mark survived (see defocus_for_shot/assert_no_focus_mark).
         defocus_for_shot(window, window.pages[name])
         assert_no_focus_mark(window, window.pages[name])
         pixmap = window.grab()
-        target = out_dir / f"{prefix}{index}_{name}.png"
         pixmap.save(str(target))
         print(f"saved {target} ({pixmap.width()}x{pixmap.height()})")
 
