@@ -1363,7 +1363,7 @@ QLabel#instanceCardCounts {
     font-size: 12px;
 }
 QLabel#instanceCardIcon {
-    background: __ACCENT_SOFT__;
+    background: transparent;
     border-radius: __RADIUS_SM__;
 }
 QLabel#instanceCardManage {
