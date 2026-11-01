@@ -349,6 +349,27 @@ class SettingsPage(QWidget):
         self.speed_limit_spin = NoWheelSpinBox()
         self.speed_limit_spin.setRange(0, 1_048_576)
         self.speed_limit_spin.setSingleStep(100)
+        # Two independent download-source settings: versions/manifests and resource files each pick
+        # mirror-first / automatic / official-first. The values are launcher.meta.sources' mode codes;
+        # the hint under the rows explains what "automatic" really does.
+        self.source_meta_combo = QComboBox()
+        self.source_assets_combo = QComboBox()
+        for combo in (self.source_meta_combo, self.source_assets_combo):
+            for code, label in (
+                ("mirror", tr("settings.source.mirror")),
+                ("auto", tr("settings.source.auto")),
+                ("official", tr("settings.source.official")),
+            ):
+                combo.addItem(label, code)
+        self.source_meta_combo.setToolTip(tr("settings.source.meta.hint"))
+        self.source_meta_combo.setAccessibleName(tr("settings.source.meta"))
+        self.source_meta_combo.setAccessibleDescription(tr("settings.source.meta.hint"))
+        self.source_assets_combo.setToolTip(tr("settings.source.assets.hint"))
+        self.source_assets_combo.setAccessibleName(tr("settings.source.assets"))
+        self.source_assets_combo.setAccessibleDescription(tr("settings.source.assets.hint"))
+        self.source_hint = QLabel(tr("settings.source.auto.hint"))
+        self.source_hint.setObjectName("hint")
+        self.source_hint.setWordWrap(True)
         # The number is the value; the unit lives in the row label ("KB/s, 0=unlimited"), the same
         # way the memory row's label carries "GB".
         # No special-value wording: 0 renders as "0" (the label already says 0 = unlimited).
@@ -442,6 +463,9 @@ class SettingsPage(QWidget):
         form.addRow(tr("settings.concurrency"), self.concurrency_spin)
         form.addRow(tr("settings.download_segments"), self.download_segments_box)
         form.addRow(tr("settings.speed_limit"), self.speed_limit_spin)
+        form.addRow(tr("settings.source.meta"), self.source_meta_combo)
+        form.addRow(tr("settings.source.assets"), self.source_assets_combo)
+        form.addRow("", self.source_hint)
         form.addRow(tr("settings.proxy"), self.proxy_edit)
         form.addRow(tr("settings.cf_key"), self.cf_key_edit)
         form.addRow(tr("settings.window_mode"), self.window_mode_combo)
@@ -551,6 +575,8 @@ class SettingsPage(QWidget):
             self.after_launch_combo,
             self.window_mode_combo,
             self.isolation_combo,
+            self.source_meta_combo,
+            self.source_assets_combo,
             self.font_combo,
         ):
             on_change(combo.currentIndexChanged)
@@ -603,6 +629,8 @@ class SettingsPage(QWidget):
             self.concurrency_spin,
             self.download_segments_spin,
             self.speed_limit_spin,
+            self.source_meta_combo,
+            self.source_assets_combo,
             self.window_mode_combo,
             self.theme_combo,
             self.radius_combo,
@@ -674,6 +702,10 @@ class SettingsPage(QWidget):
         index2 = self.ui_language_combo.findData(cfg.ui_language)
         self.ui_language_combo.setCurrentIndex(max(index2, 0))
         self.speed_limit_spin.setValue(cfg.download_speed_limit_kb)
+        index_source_meta = self.source_meta_combo.findData(cfg.download_source_meta)
+        self.source_meta_combo.setCurrentIndex(max(index_source_meta, 0))
+        index_source_assets = self.source_assets_combo.findData(cfg.download_source_assets)
+        self.source_assets_combo.setCurrentIndex(max(index_source_assets, 0))
         index3 = self.window_mode_combo.findData(cfg.window_start_mode)
         self.window_mode_combo.setCurrentIndex(max(index3, 0))
         index4 = self.theme_combo.findData(cfg.theme)
@@ -750,6 +782,8 @@ class SettingsPage(QWidget):
         cfg.game_language = self.language_combo.currentData()
         cfg.ui_language = self.ui_language_combo.currentData()
         cfg.download_speed_limit_kb = self.speed_limit_spin.value()
+        cfg.download_source_meta = self.source_meta_combo.currentData() or "auto"
+        cfg.download_source_assets = self.source_assets_combo.currentData() or "auto"
         cfg.http_proxy = self.proxy_edit.text().strip()
         cfg.curseforge_api_key = self.cf_key_edit.text().strip()
         cfg.window_start_mode = self.window_mode_combo.currentData()
