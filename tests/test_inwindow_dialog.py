@@ -634,7 +634,7 @@ def test_rename_keeps_the_empty_name_rule(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["instances"]
         page.refresh()
-        page.list.setCurrentRow(0)
+        page.select_instance("1.20.1")
         app.processEvents()
         detail = page.detail
         assert detail.instance_id == "1.20.1"
