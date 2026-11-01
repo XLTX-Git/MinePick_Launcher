@@ -474,13 +474,29 @@ def check_text_overflow() -> int:
             QFontDatabase.addApplicationFont(str(path))
 
     from gui.main_window import MainWindow
+    from gui.widgets import ElidedLabel
 
     kinds = (QLabel, QPushButton, QComboBox, QRadioButton)
+    elided_noted = False
 
     def overflow_problems(scope, where: str) -> int:
+        nonlocal elided_noted
         found = 0
         for widget in _text_widgets(scope, (*kinds, QWidget)):
             if not isinstance(widget, kinds) or not widget.isVisible():
+                continue
+            if isinstance(widget, ElidedLabel):
+                # An ElidedLabel elides its value on purpose - that is the whole widget - and keeps
+                # the full string in text() and in its tooltip. Counting that as overflow made this
+                # check depend on the window being wider than its floor: the one-column instance
+                # grid lowered the floor from 1078px to 870px (measured with measure_min_width.py),
+                # and at this file's fixed 1000px render width the settings page's game-folder path
+                # now elides in de/fr/ru. That is the design, not a clipped label - a plain QLabel
+                # whose text does not fit still fails below. Every elision is reported, with its
+                # text, by tools/audit_window_widths.py at 1050/1400/1800px, so nothing is hidden.
+                if not elided_noted:
+                    print("  (ElidedLabel is skipped: it elides by design; see audit_window_widths.py)")
+                    elided_noted = True
                 continue
             text = widget.text() if not isinstance(widget, QComboBox) else widget.currentText()
             if not text or "\n" in text:
