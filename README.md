@@ -46,8 +46,8 @@ single portable EXE.
 - **Customisable look** — accent colour (any hex value, eight presets, or the system colour picker),
   UI font (every installed family, the most common ones pinned on top, type to filter), corner radius (compact / default /
   round), theme (dark / light / follow the system)
-- **Clearer layout** — a page header with a one-line description on every page, one spacing scale
-  across all pages, magnifier icons in search fields
+- **Clearer layout** — top-level pages open straight into their content, with no header band,
+  one spacing scale across all pages, magnifier icons in search fields
 - **Calmer interaction** — scrollbars appear only while the pointer is inside a list, a focus outline is shown
   for keyboard navigation only, a short fade when switching pages, table column widths are remembered,
   headers are click-to-sort

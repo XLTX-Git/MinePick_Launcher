@@ -47,7 +47,7 @@ dans un seul EXE portable.
   sélecteur de couleur du système), police de l'interface (toutes les familles installées, les plus courantes
   épinglées, filtrage à la saisie), arrondi des coins (compact / par défaut / arrondi), thème (sombre / clair /
   suivre le système)
-- **Mise en page plus claire** — un en-tête de page avec une description en une ligne sur chaque page, une seule
+- **Mise en page plus claire** — les pages principales commencent directement par leur contenu, sans en-tête, une seule
   échelle d'espacement sur toutes les pages, des icônes de loupe dans les champs de recherche
 - **Interactions plus sobres** — les barres de défilement n'apparaissent que lorsque le pointeur est dans une
   liste, le contour de focus n'est affiché que pour la navigation au clavier, un court fondu au changement de page,

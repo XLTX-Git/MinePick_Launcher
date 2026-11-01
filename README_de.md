@@ -46,8 +46,8 @@ einzelne portable EXE.
 - **Anpassbares Aussehen** — Akzentfarbe (beliebiger Hex-Wert, acht Voreinstellungen oder die
   System-Farbauswahl), Schriftart der Oberfläche (alle installierten Familien, die häufigsten oben angeheftet, Tippen
   zum Filtern), Eckenradius (Kompakt / Standard / Rund), Design (Dunkel / Hell / der Systemeinstellung folgen)
-- **Klareres Layout** — ein Seitenkopf mit einzeiliger Beschreibung auf jeder Seite, eine gemeinsame
-  Abstandsskala auf allen Seiten, Lupensymbole in Suchfeldern
+- **Klareres Layout** — die Hauptseiten beginnen direkt mit ihrem Inhalt, ohne Seitenkopf, eine
+  gemeinsame Abstandsskala auf allen Seiten, Lupensymbole in Suchfeldern
 - **Ruhigeres Verhalten** — Scrollbalken erscheinen nur, solange der Zeiger in einer Liste ist; eine
   Fokusumrandung wird nur bei Tastaturnavigation angezeigt; kurzes Einblenden beim Seitenwechsel;
   Spaltenbreiten von Tabellen werden gemerkt; Kopfzeilen lassen sich per Klick sortieren
