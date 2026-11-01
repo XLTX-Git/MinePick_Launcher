@@ -603,8 +603,9 @@ class InstancesPage(QWidget):
 
         ``card_version_loader`` already resolved the inherited Minecraft version, so the block
         category (release / snapshot / April Fools / ancient) is read from that version rather than
-        from the display-name folder. 40px is the tile; a 32px texture leaves the accent-soft frame
-        and its rounded corners visible, and a missing texture falls back to the drawn block.
+        from the display-name folder. The icon is rendered at 40px, the slot's own size, so the
+        pixmap is shown 1:1 (the version rows keep the same rule at 48px); a missing texture falls
+        back to the drawn block.
         """
         kind = block_textures.loader_kind_for_label(loader)
         tokens = theme.current_tokens() or theme.theme_palette("light")
@@ -618,7 +619,7 @@ class InstancesPage(QWidget):
         block = block_textures.block_name_for_category(category)
         return block_icons.block_pixmap(
             block,
-            32,
+            40,
             game_dir=game_dir,
             version_id=version,
             cache_root=block_textures.texture_cache_root(launcher_dir),
