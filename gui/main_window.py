@@ -46,7 +46,7 @@ from gui.pages.launch_page import LaunchPage
 from gui.pages.login_page import LoginPage
 from gui.pages.mods_page import ResourcesPage
 from gui.pages.settings_page import SettingsPage
-from gui.pages.versions_page import VersionsPage
+from gui.pages.versions_tasks import TaskAwareVersionsPage
 from gui.task_ui import TaskOverlay
 from gui.tasks import TaskCenter
 from gui.wizard_overlay import BulletList, OptionGrid, WizardOverlay, WizardStep
@@ -290,7 +290,9 @@ class MainWindow(QMainWindow):
         factories = {
             "launch": LaunchPage,
             "instances": InstancesPage,
-            "versions": VersionsPage,
+            # The versions page's install flow is frozen; this subclass is the adapter that connects it
+            # to the window's task list without editing a line of the flow (gui/pages/versions_tasks.py).
+            "versions": TaskAwareVersionsPage,
             "java": JavaPage,
             "account": LoginPage,
             "mods": ResourcesPage,

@@ -31,7 +31,10 @@ Packaging/sandbox compatibility notes:
 - all target paths are provided by the caller (the user data directory is resolved at runtime, not via __file__);
 - the batches run on `concurrent.futures.ThreadPoolExecutor`, **not** on Qt's `QThreadPool`, so a caller that
   has to stop them before tearing its own objects down uses :func:`cancel_all_downloads` plus
-  :func:`wait_for_downloads` - waiting on the Qt pool alone never reaches these threads.
+  :func:`wait_for_downloads` - waiting on the Qt pool alone never reaches these threads. A caller that
+  stops a download *because the user asked* uses :func:`cancel_current_downloads` instead (same
+  cooperative stop, but reversible: :func:`clear_cancellation` makes the launcher able to download
+  again, which a shutdown latch must never do).
 """
 
 from __future__ import annotations
@@ -289,28 +292,40 @@ _drain = threading.Condition()
 _in_flight = 0
 # Set only by cancel_all_downloads(): a "no new transfer may start" latch that outlives the flag above.
 _shutting_down = False
+# Set only by cancel_current_downloads(): the user stopped a running transfer (a task's cancel button).
+# Unlike the shutdown latch this one is meant to be cleared again - by clear_cancellation() when the
+# cancelled install has unwound, or by the next install starting - because the launcher keeps running.
+_user_cancelled = False
 
 
 class _CancelScope:
     """Run one unit of transfer work as a cancellable, countable unit.
 
-    Entering bumps the public activity count, clears the cancellation flag - a flag left over from an
-    earlier cancellation must not abort a batch that is only starting now (the GUI queues several
-    downloads, and the first one to be cancelled can leave the flag set while the next one is still on
-    its way) - and raises immediately when the process is already shutting down, so nothing is started
-    just to be stopped.
+    Entering bumps the public activity count and raises immediately when the process is already
+    shutting down (nothing is started just to be stopped) or when the user cancelled the install this
+    batch belongs to. Otherwise it clears the cancellation flag: a flag left over from an earlier
+    cancellation must not abort a batch that is only starting now (the GUI queues several downloads,
+    and the first one to be cancelled can leave the flag set while the next one is still on its way).
+
+    That clear is deliberately not unconditional. ``cancel_current_downloads`` sets ``_user_cancelled``
+    as well as the flag, so an install that is cancelled between two of its batches does not get to
+    start the next one as if nothing had happened; the latch lives exactly as long as the cancelled
+    install (the GUI clears it when that install's worker has ended). ``cancel_all_downloads`` keeps
+    its own, permanent latch on top: after the process has decided to quit, nothing starts again.
 
     Leaving always releases the count, and turns a cancellation that arrived *during* the block into an
-    exception, even when the block happened to reach its normal end: an update that finished streaming
-    in the same instant the user quit must still not be installed.
+    exception, even when the block happened to reach its normal end: a batch that finished in the same
+    instant the user cancelled must still not be installed.
     """
 
     def __enter__(self) -> None:
         global _active_downloads, _in_flight
-        _cancelled.clear()
         with _drain:
             if _shutting_down:
                 raise DownloadCancelled("shutting down")
+            if _user_cancelled:
+                raise DownloadCancelled("cancelled")
+            _cancelled.clear()
             _active_downloads += 1
             _in_flight += 1
 
@@ -366,6 +381,45 @@ def cancel_all_downloads() -> int:
     return _active_downloads
 
 
+def cancel_current_downloads() -> int:
+    """Ask the transfers in flight to stop because the *user* cancelled them; return the batch count.
+
+    The same cooperative mechanism as :func:`cancel_all_downloads` - a worker notices on its next 64 KB
+    chunk, the `.part` files stay for the next attempt - but this one is not a shutdown: it sets
+    ``_user_cancelled`` instead of the permanent latch, and :func:`clear_cancellation` (called by the
+    next install, and when the cancelled one has unwound) makes the launcher able to download again.
+
+    The count is what was running when the flag was set; it is reported rather than waited on, because
+    a worker can be parked in a blocking socket read and the caller must stay responsive.
+    """
+    global _user_cancelled
+    with _drain:
+        if _shutting_down:  # the process is already going down; that latch is stronger, leave it alone
+            return _active_downloads
+        _user_cancelled = True
+    _cancelled.set()
+    return _active_downloads
+
+
+def clear_cancellation() -> None:
+    """Forget a user cancellation so the launcher can download again.
+
+    Never undoes a shutdown: ``_shutting_down`` is set by :func:`cancel_all_downloads` and stays set for
+    the life of the process. A no-op when nothing was cancelled.
+    """
+    global _user_cancelled
+    with _drain:
+        if _shutting_down:
+            return
+        _user_cancelled = False
+    _cancelled.clear()
+
+
+def is_user_cancelled() -> bool:
+    """Whether the current cancellation came from the user's cancel button rather than from quitting."""
+    return _user_cancelled
+
+
 def is_cancelled() -> bool:
     """Whether the process has decided to stop transferring. One event read, safe from any thread."""
     return _cancelled.is_set()
@@ -391,13 +445,14 @@ def wait_for_downloads(timeout: float) -> bool:
 
 
 def reset_cancellation_for_tests() -> None:
-    """Only for tests: the latch is process-global, so a test suite must be able to clear it.
+    """Only for tests: the latches are process-global, so a test suite must be able to clear them.
 
     Never called by the application - once the process has decided to quit, nothing may un-decide it.
     """
-    global _shutting_down
+    global _shutting_down, _user_cancelled
     with _drain:
         _shutting_down = False
+        _user_cancelled = False
         _cancelled.clear()
 
 
