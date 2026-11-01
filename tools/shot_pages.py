@@ -548,8 +548,8 @@ def main() -> int:
             # An instance page without a selection only shows the hint: select a demo instance
             # (prefer the second row, which is the modded one) so the detail panel is visible.
             page = window.pages["instances"]
-            if page.list.count():
-                page.list.setCurrentRow(1 if page.list.count() > 1 else 0)
+            if len(page.card_ids()):
+                page.select_instance(page.card_ids()[1 if len(page.card_ids()) > 1 else 0])
             for _ in range(6):
                 app.processEvents()
                 time.sleep(0.05)
@@ -591,8 +591,8 @@ def _render_dialog_shot(app, window, game_dir: Path, out_dir: Path, prefix: str)
 
     window.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
     page = window.pages["instances"]
-    if page.list.count():
-        page.list.setCurrentRow(1 if page.list.count() > 1 else 0)
+    if len(page.card_ids()):
+        page.select_instance(page.card_ids()[1 if len(page.card_ids()) > 1 else 0])
     for _ in range(8):
         app.processEvents()
         time.sleep(0.05)
