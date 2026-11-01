@@ -469,8 +469,31 @@ class SettingsPage(QWidget):
         self.encrypt_button.clicked.connect(self._change_password)
         self.open_data_dir_button.clicked.connect(self._open_data_dir)
         self.theme_combo.currentIndexChanged.connect(self._update_accent_swatch)
+        self._reserve_memory_value_width()
         self.load()
         self._connect_autosave()
+
+    def _reserve_memory_value_width(self) -> None:
+        """Give the memory read-out the width of its widest value, so the row never re-flows.
+
+        The read-out is text, so its width followed the number: dragging the slider from "4.0" to
+        "12.0" widened the row, which raised the page's minimum width and pushed the window wider.
+        Reserving the widest value the field can ever show (``CONFIG_MAX_HEAP_GB``, one decimal) and
+        right-aligning it means the digits change while the geometry does not. ``minimumWidth``, not
+        ``setFixedWidth``: a larger UI font or a higher DPI may still need more room, and a fixed
+        width would clip it.
+
+        Called after the page layout is assembled (so the scoped QSS font is the one being measured)
+        and before ``load()`` (so the first value already lands in a stable row).
+        """
+        from launcher.memory import CONFIG_MAX_HEAP_GB
+
+        label = self.memory_value_label
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        label.setText(f"{CONFIG_MAX_HEAP_GB:.1f}")
+        label.ensurePolished()
+        label.setMinimumWidth(label.sizeHint().width())
+        label.clear()
 
     def _connect_autosave(self) -> None:
         """There is no Save button: every control writes its value as soon as it changes.
