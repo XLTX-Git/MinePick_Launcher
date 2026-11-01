@@ -57,6 +57,9 @@ PAGE_FADE_MS = 150  # interactive, so it stays under the 200ms ceiling (guidelin
 # policy on purpose (see below), so only the widest *width* is a real layout requirement and the
 # height stays a deliberate, language-independent minimum.
 MIN_WINDOW_HEIGHT = 610
+# The current-folder label in the status bar: wide enough for a folder name, narrow enough that the
+# status line beside it keeps the room it had. The name is elided into this budget, never clipped.
+FOLDER_LABEL_MAX_WIDTH = 240
 
 
 class _LazyPages:
@@ -235,6 +238,15 @@ class MainWindow(QMainWindow):
         self.status_label = StatusLabel("")
         self.status_label.setObjectName("hint")
         self.statusBar().addWidget(self.status_label)
+        # The current game folder is a fact about the whole window, not about one page, so it lives on
+        # the status bar next to the size grip instead of in a page header (the launch page, the
+        # instances page and the resources page all address it). The status line's own messages can be
+        # long and are overwritten by every page; this label never is. The full path is the tooltip.
+        self.folder_label = QLabel("")
+        self.folder_label.setObjectName("hint")
+        self.folder_label.setMaximumWidth(FOLDER_LABEL_MAX_WIDTH)
+        self.folder_label.setAccessibleName(tr("status.folder.a11y"))
+        self.statusBar().addPermanentWidget(self.folder_label)
 
         # The window's task list: one model, two views. The center is created before any page, because
         # a page reaches it through its parent chain (gui.tasks.task_center_of) rather than being handed
@@ -247,6 +259,11 @@ class MainWindow(QMainWindow):
         self.sidebar.currentRowChanged.connect(self._on_nav_changed)
         self.build_pages()
         self.sidebar.setCurrentRow(0)
+        # A settings change is compared against this snapshot to tell "the current game folder
+        # changed" (refresh the pages that read it) from "some other setting changed" (do not).
+        from launcher import config as _config
+
+        self._game_dir_snapshot = _config.load()[0].game_dir
         self.set_status(tr("status.ready"))
         # Icons are rasterised from the SVGs after every theme/accent switch; the colour is part of
         # nav_icons' cache key, so a switched theme can never keep the old-coloured pixmap.
@@ -373,6 +390,33 @@ class MainWindow(QMainWindow):
         # strings (panel title, empty state, the rows' state labels) were built in the old language.
         if getattr(self, "task_overlay", None) is not None:
             self.task_overlay.retranslate()
+        # A language switch re-translates the current folder's label too.
+        self._refresh_current_folder_label()
+
+    def _refresh_current_folder_label(self) -> None:
+        """Show which game folder every page is reading, in the status bar's right-hand slot."""
+        from launcher import config
+
+        label = getattr(self, "folder_label", None)
+        if label is None:
+            return
+        cfg = config.load()[0]
+        folder = cfg.active_folder()
+        if folder is None:
+            # A config that has never named a folder still has one in effect (the environment or
+            # platform default), and the settings page lists exactly that folder as the current one.
+            effective = cfg.effective_game_folders()
+            folder = effective[0] if effective else None
+        if folder is None:
+            label.setText("")
+            label.setToolTip("")
+            return
+        name = folder.display_name()
+        prefix = tr("status.folder", "")
+        metrics = label.fontMetrics()
+        room = max(24, FOLDER_LABEL_MAX_WIDTH - metrics.horizontalAdvance(prefix) - 8)
+        label.setText(prefix + metrics.elidedText(name, Qt.TextElideMode.ElideMiddle, room))
+        label.setToolTip(str(folder.path))
 
     def _apply_page_inset(self, key: str) -> None:
         """Give the launch page the full content area; keep the old frame on every other page.
@@ -515,6 +559,14 @@ class MainWindow(QMainWindow):
         from launcher import config
 
         cfg, _ = config.load()
+        # Only an actual folder switch needs the folder-dependent pages refreshed: every control on the
+        # settings page emits this signal, and re-querying the resources page for a memory tweak would
+        # throw the user's search away for nothing.
+        previous_dir = getattr(self, "_game_dir_snapshot", None)
+        folder_changed = previous_dir is not None and not config.same_game_folder(
+            previous_dir, cfg.game_dir
+        )
+        self._game_dir_snapshot = cfg.game_dir
         if i18n.current_language() != cfg.ui_language:
             i18n.set_language(cfg.ui_language)
             self.build_pages()
@@ -522,6 +574,18 @@ class MainWindow(QMainWindow):
         self.pages["launch"].refresh_config()
         # The instance registry lives in the game directory: refresh the list immediately
         self.pages["instances"].refresh()
+        # A different current game folder is a different versions/ and mods/ tree, and these two pages
+        # answer "what is installed there" from disk. They are refreshed only when they already exist
+        # (peek never builds a page), so a settings change cannot make startup pay for pages the
+        # session has not opened, and a page that is built here is built by the user's own next visit.
+        if folder_changed:
+            versions = self.pages.peek("versions")
+            if versions is not None:
+                versions.refresh_installed()
+            resources = self.pages.peek("mods")
+            if resources is not None:
+                resources.refresh()
+        self._refresh_current_folder_label()
 
     def _goto_launch(self, version_id: str) -> None:
         self.pages["launch"].set_version_id(version_id)
@@ -820,6 +884,7 @@ class MainWindow(QMainWindow):
             cfg.accessibility_preference = self._wz_accessibility.value()
         cfg.wizard_done = True
         config.save(cfg, cfg_path)
+        self._game_dir_snapshot = cfg.game_dir
         config.initialize_language(cfg, cfg_path)
         i18n.set_language(cfg.ui_language)
         apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)

@@ -15,11 +15,13 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Settings page: game directory, Java, memory, concurrency, version isolation, game language, launcher language."""
+"""Settings page: game folders, Java, memory, concurrency, version isolation, game language, launcher language."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -45,6 +47,7 @@ from gui import i18n, inwindow_dialog
 from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve_theme
 from gui.widgets import (
     AccessibilityPreferenceGroup,
+    ElidedLabel,
     NoWheelSpinBox,
     add_page_top_inset,
     set_app_status,
@@ -160,10 +163,47 @@ class SettingsPage(QWidget):
         # background and the page stays the window's white - i.e. the flat look this mock-up removes.
         self.setObjectName("settingsPage")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.game_dir_edit = QLineEdit()
-        self.game_dir_edit.setPlaceholderText(tr("wizard.default_dir.hint"))  # 留空使用默认目录
-        self.browse_game = QPushButton(tr("settings.browse"))
-        self.browse_game.setObjectName("secondaryButton")
+        # Game folders: the settings page owned one path field until this round; the row is now the
+        # list of known folders, and `game_dir` remains the *current* one (see launcher/config.py).
+        self.folder_list = QWidget()
+        self.folder_rows_layout = QVBoxLayout(self.folder_list)
+        self.folder_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.folder_rows_layout.setSpacing(ROW_SPACING)
+        self.folder_hint = QLabel(tr("settings.folder.hint"))
+        self.folder_hint.setObjectName("hint")
+        self.folder_hint.setWordWrap(True)
+        # Why the current folder cannot change right now (a download / a launch is using it). Hidden
+        # until there is a reason: a permanent "you may switch" line would be noise.
+        self.folder_busy_label = QLabel("")
+        self.folder_busy_label.setObjectName("hint")
+        self.folder_busy_label.setWordWrap(True)
+        self.folder_busy_label.setVisible(False)
+        self.add_folder_button = QPushButton(tr("settings.folder.add"))
+        self.add_folder_button.setObjectName("secondaryButton")
+        self.add_folder_button.setFixedHeight(FIELD_HEIGHT)
+        self.add_folder_button.clicked.connect(self._browse_add_folder)
+        self.folder_box = QWidget()
+        folder_box_layout = QVBoxLayout(self.folder_box)
+        folder_box_layout.setContentsMargins(0, 0, 0, 0)
+        folder_box_layout.setSpacing(ROW_SPACING)
+        folder_box_layout.addWidget(self.folder_list)
+        folder_box_layout.addWidget(self.folder_hint)
+        folder_box_layout.addWidget(self.folder_busy_label)
+        folder_add_row = QHBoxLayout()
+        folder_add_row.setContentsMargins(0, 0, 0, 0)
+        folder_add_row.setSpacing(ROW_SPACING)
+        folder_add_row.addWidget(self.add_folder_button)
+        folder_add_row.addStretch(1)
+        folder_box_layout.addLayout(folder_add_row)
+        # The busy rule is re-evaluated while the page is visible: a download can finish (or a launch
+        # can end) while the user is sitting on this page, and a disabled button that never comes back
+        # would look broken. Nothing is polled while the page is hidden (the timer runs only between
+        # showEvent and hideEvent).
+        self._folder_rows: list[tuple[Path, bool, QPushButton, QPushButton]] = []
+        self._active_folder_path: Path | None = None
+        self._folder_busy_timer = QTimer(self)
+        self._folder_busy_timer.setInterval(1000)
+        self._folder_busy_timer.timeout.connect(self._update_folder_actions)
         self.java_path_edit = QLineEdit()
         self.java_path_edit.setAccessibleName(tr("settings.java"))  # WCAG 4.1.2
         self.browse_java = QPushButton(tr("settings.browse"))
@@ -386,20 +426,16 @@ class SettingsPage(QWidget):
         # column is fixed in _apply_form_metrics() so every field starts on the same vertical line.
         form.setVerticalSpacing(ROW_SPACING)
         # WCAG 4.1.2: a control added straight to a row *is* the row's field, so QFormLayout hands it the
-        # label text as its accessible name. Wrapping a control in a layout instead (the three rows
-        # below) breaks that association - the form sees a layout, not a field - which left the game
-        # directory and accent fields announced as unnamed edit boxes. The names are set explicitly
-        # rather than through a buddy, so they reach UIA on every platform and survive a row being
-        # restructured later.
-        self.game_dir_edit.setAccessibleName(tr("settings.game_dir"))  # WCAG 4.1.2
+        # label text as its accessible name. Wrapping a control in a layout instead (the accent row)
+        # breaks that association - the form sees a layout, not a field - which left the accent field
+        # announced as an unnamed edit box. The names are set explicitly rather than through a buddy,
+        # so they reach UIA on every platform and survive a row being restructured later. The folder
+        # rows are a container of buttons now; each button carries its folder's name explicitly.
         self.accent_edit.setAccessibleName(tr("settings.accent"))  # WCAG 4.1.2
-        game_row = QHBoxLayout()
-        game_row.addWidget(self.game_dir_edit, 1)
-        game_row.addWidget(self.browse_game)
         java_row = QHBoxLayout()
         java_row.addWidget(self.java_path_edit, 1)
         java_row.addWidget(self.browse_java)
-        form.addRow(tr("settings.game_dir"), game_row)
+        form.addRow(tr("settings.game_dir"), self.folder_box)
         form.addRow(tr("settings.java"), java_row)
         form.addRow(tr("settings.memory") + tr("unit.gb.label"), self.memory_box)
         form.addRow("", self.memory_auto_check)
@@ -459,12 +495,14 @@ class SettingsPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(inner)
+        # Kept for the folder rows' tab order: they are created after every other control, so Qt's
+        # default chain would park them behind the page's last button (see _reload_folders).
+        self.page_scroll = scroll
         outer = QVBoxLayout(self)
         style_page_layout(outer)
         add_page_top_inset(outer)
         outer.addWidget(scroll)
 
-        self.browse_game.clicked.connect(self._browse_game)
         self.browse_java.clicked.connect(self._browse_java)
         self.encrypt_button.clicked.connect(self._change_password)
         self.open_data_dir_button.clicked.connect(self._open_data_dir)
@@ -532,7 +570,6 @@ class SettingsPage(QWidget):
         ):
             on_change(spin.valueChanged)
         for edit in (
-            self.game_dir_edit,
             self.java_path_edit,
             self.proxy_edit,
             self.cf_key_edit,
@@ -554,12 +591,11 @@ class SettingsPage(QWidget):
         """PCL's settings metrics: fixed left-aligned label column, 32px fields, 38px row pitch.
 
         Done after the rows exist because QFormLayout builds the label widget itself when a
-        plain string is passed. Rows whose field is a layout (game directory, Java path,
-        accent) are measured through the layout's child widgets; the two browse buttons and
-        the three spin boxes get the same height as a text field.
+        plain string is passed. Rows whose field is a layout (Java path, accent) are measured
+        through the layout's child widgets; the browse button and the three spin boxes get the same
+        height as a text field.
         """
         fields = (
-            self.game_dir_edit,
             self.java_path_edit,
             self.proxy_edit,
             self.cf_key_edit,
@@ -581,9 +617,10 @@ class SettingsPage(QWidget):
             # the window at the 930px floor; the field may shrink and scroll its text instead.
             widget.setMinimumWidth(0)
             widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        for button in (self.browse_game, self.browse_java):
-            button.setFixedHeight(FIELD_HEIGHT)
-            button.setMinimumWidth(0)
+        self.add_folder_button.setFixedHeight(FIELD_HEIGHT)
+        self.add_folder_button.setMinimumWidth(0)
+        self.browse_java.setFixedHeight(FIELD_HEIGHT)
+        self.browse_java.setMinimumWidth(0)
         for row in range(form.rowCount()):
             label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
             if label_item is not None and label_item.widget() is not None:
@@ -600,16 +637,20 @@ class SettingsPage(QWidget):
                 for index in range(layout.count()):
                     child = layout.itemAt(index).widget()
                     is_field = isinstance(child, (QLineEdit, QComboBox))
-                    is_browse = child is self.browse_game or child is self.browse_java
+                    is_browse = child is self.browse_java
                     if is_field or is_browse:
                         child.setFixedHeight(FIELD_HEIGHT)
+        # The folder list is several rows tall: its label reads as the row's heading, so it sits at the
+        # top instead of floating in the middle of the list. Row 0 is the game-directory row.
+        folder_label = form.itemAt(0, QFormLayout.ItemRole.LabelRole)
+        if folder_label is not None and folder_label.widget() is not None:
+            folder_label.widget().setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            )
 
     def load(self) -> None:
         cfg, _ = config.load()
-        self.game_dir_edit.setText(str(cfg.game_dir) if cfg.game_dir else "")
-        # Long paths otherwise scroll to their tail the moment the page opens; showing the drive
-        # letter is what tells the user which folder this is.
-        self.game_dir_edit.setCursorPosition(0)
+        self._reload_folders(cfg)
         self.java_path_edit.setText(str(cfg.java_path) if cfg.java_path else "")
         self.java_path_edit.setCursorPosition(0)
         self._memory_value = float(cfg.memory_gb)
@@ -695,7 +736,6 @@ class SettingsPage(QWidget):
                 self.encrypt_check.setChecked(True)  # keep it enabled
                 return
             cfg, cfg_path = config.load()
-        cfg.game_dir = self.game_dir_edit.text().strip() or None
         cfg.java_path = self.java_path_edit.text().strip() or None
         cfg.memory_gb = float(self._memory_value)
         cfg.memory_auto = self.memory_auto_check.isChecked()
@@ -949,11 +989,220 @@ class SettingsPage(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
         set_app_status(self, tr("settings.msg.data_dir_opened", str(target)))
 
-    def _browse_game(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, tr("settings.game_dir"), str(paths.default_game_dir()))
+    # ---------- game folders ----------
+
+    def _reload_folders(self, cfg=None) -> None:
+        """Draw one row per known folder: path, 「设为当前」 and 「移除」.
+
+        ``effective_game_folders`` also supplies the implicit env/platform folder of a config that has
+        never stored one, so the list is never empty and the last row's 移除 is disabled rather than
+        the page starting without any folder to show.
+        """
+        if cfg is None:
+            cfg, _ = config.load()
+        folders = cfg.effective_game_folders()
+        self._active_folder_path = cfg.game_dir
+        while self.folder_rows_layout.count():
+            item = self.folder_rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                # Reparent before the deferred delete: a widget that is only removed from the layout
+                # stays visible at its old geometry until the event loop runs the DeferredDelete, and
+                # a page rebuilt while hidden then paints the stale rows under the new ones.
+                widget.setParent(None)
+                widget.deleteLater()
+        self._folder_rows = []
+        for folder in folders:
+            row = QWidget(self.folder_list)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(ROW_SPACING)
+            is_current = bool(folder.is_default)
+            path_label = ElidedLabel(str(folder.path), elide_mode=Qt.TextElideMode.ElideMiddle)
+            # A path is text, not a control: selecting it with the mouse stays possible, but it must
+            # not become a Tab stop of its own (the keyboard walkthrough records every ClickFocus
+            # widget, and a stop with no focus rule would be a dead end in the page's tab chain).
+            path_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            # The bullet is the visible "this is the current folder" mark; the button beside it is
+            # disabled and says 「当前」, so the state is readable with the mouse and a screen reader.
+            # A bullet, not U+2713: the tick is missing from some of the CJK fonts the theme uses and
+            # rendered as a tofu box in the offscreen shots (measured).
+            path_label.setText(("\u25cf  " if is_current else "") + str(folder.path))
+            path_label.setToolTip(str(folder.path))
+            path_label.setAccessibleName(tr("settings.folder.a11y.path", folder.display_name()))
+            make_current = QPushButton(
+                tr("settings.folder.current") if is_current else tr("settings.folder.make_current")
+            )
+            make_current.setObjectName("secondaryButton")
+            make_current.setFixedHeight(FIELD_HEIGHT)
+            make_current.setAccessibleName(
+                tr("settings.folder.a11y.make_current", folder.display_name())
+            )
+            remove = QPushButton(tr("settings.folder.remove"))
+            remove.setObjectName("secondaryButton")
+            remove.setFixedHeight(FIELD_HEIGHT)
+            remove.setAccessibleName(tr("settings.folder.a11y.remove", folder.display_name()))
+            make_current.clicked.connect(
+                lambda *_, path=folder.path: self._set_current_folder(path)
+            )
+            remove.clicked.connect(lambda *_, path=folder.path: self._remove_folder(path))
+            row_layout.addWidget(path_label, 1)
+            row_layout.addWidget(make_current)
+            row_layout.addWidget(remove)
+            self.folder_rows_layout.addWidget(row)
+            self._folder_rows.append((folder.path, is_current, make_current, remove))
+        # The rows were built after every other control on the page, so Qt's focus chain would put
+        # their buttons behind the last control at the bottom of the form - a keyboard user would tab
+        # past the whole page to reach the folder they can see at the top. Anchor the chain after the
+        # scroll container instead: rows first (visual order), then 「添加文件夹…」, then the form.
+        # One setTabOrder call moves one widget, so the row buttons are chained one by one.
+        previous = self.page_scroll
+        for _path, _is_current, make_current, remove in self._folder_rows:
+            QWidget.setTabOrder(previous, make_current)
+            QWidget.setTabOrder(make_current, remove)
+            previous = remove
+        self._update_folder_actions()
+
+    def _folder_switch_block_reason(self) -> str:
+        """Why the current folder cannot change right now ('' when it can).
+
+        Two things make the switch unsafe: a download that is writing into the current folder's
+        ``versions/`` / ``libraries/`` / ``assets/``, and a launch (or a running game) that is reading
+        it. The download question is the launcher's one process-wide counter - the same integer the
+        quit confirmation reads - so every download path (versions, resources, Java, updates) is
+        covered by one check. The launch question is the launch button's own state: it is disabled for
+        the whole pre-launch + run worker and re-enabled only when that worker returns.
+        """
+        from launcher.net import downloader
+
+        active_downloads = downloader.active_download_count()
+        if active_downloads > 0:
+            return tr("settings.folder.busy.download", active_downloads)
+        window = self.window()
+        pages = getattr(window, "pages", None)
+        peek = getattr(pages, "peek", None)
+        if callable(peek):
+            launch_page = peek("launch")
+            launch_button = getattr(launch_page, "launch_button", None)
+            if launch_button is not None and not launch_button.isEnabled():
+                return tr("settings.folder.busy.launch")
+        return ""
+
+    def _update_folder_actions(self) -> None:
+        """Apply the busy rule to every row and state the reason under the list."""
+        reason = self._folder_switch_block_reason()
+        self.folder_busy_label.setText(reason)
+        self.folder_busy_label.setVisible(bool(reason))
+        multiple = len(self._folder_rows) > 1
+        for path, is_current, make_current, remove in self._folder_rows:
+            make_current.setEnabled(not is_current and not reason)
+            make_current.setToolTip(reason or str(path))
+            # Removing a non-current folder does not switch anything, so it stays available while a
+            # download runs; removing the current one would, and is refused for the same reason.
+            remove.setEnabled(multiple and not (reason and is_current))
+            remove.setToolTip(
+                tr("settings.folder.keep_one") if not multiple else (reason or str(path))
+            )
+
+    def _add_folder(self, path) -> bool:
+        """Add a chosen path (duplicates are reported, not duplicated). Returns whether it was added."""
+        text = str(path or "").strip()
+        if not text:
+            return False
+        cfg, cfg_path = config.load()
+        folder, created = cfg.add_game_folder(text)
+        if not created:
+            set_app_status(
+                self, tr("settings.folder.duplicate", str(folder.path)), "warning"
+            )
+            return False
+        config.save(cfg, cfg_path)
+        self._reload_folders(cfg)
+        set_app_status(self, tr("settings.folder.added", folder.display_name()))
+        return True
+
+    def _browse_add_folder(self) -> None:
+        start = str(self._active_folder_path or paths.default_game_dir())
+        chosen = QFileDialog.getExistingDirectory(self, tr("settings.game_dir"), start)
         if chosen:
-            self.game_dir_edit.setText(chosen)
-            self.save()  # picking a folder is a change: no Save button to press
+            self._add_folder(chosen)
+
+    def _set_current_folder(self, path) -> bool:
+        """Switch the current folder; refused while a download or a launch is using it."""
+        reason = self._folder_switch_block_reason()
+        if reason:
+            set_app_status(self, reason, "warning")
+            return False
+        cfg, cfg_path = config.load()
+        if not cfg.set_active_game_folder(path):
+            set_app_status(self, tr("settings.folder.missing"), "warning")
+            return False
+        config.save(cfg, cfg_path)
+        folder = cfg.active_folder()
+        name = folder.display_name() if folder is not None else str(path)
+        self._reload_folders(cfg)
+        # Every page that resolves the game directory has to re-read it now: the instances list, the
+        # versions page's "installed" column, the resources page's folder, the launch page's profiles.
+        self.settings_changed.emit()
+        set_app_status(self, tr("settings.folder.switched", name))
+        return True
+
+    def _remove_folder(self, path) -> bool:
+        """Ask, then remove one folder; the last one and the busy case are refused."""
+        if len(self._folder_rows) <= 1:
+            set_app_status(self, tr("settings.folder.keep_one"), "warning")
+            return False
+        cfg, _ = config.load()
+        folder = cfg.folder_for(path)
+        if folder is None:
+            set_app_status(self, tr("settings.folder.missing"), "warning")
+            return False
+        reason = self._folder_switch_block_reason()
+        if reason and folder.is_default:
+            set_app_status(self, reason, "warning")
+            return False
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("settings.folder.remove.title"),
+            tr(
+                "settings.folder.remove.message",
+                folder.display_name(),
+                str(folder.path),
+            ),
+            accept_text=tr("settings.folder.remove.confirm"),
+            reject_text=tr("dialog.cancel"),
+            # The safe answer is the default one: Enter must not remove a folder by accident.
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="warning",
+        )
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
+            return False
+        cfg, cfg_path = config.load()
+        target = cfg.folder_for(path)
+        if target is None:
+            set_app_status(self, tr("settings.folder.missing"), "warning")
+            return False
+        removed_current = bool(target.is_default)
+        if not cfg.remove_game_folder(path):
+            set_app_status(self, tr("settings.folder.keep_one"), "warning")
+            return False
+        config.save(cfg, cfg_path)
+        self._reload_folders(cfg)
+        set_app_status(self, tr("settings.folder.removed", folder.display_name()))
+        if removed_current:
+            # The promoted folder is where every page now reads from.
+            self.settings_changed.emit()
+        return True
+
+    def showEvent(self, event) -> None:
+        """Re-evaluate the busy rule whenever the page (re)appears, then keep watching it."""
+        super().showEvent(event)
+        self._update_folder_actions()
+        self._folder_busy_timer.start()
+
+    def hideEvent(self, event) -> None:
+        self._folder_busy_timer.stop()
+        super().hideEvent(event)
 
     def _browse_java(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(self, "Java")

@@ -1679,6 +1679,24 @@ class ResourcesPage(QWidget):
         """The display name of the active source ("Modrinth" / "CurseForge") for the result rows."""
         return self.source_combos[0].currentText()
 
+    def refresh(self) -> None:
+        """Re-read the page after the current game folder changed (window bridge, not a user action).
+
+        The rows resolve the folder's mods/ resourcepacks/ directory when their action is clicked, and
+        the page loads a category once; without this, a page built against the previous folder would
+        keep presenting its cached page as the new folder's. A category that has already loaded is
+        reloaded on the page it is on (query and page kept); the others re-read when next shown.
+        """
+        current = self.tabs.currentWidget()
+        reload_now = isinstance(current, _ContentTab) and current._initial_loaded
+        for index in range(self.tabs.count()):
+            tab = self.tabs.widget(index)
+            if isinstance(tab, _ContentTab):
+                tab._initial_loaded = False
+        if reload_now:
+            current._initial_loaded = True
+            current._load_page()
+
     def _on_chip_clicked(self, index: int) -> None:
         if self.tabs.currentIndex() != index:
             self.tabs.setCurrentIndex(index)
