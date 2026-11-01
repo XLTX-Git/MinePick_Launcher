@@ -47,6 +47,8 @@ from gui.pages.login_page import LoginPage
 from gui.pages.mods_page import ResourcesPage
 from gui.pages.settings_page import SettingsPage
 from gui.pages.versions_page import VersionsPage
+from gui.task_ui import TaskOverlay
+from gui.tasks import TaskCenter
 from gui.wizard_overlay import BulletList, OptionGrid, WizardOverlay, WizardStep
 
 NAV_KEYS = ["launch", "instances", "versions", "java", "account", "mods", "settings", "about"]
@@ -156,6 +158,9 @@ class MainWindow(QMainWindow):
         # tools/measure_min_width.py is what holds every language to it. See _enforce_layout_floor for why
         # this cannot simply be "let Qt derive the minimum" under lazy page construction.
         self._floor_pass = False
+        # The task views float over the content area and are positioned by hand. Declared before the
+        # first resize (below), because resizeEvent already asks them where they belong.
+        self.task_overlay: TaskOverlay | None = None
         # The DWM corner preference is a one-shot window attribute, applied in showEvent once the
         # native handle exists. False means "not attempted yet", not "failed": on Windows 10 it will
         # simply stay False and the window keeps the square frame it always had.
@@ -204,6 +209,9 @@ class MainWindow(QMainWindow):
 
         content = QWidget()
         content.setObjectName("appContent")
+        # Named for the task views: they float over this area (below the title bar, above the status
+        # bar) and are positioned against its edges, so no layout ever owns them.
+        self.content = content
         layout = QHBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -227,6 +235,12 @@ class MainWindow(QMainWindow):
         self.status_label = StatusLabel("")
         self.status_label.setObjectName("hint")
         self.statusBar().addWidget(self.status_label)
+
+        # The window's task list: one model, two views. The center is created before any page, because
+        # a page reaches it through its parent chain (gui.tasks.task_center_of) rather than being handed
+        # one - which is what keeps an offscreen page without a window free of tasks.
+        self.tasks = TaskCenter(self)
+        self.task_overlay = TaskOverlay(self)
 
         # One handler for both jobs: it builds the page if this is its first visit, shows it, refreshes
         # it. Connecting the stack directly as well would fight it over which widget is current.
@@ -328,6 +342,18 @@ class MainWindow(QMainWindow):
 
     def build_pages(self) -> None:
         """(Re)create the navigation. Pages themselves are constructed on first use."""
+        # A page may own background work (the versions page owns the download behind its task). It is
+        # asked to stop that work before it is dropped: its worker's callbacks go through
+        # run_in_background, which drops a callback whose page is gone, so a task left running would
+        # spin in the corner for the rest of the session. A language switch is what runs this.
+        # (There is no registry on the very first call - the window is being built.)
+        previous = getattr(self, "pages", None)
+        if previous is not None:
+            for key in previous.built_keys():
+                page = previous.peek(key)
+                stop = getattr(page, "cancel_running_task", None)
+                if callable(stop):
+                    stop()
         # A fresh registry: after a language switch every page must be built again in the new language
         self.pages = _LazyPages(self)
         self.sidebar.blockSignals(True)
@@ -341,6 +367,10 @@ class MainWindow(QMainWindow):
         self.sidebar.setCurrentRow(0)
         self.sidebar.blockSignals(False)
         self._on_nav_changed(0)  # blocks were held, so the first page is shown explicitly
+        # The task views are the window's, not a page's, so they survive this rebuild - but their
+        # strings (panel title, empty state, the rows' state labels) were built in the old language.
+        if getattr(self, "task_overlay", None) is not None:
+            self.task_overlay.retranslate()
 
     def _apply_page_inset(self, key: str) -> None:
         """Give the launch page the full content area; keep the old frame on every other page.
@@ -816,6 +846,11 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._enforce_layout_floor()
+        # The task views are positioned by hand, never by a layout: that is what keeps the floating
+        # button out of the window's minimum width (tools/measure_min_width.py measures the same
+        # number before and after this change).
+        if self.task_overlay is not None:
+            self.task_overlay.reposition()
 
     def _enforce_layout_floor(self) -> None:
         """Raise the window's minimum width to what the layout needs, and never lower it.
