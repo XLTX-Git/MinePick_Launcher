@@ -828,16 +828,16 @@ QPushButton#iconButton[keyboardFocus="true"]:focus { border: 1px solid __FOCUS_R
 
 /* ---------- in-window overlay dialogs (crash diagnosis) ---------- */
 
-/* The card's edge carries its silhouette in this theme. The scrim is a theme-blind 35% black
-   (gui/overlay.py SCRIM), so the same tint that leaves a white card 2.59:1 clear of the backdrop in
-   the light sheet leaves BG_LIST 1.15:1 clear of it here - the fill alone does not separate the card
-   from the page behind it. The outline is therefore the stronger BORDER_SWATCH step rather than the
-   quiet BORDER_BUTTON_ICON: 2.06:1 from the scrim, against 1.46:1 before. A theme-aware scrim (one
-   that lightens in dark instead of darkening) is the real fix and needs a token of its own - recorded
-   in tmp/dark_sweep/REPORT.md, not changed here. */
+/* The card is the one surface painted over a scrim rather than over the page, so its fill needs to
+   separate it from the *dimmed* page. BG_LIST cannot: it measures 1.15:1 from the scrim, and 1.24:1
+   is the ceiling for any scrim because that is BG_LIST against pure black - darkening the backdrop
+   was not enough on its own. The fill is therefore the raised BG_OVERLAY_CARD (2.22:1 against the
+   scrimmed page) and the outline only has to sit on that fill (BORDER_SWATCH would be 1.06:1 above
+   it). The scrim's strength is per theme in gui/overlay.py SCRIM_ALPHA; the light sheet keeps its
+   white card and its quiet BORDER_BUTTON_ICON edge. */
 QWidget#overlayCard {
-    background: __BG_LIST__;
-    border: 1px solid __BORDER_SWATCH__;
+    background: __BG_OVERLAY_CARD__;
+    border: 1px solid __BORDER_OVERLAY_CARD__;
     border-radius: __RADIUS_LG__;
 }
 QLabel#overlayCode {

@@ -200,6 +200,13 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     # cards instead of competing with them. Dark keeps the window colour it already painted.
     "BG_NAV": {"dark": "#0f141b", "light": "#f3f6fd"},
     "BG_OPTION": {"dark": "#161d27", "light": "#f1f3f6"},
+    # The in-window overlay card is the one surface painted over a scrim instead of over the page
+    # (gui/overlay.py BlurOverlay, gui/inwindow_dialog.py). Its fill therefore has to separate it from
+    # the *scrimmed* backdrop, and BG_LIST cannot do that in dark: it is 1.15:1 from the dimmed page,
+    # and 1.24:1 is the ceiling for any scrim, because that is BG_LIST against pure black. The dark
+    # value is the raised surface that clears the 1.8:1 floor (2.22:1 against the scrimmed page); the
+    # light sheet keeps painting BG_LIST, and the light value here is the same white for that reason.
+    "BG_OVERLAY_CARD": {"dark": "#3b4a5c", "light": "#ffffff"},
     "BG_OVERLAY_CODE": {"dark": "#2a1a1e", "light": "#fdecea"},
     # The one page paper: every page container, the content stack and each page-level scroll viewport
     # paints this, so the three near-identical blues the pages used to invent are gone.
@@ -237,6 +244,12 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     # The hairline between the sidebar rail and the page: decoration, not a control, so it is one quiet
     # step below the rail rather than a visible frame.
     "BORDER_NAV": {"dark": "#27303d", "light": "#dfe7f0"},
+    # The overlay card's outline. Once the card's fill carries the silhouette (see BG_OVERLAY_CARD),
+    # the frame only has to read as an edge on that fill, not carry the whole separation: BORDER_SWATCH
+    # (#3a4757) would sit 1.06:1 above the new dark fill, i.e. invisible, so dark steps up to 1.40:1.
+    # The light sheet keeps its quiet BORDER_BUTTON_ICON outline (1.70:1 against the scrim); the light
+    # value here repeats that colour for the same reason as the fill above.
+    "BORDER_OVERLAY_CARD": {"dark": "#4e6076", "light": "#c9d2dc"},
     "BORDER_OVERLAY_CODE": {"dark": "#e5787f", "light": "#e5787f"},
     "BORDER_SWATCH": {"dark": "#3a4757", "light": "#b6c1cd"},
     "BORDER_TABLE": {"dark": "#212a36", "light": "#dfe4ea"},
@@ -386,6 +399,17 @@ def radius_scale(radius: str | None) -> tuple[int, int, int]:
 # The (application, theme, accent, font, radius, device scale) last handed to setStyleSheet.
 _last_applied: tuple[int, str, str, str, str, int] | None = None
 
+# The concrete theme behind the style currently in force. Most colour is read from the token table
+# below, but a few surfaces are painted rather than declared - the overlay scrim is composited in
+# paintEvent (gui/overlay.py) - and those need to know which theme they are painting for.
+_last_theme = "dark"
+
+
+def current_theme() -> str:
+    """The concrete theme last applied ("dark" before the first apply_theme call)."""
+    return _last_theme
+
+
 # The token table (role -> colour) behind the stylesheet currently in force. Widgets that must
 # style themselves - because the application stylesheet is not adopted for them on every
 # platform - read their colours from here, so colour still has exactly one source of truth.
@@ -459,7 +483,7 @@ def apply_theme(
     so without this guard a session that touches a few settings pays seconds per change - and the test
     suite, which drives those saves, spends minutes in it.
     """
-    global _last_applied, _last_tokens
+    global _last_applied, _last_tokens, _last_theme
     app = QApplication.instance()
     if app is None:
         return
@@ -507,6 +531,7 @@ def apply_theme(
     app.setPalette(theme_qpalette(theme, accent))
     # Publish the tokens before the sheet: a widget that reacts to StyleChange reads them there.
     _last_tokens = dict(palette)
+    _last_theme = theme
     # Clear the application sheet before installing the new one. Qt's cost for *replacing* it accumulates
     # within a process: in a clean run with one window, eight consecutive replacements took 0.06s, 0.25s,
     # 0.42s, 0.42s, 0.44s, 1.72s, 2.16s, and a real 1455-widget window paid 4.5-6.5s per dark/light switch

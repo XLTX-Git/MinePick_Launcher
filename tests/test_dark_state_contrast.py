@@ -24,30 +24,41 @@ technically styled and visually absent, and neither is a contrast failure the pa
   ``border-color: BORDER_HOVER``, but on the launch, versions, settings and resources pages the
   resting outline is ``BORDER_LAUNCH_FIELD`` - and in dark those were the same value ``#33404f``.
   Hovering the settings page's Java path changed literally no pixel, while the light sheet marked the
-  hover (#c5d5e8 -> #a7b4c2, measured 1.41:1). The same collapse hid the pressed state of the outlined
-  buttons (``BG_BUTTON_SECONDARY_2`` equals ``BG_LIST`` in dark) and the hovered slider handle
-  (``BG_HOVER`` equals ``BG_LIST_2``); those two need a token that does not exist yet, so they are
-  reported rather than pinned, and only the border case has a value here.
+  hover (#c5d5e8 -> #a7b4c2, measured 1.41:1). The same collapse hides the pressed state of the
+  outlined buttons (``BG_BUTTON_SECONDARY_2`` equals ``BG_LIST`` in dark); that one needed a token of
+  its own and is still only reported, not pinned, here.
 
-* **An edge drawn against a backdrop that is not in the palette.** The in-window dialog's card sits
-  on a theme-blind 35% black scrim (gui/overlay.py SCRIM). That tint leaves a white card 2.59:1 clear
-  of the backdrop in the light sheet and ``BG_LIST`` 1.15:1 clear of it in dark, so the card's outline
-  is the only thing that carries its silhouette there.
+* **An edge drawn against a backdrop that is not in the palette.** The in-window dialog's card sits on
+  a scrim painted over a snapshot of the window (gui/overlay.py). That scrim used to be a single
+  35% black for both themes, which leaves a white card 2.59:1 clear of the backdrop in light but
+  ``BG_LIST`` only 1.15:1 clear of it in dark: the card's fill and the dimmed page read as one
+  surface. The scrim now follows the theme and the card has a fill of its own, because darkening the
+  scrim alone cannot pass the floor - see the ceiling test below.
 
 These tests pin the measurements; they do not restate the QSS. Every value is read back out of the
-sheets and the palette, because the defect was exactly that the two agreed when they should not have.
+sheets and the palette (and out of gui/overlay.py for the scrim), because the defect was exactly that
+the two agreed when they should not have.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
-from gui import theme
+from gui import overlay, theme
 
 RESOURCES = Path(__file__).resolve().parent.parent / "gui" / "resources"
 DARK_SHEET = RESOURCES / "style.qss"
 LIGHT_SHEET = RESOURCES / "style_light.qss"
+
+#: The digest of gui/resources/style_light.qss as it shipped before this dark-only change. It is a
+#: witness, not a convenience: the light theme's rendering is supposed to be untouched, and a stylesheet
+#: edit is the one way to break that without touching a token value.
+LIGHT_SHEET_SHA256 = "81f6712477ec924745a338118ba604d468dbc60dd1449da518d65a0d4c69f6e8"
+
+#: A card's fill has to be at least this far from the surface behind it to read as a separate sheet.
+CARD_FLOOR = 1.8
 
 # The states a sheet can paint. `:focus` is not here: the sheets gate the keyboard ring on the
 # `keyboardFocus` property instead (see gui.widgets.KeyboardFocusTracker).
@@ -62,9 +73,6 @@ BORDER_PROPS = (
 )
 TOKEN = re.compile(r"__([A-Z0-9_]+)__")
 COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-
-# The scrim the in-window dialogs paint over the window (gui/overlay.py SCRIM["normal"]): 35% black.
-SCRIM_ALPHA = 90
 
 
 def _rules(path: Path) -> list[tuple[str, dict[str, str]]]:
@@ -121,6 +129,23 @@ def _token(value: str | None) -> str | None:
 
 def _colour(mode: str, token: str) -> str:
     return theme.theme_palette(mode)[token]
+
+
+def _scrimmed(mode: str, base_token: str, severity: str = "normal") -> str:
+    """The scrim painted source-over ``base_token``, the way both overlays composite it.
+
+    The card is drawn *on top of* the scrim (a child widget paints after its parent), so what the card
+    has to separate from is the page with the scrim over it - not the scrim's own colour.
+    """
+    colour = overlay.scrim_colour(severity, mode)
+    red, green, blue, alpha = colour.getRgb()
+    weight = alpha / 255
+    value = _colour(mode, base_token).lstrip("#")
+    base = [int(value[index : index + 2], 16) for index in (0, 2, 4)]
+    return "#" + "".join(
+        f"{round(channel * (1 - weight) + tint * weight):02x}"
+        for channel, tint in zip(base, (red, green, blue), strict=True)
+    )
 
 
 def test_the_hover_outline_moves_in_dark_as_far_as_it_moves_in_light():
@@ -202,53 +227,123 @@ def test_every_dark_hover_rule_repaints_its_border_somewhere_new():
         )
 
 
-def _overlay_card_outline(sheet: Path) -> str | None:
+def _overlay_card_declaration(sheet: Path, prop: str) -> str | None:
     for selector, declarations in _rules(sheet):
         if selector == "QWidget#overlayCard":
-            return _token(declarations.get("border"))
+            return _token(declarations.get(prop))
     return None
 
 
-def _scrim_over(colour: str) -> str:
-    """The scrim's tint applied over `colour`, the way paintEvent composites it (source-over black)."""
-    alpha = SCRIM_ALPHA / 255
-    value = colour.lstrip("#")
-    red, green, blue = (int(value[index : index + 2], 16) for index in (0, 2, 4))
-    return f"#{round(red * (1 - alpha)):02x}{round(green * (1 - alpha)):02x}{round(blue * (1 - alpha)):02x}"
+def test_the_scrim_follows_the_theme(monkeypatch):
+    """Light keeps the 35% black both themes used; dark dims harder, and its severities harder still.
 
-
-def test_the_dark_overlay_card_edge_carries_the_silhouette():
-    """The dialog card's silhouette against the scrim, in the one theme where the fill cannot carry it.
-
-    The scrim is theme-blind, so the card's *fill* clears it by 2.59:1 in light and 1.15:1 in dark -
-    which is why the dark sheet draws the stronger outline. 2.0:1 is the floor: below it the card's
-    edge and the dimmed page read as one surface (the sweep measured 1.46:1 before the change).
+    The scrim is a paint, not a QSS declaration, so it cannot go through the token table: it lives in
+    gui/overlay.py and is resolved against the theme in force. Both consumers (the crash diagnosis
+    overlay and gui/inwindow_dialog.py) index the same ``SCRIM`` table, so one lookup rule covers both.
     """
-    token = _overlay_card_outline(DARK_SHEET)
-    assert token is not None, "style.qss no longer outlines the overlay card"
-    ratio = theme.contrast_ratio(_colour("dark", token), _scrim_over(_colour("dark", "BG_PAGE")))
-    assert ratio >= 2.0, (
-        f"dark: the overlay card's outline {token} lights up at {ratio:.2f}:1 against the scrim, so "
-        f"the card has no visible silhouette"
+    # Light: the exact values the theme-blind table had - the light rendering must not move.
+    assert overlay.scrim_colour("normal", "light").getRgb() == (0, 0, 0, 90)
+    assert overlay.scrim_colour("warning", "light").getRgb() == (80, 0, 0, 140)
+    assert overlay.scrim_colour("error", "light").getRgb() == (80, 0, 0, 140)
+
+    # Dark: heavier than light in every severity (the card's fill is darker there, so the backdrop
+    # has to be darker still) and never transparent.
+    for severity in ("normal", "warning", "error"):
+        dark = overlay.scrim_colour(severity, "dark")
+        light = overlay.scrim_colour(severity, "light")
+        assert dark.alpha() > light.alpha() >= 90, severity
+        assert dark.alpha() < 255, f"{severity}: the backdrop must not become opaque black"
+
+    # The table resolves at lookup time, so an overlay that is already open follows a theme switch
+    # instead of keeping the palette it was built with.
+    monkeypatch.setattr(theme, "_last_theme", "light")
+    assert overlay.SCRIM["normal"].getRgb() == (0, 0, 0, 90)
+    monkeypatch.setattr(theme, "_last_theme", "dark")
+    assert overlay.SCRIM["normal"].getRgb() == (0, 0, 0, 150)
+    assert set(overlay.SCRIM) == {"normal", "warning", "error"}
+    assert "unknown" not in overlay.SCRIM, (
+        "an unknown severity must not resolve to the normal scrim"
     )
 
 
-def test_the_light_sheet_keeps_its_own_overlay_outline():
-    """The sweep's contract: the light theme is unchanged. Its card keeps the quiet outline.
+def test_a_darker_scrim_could_not_have_carried_the_dark_card():
+    """Why the card needed a fill of its own: BG_LIST cannot reach the floor against *any* scrim.
 
-    Light does not need the stronger edge, because its card *fill* is what separates it from the
-    scrim (2.59:1); the measured outline is pinned here so a later change to the light sheet has to
-    come with a decision attached to it.
+    Contrast against a backdrop dimmed towards black approaches "BG_LIST against pure black" from
+    below, so no alpha value lifts the old fill over 1.8:1 - measured, the old card sat at 1.15:1 and
+    the mathematical ceiling is 1.24:1. The scrim was half the fix; the fill is the other half.
     """
-    assert _overlay_card_outline(LIGHT_SHEET) == "BORDER_BUTTON_ICON"
-    ratio = theme.contrast_ratio(
-        _colour("light", "BORDER_BUTTON_ICON"), _scrim_over(_colour("light", "BG_PAGE"))
+    dark = theme.theme_palette("dark")
+    ceiling = theme.contrast_ratio(dark["BG_LIST"], "#000000")
+    assert ceiling < CARD_FLOOR, (
+        f"BG_LIST reaches {ceiling:.2f}:1 against a *fully black* backdrop, so darkening the scrim "
+        f"could not have lifted it over {CARD_FLOOR}:1 after all"
     )
-    assert 1.60 <= ratio <= 1.80, (
-        f"light: the overlay outline moved to {ratio:.2f}:1 against the scrim"
+
+
+def test_the_dark_overlay_card_clears_the_scrim():
+    """The dialog card's fill against the dimmed page, for every severity the crash dialog can show.
+
+    Measured before this change: 1.15:1 with the black scrim, 1.07:1 with the red one - the card and
+    the page behind it were one surface, and only the outline said where the card was.
+    """
+    dark = theme.theme_palette("dark")
+    for surface in ("BG_PAGE", "BG_SECTION"):  # the paper, and a page card it covers
+        for severity in ("normal", "warning", "error"):
+            backdrop = _scrimmed("dark", surface, severity)
+            ratio = theme.contrast_ratio(dark["BG_OVERLAY_CARD"], backdrop)
+            assert ratio >= CARD_FLOOR, (
+                f"dark: the overlay card's fill is only {ratio:.2f}:1 from the {severity} scrim over "
+                f"{surface} (floor {CARD_FLOOR:.2f}:1); the card reads as part of the backdrop"
+            )
+
+
+def test_the_dark_overlay_card_outline_frames_that_fill():
+    """The outline's job changed: it now frames the raised fill instead of carrying the silhouette.
+
+    BORDER_SWATCH - the previous choice - would be 1.06:1 above the new fill, i.e. invisible; the
+    token's value has to stay a visible hairline on both the fill and the scrim.
+    """
+    dark = theme.theme_palette("dark")
+    assert _overlay_card_declaration(DARK_SHEET, "background") == "BG_OVERLAY_CARD"
+    assert _overlay_card_declaration(DARK_SHEET, "border") == "BORDER_OVERLAY_CARD"
+    on_fill = theme.contrast_ratio(dark["BORDER_OVERLAY_CARD"], dark["BG_OVERLAY_CARD"])
+    on_scrim = theme.contrast_ratio(dark["BORDER_OVERLAY_CARD"], _scrimmed("dark", "BG_PAGE"))
+    assert on_fill >= 1.30, f"dark: the card's outline is {on_fill:.2f}:1 above its own fill"
+    assert on_scrim >= 2.0, f"dark: the card's outline is {on_scrim:.2f}:1 against the scrim"
+
+
+def test_the_light_overlay_is_unchanged():
+    """Light pays nothing for the dark card: same scrim, same white fill, same quiet outline.
+
+    The light sheet still spells the card exactly as it did (``BG_LIST`` + ``BORDER_BUTTON_ICON``);
+    the tokens this change added carry the light values those rules already resolved to.
+    """
+    light = theme.theme_palette("light")
+    assert light["BG_OVERLAY_CARD"] == "#ffffff"
+    assert light["BORDER_OVERLAY_CARD"] == light["BORDER_BUTTON_ICON"]
+    ratio = theme.contrast_ratio(light["BG_OVERLAY_CARD"], _scrimmed("light", "BG_PAGE"))
+    assert abs(ratio - 2.59) <= 0.01, f"light: the card/scrim contrast moved to {ratio:.2f}:1"
+    outline = theme.contrast_ratio(light["BORDER_BUTTON_ICON"], _scrimmed("light", "BG_PAGE"))
+    assert abs(outline - 1.70) <= 0.01, f"light: the card outline moved to {outline:.2f}:1"
+    # The light sheet keeps its own spelling of the rule, not the dark one's tokens.
+    assert "background: __BG_LIST__;" in LIGHT_SHEET.read_text(encoding="utf-8")
+    assert _overlay_card_declaration(LIGHT_SHEET, "border") == "BORDER_BUTTON_ICON"
+
+
+def test_the_light_stylesheet_is_byte_identical():
+    """This change is dark-only, so gui/resources/style_light.qss must not have moved at all.
+
+    Light's rendering is proved unchanged at three levels: the digest below (not one byte of the sheet
+    moved), the token values (the light column is the old one), and the scrim (exact RGBA above). If a
+    future change really does edit the light theme, update this digest in the same commit - the point
+    is that touching the light sheet becomes a decision instead of a drift.
+    """
+    digest = hashlib.sha256(LIGHT_SHEET.read_bytes()).hexdigest()
+    assert digest == LIGHT_SHEET_SHA256, (
+        f"gui/resources/style_light.qss changed (sha256 {digest}); this change is supposed to leave "
+        f"the light theme byte-identical"
     )
-    assert theme.NEUTRAL_TOKENS["BORDER_HOVER"]["light"] == "#a7b4c2"
-    assert theme.NEUTRAL_TOKENS["BORDER_SWATCH"]["light"] == "#b6c1cd"
 
 
 def test_the_dark_palette_values_the_sweep_set():
