@@ -223,6 +223,91 @@ def merge_raw(child: dict, parent: dict) -> dict:
     return merged
 
 
+#: JSON files that may sit in a version folder without being the version profile.
+#: Recognising them by name is what makes "the one JSON left" a safe guess: the official
+#: launcher's profile store, CurseForge's ``manifest.json``, Modrinth's ``modrinth.index.json``,
+#: MultiMC/Prism's ``mmc-pack.json`` and a generic ``instance.json`` are pack metadata, and
+#: ``minepick.json`` is this launcher's own instance sidecar.
+NON_VERSION_JSON_NAMES = frozenset(
+    {
+        "launcher_profiles.json",
+        "manifest.json",
+        "modrinth.index.json",
+        "mmc-pack.json",
+        "instance.json",
+        "minepick.json",
+    }
+)
+
+
+def version_json_candidates(folder: Path) -> list[Path]:
+    """Every ``*.json`` file directly inside ``folder`` that may be the version profile.
+
+    Sorted by name so both "exactly one" and the error message are deterministic. An unreadable
+    folder answers with an empty list - the caller's message then says that no profile is there.
+    Only the folder's own top level is searched: a pack's ``patches/*.json`` are not profiles.
+    """
+    folder = Path(folder)
+    try:
+        entries = sorted(folder.iterdir(), key=lambda entry: entry.name.casefold())
+    except OSError:
+        return []
+    return [
+        entry
+        for entry in entries
+        if entry.is_file()
+        and entry.suffix.casefold() == ".json"
+        and entry.name.casefold() not in NON_VERSION_JSON_NAMES
+    ]
+
+
+def version_json_path(folder: Path) -> Path | None:
+    """The version profile inside one version/instance folder, or None when undecidable.
+
+    The official layout (``<folder>/<folder name>.json``) is checked first and always wins, so
+    every folder this launcher wrote keeps resolving exactly as before. Otherwise a single
+    remaining ``*.json`` is accepted under any name: hand-made packs often call it
+    ``version.json`` or just pick an arbitrary name. Known non-profile files (see
+    :data:`NON_VERSION_JSON_NAMES`) are never candidates. No candidate or several of them means
+    "cannot decide"; :func:`version_json_error` turns that into the message a person reads.
+    """
+    folder = Path(folder)
+    official = folder / (folder.name + ".json")
+    if official.is_file():
+        return official
+    candidates = version_json_candidates(folder)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def version_json_error(folder: Path) -> str:
+    """The user-facing reason :func:`version_json_path` answered None for ``folder``.
+
+    Three distinct failures, because they ask for different fixes: no JSON at all, a folder that
+    holds only the client jar (a damaged install - the jar alone cannot rebuild the command
+    line), and several JSON files with no way to tell which one is the profile.
+    """
+    folder = Path(folder)
+    candidates = version_json_candidates(folder)
+    if not candidates:
+        if _holds_a_jar(folder):
+            return tr_core("meta.version_json_jar_only", folder.name)
+        return tr_core("meta.version_json_missing", folder.name)
+    names = ", ".join(candidate.name for candidate in candidates)
+    return tr_core("meta.version_json_ambiguous", folder.name, names)
+
+
+def _holds_a_jar(folder: Path) -> bool:
+    """Whether the folder directly holds a jar (the "damaged install" hint for the message)."""
+    try:
+        return any(
+            entry.is_file() and entry.suffix.casefold() == ".jar" for entry in folder.iterdir()
+        )
+    except OSError:
+        return False
+
+
 def load_version_json(
     version_id: str,
     *,
@@ -234,7 +319,10 @@ def load_version_json(
 ) -> VersionJson:
     """Load the version JSON (including inheritance resolution).
 
-    Lookup order: versions_dir/<id>/<id>.json -> cache_dir cache -> fetch online (needs the manifest).
+    Lookup order: the version folder's profile (:func:`version_json_path`, any JSON file name) ->
+    cache_dir cache -> fetch online (needs the manifest). A version folder that exists yet holds no
+    usable profile raises ``MetaError`` with the specific reason instead of silently treating the
+    version as not installed.
     """
     raw = _load_raw_chain(version_id, versions_dir, manifest, cache_dir, force, client, set())
     return VersionJson.model_validate(raw)
@@ -271,8 +359,11 @@ def _load_raw(
     client: httpx.Client | None,
 ) -> dict:
     if versions_dir is not None:
-        local = versions_dir / version_id / (version_id + ".json")
-        if local.exists():
+        folder = versions_dir / version_id
+        if folder.is_dir():
+            local = version_json_path(folder)
+            if local is None:
+                raise MetaError(version_json_error(folder))
             return json.loads(local.read_text(encoding="utf-8"))
     if cache_dir is not None and not force:
         cached = cache_dir / "versions" / (version_id + ".json")
