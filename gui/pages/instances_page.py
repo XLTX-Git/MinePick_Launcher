@@ -189,10 +189,19 @@ def _known_profile_identity(version_id: str) -> tuple[str, str] | None:
     return None
 
 
-def card_version_loader(instance, game_dir: Path) -> tuple[str, str]:
-    """Resolve the ``版本 · 加载器`` line, following an inherited profile when needed."""
+def card_version_loader(
+    instance, game_dir: Path, *, version_id: str | None = None
+) -> tuple[str, str]:
+    """Resolve the ``版本 · 加载器`` line, following an inherited profile when needed.
+
+    ``version_id`` is the profile to describe; it defaults to the one the instance really runs
+    (``instance.version_id``, i.e. ``base_version`` when the instance points at another profile).
+    The caller passes the folder id explicitly when the pointer is broken, so the card still
+    describes the profile that is left.
+    """
+    start = version_id or instance.version_id
     seen: set[str] = set()
-    current = instance.id
+    current = start
     while current and current not in seen:
         seen.add(current)
         known = _known_profile_identity(current)
@@ -202,19 +211,28 @@ def card_version_loader(instance, game_dir: Path) -> tuple[str, str]:
         if not isinstance(parent, str) or not parent.strip():
             return current, tr("instances.card.vanilla")
         current = parent.strip()
-    return instance.id, tr("instances.card.vanilla")
+    return start, tr("instances.card.vanilla")
 
 
 def card_version_meta(instance, game_dir: Path) -> tuple[str, str, str]:
-    """The card's ``版本 · 加载器`` line, or the missing-information sentence instead.
+    """The card's ``版本 · 加载器`` line, or the sentence that says what is missing instead.
 
     Returns ``(version, loader, text)``: the first two still drive the card's group, the third is
-    what the card shows. A folder with no profile at all (a damaged install with only its jar left)
-    keeps its card and says 版本信息缺失. A profile that exists but is sparse still labels the card -
-    the loader can come from the folder id, and an empty official-format file is not "missing".
+    what the card shows. The pair describes the profile the launch path runs (``instance.version_id``),
+    so 修改 re-pointing an instance at another installed profile changes this line too. A pointer at a
+    profile that is no longer installed is not a blank line: the pair falls back to the folder's own
+    profile (so the group and the icon still mean something) and the card says 指向的版本缺失. A folder
+    with no profile at all (a damaged install with only its jar left) keeps its card and says
+    版本信息缺失. A profile that exists but is sparse still labels the card - the loader can come from
+    the folder id, and an empty official-format file is not "missing".
     """
+    pointed = instance.version_id
+    own = instance.id
+    if pointed != own and version_json_path(instance_dir(game_dir, pointed)) is None:
+        version, loader = card_version_loader(instance, game_dir, version_id=own)
+        return version, loader, tr("instances.card.base_version_missing")
     version, loader = card_version_loader(instance, game_dir)
-    if version_json_path(instance_dir(game_dir, instance.id)) is None:
+    if version_json_path(instance_dir(game_dir, pointed)) is None:
         return version, loader, tr("instances.card.version_missing")
     return version, loader, f"{version} · {loader}"
 
