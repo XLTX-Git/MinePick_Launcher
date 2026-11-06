@@ -643,10 +643,9 @@ def system_game_language() -> str:
 
 
 def system_locale_is_zh_cn() -> bool:
-    """Whether the system locale is Simplified Chinese in mainland China (zh_CN).
+    """Whether the system locale is exactly Simplified Chinese (zh_CN).
 
-    The non-premium offline gate wants both the language and the region: a Traditional-Chinese
-    system (zh_TW / zh_HK) and Simplified Chinese outside the mainland (zh_SG) do not qualify.
+    Compared literally: zh_TW, zh_HK and zh_SG are different locales and do not match.
     """
     try:
         import locale
@@ -660,9 +659,8 @@ def system_locale_is_zh_cn() -> bool:
 def offline_mode_allowed() -> bool:
     """Whether offline mode is unlocked.
 
-    Conditions (logical OR): a Microsoft premium login was verified once; or the launcher
-    language is Simplified Chinese **and** the system locale is Simplified Chinese in mainland
-    China (non-premium offline mode is only available in that environment).
+    Conditions (logical OR): a Microsoft premium login was verified once on this machine; or
+    the launcher language is Simplified Chinese **and** the system locale is zh_CN.
     """
     cfg, _ = load()
     if cfg.offline_unlocked:
