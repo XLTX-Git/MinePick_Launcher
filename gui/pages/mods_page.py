@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 
 from gui import block_icons, i18n, inwindow_dialog, paint_utils, theme
 from gui.errors import show_fatal
+from gui.tasks import CANCELLED, KIND_TITLE_KEYS, Task, task_center_of
 from gui.widgets import (
     EmptyState,
     add_page_top_inset,
@@ -64,6 +65,7 @@ from gui.widgets import (
     disable_keeping_focus,
     set_app_status,
     style_page_layout,
+    widget_alive,
 )
 from gui.workers import (
     ProgressBridge,
@@ -97,6 +99,7 @@ from launcher.mods.search import (
     source_has_next,
 )
 from launcher.mods.zh_names import english_query, has_cjk, search_local, zh_name
+from launcher.net import downloader
 
 tr = i18n.tr
 
@@ -1051,6 +1054,139 @@ class _PopupFitCombo(QComboBox):
         super().showPopup()
 
 
+class _TaskedInstall:
+    """One resources-page install, listed as a task in the window's download page.
+
+    This is an adapter, not a second install path. The four core functions this page calls
+    (``install_mod``, ``install_modpack``, ``install_resourcepack``, ``install_shaderpack``) already
+    accept a ``progress`` callable and already transfer through the shared
+    :class:`launcher.net.downloader.Downloader`, so the page hands its own progress into that parameter
+    and offers the downloader's cooperative cancellation as the task's cancel. Nothing in
+    ``launcher/mods`` is changed, and no callback is replaced by a stand-in.
+
+    What the cancel really does - stated here because the row cannot say it:
+
+    * **The file transfer stops.** A ``Downloader`` batch notices the flag at its next 64 KB chunk and
+      raises, leaving its ``.part`` files for the next attempt. That is a real stop of the bytes.
+    * **The metadata in front of it does not.** Version lists, project lookups and dependency slugs are
+      ordinary blocking HTTP requests; a cancel that lands during one takes effect when that call
+      returns. Sub-second in practice, but not instant.
+    * **A modpack's first two stages do not either.** The ``.mrpack`` download (``_download_direct``)
+      and the automatic loader install do not consult the flag, so a cancel during either of them waits
+      for that stage to finish before the file list stops.
+
+    The worker is *never* killed - nothing can kill it - so the row is marked 已取消 immediately and the
+    worker is allowed to unwind. Its ending arrives at :meth:`_error`, which recognises a cancelled task
+    and stays quiet instead of reporting the user's own stop as a failure.
+    """
+
+    def __init__(
+        self,
+        widget: QWidget,
+        *,
+        kind: str,
+        title: str,
+        retry=None,
+    ) -> None:
+        self._widget = widget
+        self._rate = RateTracker()
+        self.bridge = ProgressBridge()
+        self.bridge.progress.connect(self._on_progress)
+        self.task: Task | None = None
+        center = task_center_of(widget)
+        if center is not None:
+            # A cancel belongs to the install that was stopped, never to the next one.
+            downloader.clear_cancellation()
+            self.task = center.add_task(
+                KIND_TITLE_KEYS[kind],
+                title,
+                kind=kind,
+                cancel=self._cancel,
+                retry=self._guarded(retry),
+            )
+
+    # ---------- the task's side ----------
+
+    def _on_progress(self, progress) -> None:
+        """A download tick (already marshalled onto the GUI thread by the bridge)."""
+        task = self.task
+        if task is None or not task.is_running():
+            return
+        self._rate.set_total(progress.total_bytes)
+        rate, _eta = self._rate.update(progress.done_bytes)
+        task.set_progress(progress.done_bytes, progress.total_bytes, rate)
+
+    def _cancel(self, task: Task) -> None:
+        """The task's 取消: ask the transfer to stop, and say so on the status line at once."""
+        downloader.cancel_current_downloads()
+        if widget_alive(self._widget):
+            set_app_status(self._widget, tr("tasks.status.cancelled", task.title()))
+
+    def _guarded(self, retry):
+        """A 重试 outlives its page (the task list is the window's): a dead page makes it a no-op."""
+        if retry is None:
+            return None
+        widget = self._widget
+
+        def guarded() -> None:
+            if widget_alive(widget):
+                retry()
+
+        return guarded
+
+    def abandon(self) -> None:
+        """The page is being dropped (a language switch): end the task, let the worker unwind."""
+        task, self.task = self.task, None
+        if task is not None and task.is_running():
+            task.cancel()
+
+    # ---------- running the job ----------
+
+    def run(self, job, *, on_result, on_error, on_finished, progress_slot=None) -> None:
+        """Run ``job(progress)`` on the worker pool with this install's task attached."""
+        if progress_slot is not None:
+            self.bridge.progress.connect(progress_slot)
+        widget = self._widget
+
+        def work():
+            return job(self.bridge)
+
+        def result(value) -> None:
+            task, self.task = self.task, None
+            downloader.clear_cancellation()
+            if task is not None:
+                task.finish()
+            if widget_alive(widget):
+                on_result(value)
+
+        def error(message: str) -> None:
+            task, self.task = self.task, None
+            stopped_by_a_cancel = downloader.is_user_cancelled()
+            if task is not None and task.state == CANCELLED:
+                # The user stopped this download: the flow's error is the ending they asked for, so it
+                # is not turned into a failure and no dialog opens.
+                downloader.clear_cancellation()
+                if widget_alive(widget):
+                    set_app_status(widget, tr("tasks.status.cancelled", task.title()))
+                return
+            if task is not None and task.is_running() and stopped_by_a_cancel:
+                # The stop latch is process-wide: cancelling *another* row stops this transfer too. It
+                # really was stopped, so it ends as 已取消 rather than as a failure the user never
+                # caused - and the latch is released after this ending, not before it.
+                task.cancel()
+                downloader.clear_cancellation()
+                if widget_alive(widget):
+                    set_app_status(widget, tr("tasks.status.cancelled", task.title()))
+                return
+            downloader.clear_cancellation()
+            if task is not None:
+                task.fail(message)
+            if widget_alive(widget):
+                on_error(message)
+
+        run_in_background(work, on_result=result, on_error=error, on_finished=on_finished)
+
+
 class _ContentTab(QWidget):
     """Generic resource tab. kind: mod / modpack / resourcepack / shaderpack"""
 
@@ -1093,6 +1229,8 @@ class _ContentTab(QWidget):
         self._query = ""
         self._request_id = 0
         self._initial_loaded = False
+        #: The install currently running on this tab, if any (its task lives in the window's list).
+        self._active_install: _TaskedInstall | None = None
 
         self.loader_combo = QComboBox()
         for name in ("fabric", "forge", "neoforge", "quilt"):
@@ -1836,12 +1974,16 @@ class _ContentTab(QWidget):
         The instance supplies the loader and the game version the version request is filtered by;
         ``version_id`` + ``isolated`` make ``install_mod`` resolve the instance folder itself - the
         very directory the instances page counts. Nothing is created and no loader is downloaded.
+
+        The download is listed as a task (``gui/pages/downloads_page.py``) through the adapter above:
+        ``install_mod`` itself is called unchanged, with the page's progress handed to its own
+        ``progress`` parameter.
         """
         loader = None if choice.loader_id == "vanilla" else choice.loader_id
         disable_keeping_focus(self.install_button)
         set_app_status(self, tr("mods.msg.downloading_into", title or slug, choice.name))
 
-        def do_install() -> object:
+        def do_install(progress) -> object:
             return install_mod(
                 slug,
                 game_dir=choice.game_dir,
@@ -1849,13 +1991,17 @@ class _ContentTab(QWidget):
                 game_version=choice.minecraft or None,
                 version_id=choice.instance_id,
                 isolated=choice.isolated,
+                progress=progress,
             )
 
-        run_in_background(
-            do_install,
+        self._run_install(
+            kind="mod",
+            title=title or slug,
+            job=do_install,
             on_result=lambda info: self._on_mod_installed(info, choice.name),
             on_error=lambda m: set_app_status(self, tr("mods.msg.install_fail", m), "error"),
             on_finished=self._on_install_finished,
+            retry=lambda: self._install_mod_into(choice, slug, title),
         )
 
     def _on_mod_installed(self, info: ModInfo, instance_name: str) -> None:
@@ -1921,6 +2067,40 @@ class _ContentTab(QWidget):
         else:
             set_app_status(self, tr("mods.cf.done", target.name))
 
+    def _run_install(
+        self,
+        *,
+        kind: str,
+        title: str,
+        job,
+        on_result,
+        on_error,
+        on_finished,
+        retry=None,
+        progress_slot=None,
+    ) -> _TaskedInstall:
+        """Start one install as a task in the window's download list (see ``_TaskedInstall``)."""
+        install = _TaskedInstall(self, kind=kind, title=title, retry=retry)
+        self._active_install = install
+        install.run(
+            job,
+            on_result=on_result,
+            on_error=on_error,
+            on_finished=on_finished,
+            progress_slot=progress_slot,
+        )
+        return install
+
+    def cancel_running_task(self) -> None:
+        """The window is dropping this page (a language switch rebuilds every page): stop its install.
+
+        The task would otherwise keep the corner icon spinning for the rest of the session: the page's
+        callbacks are dropped once the page is gone, so nothing would ever report its ending.
+        """
+        install, self._active_install = self._active_install, None
+        if install is not None:
+            install.abandon()
+
     def _install_slug(
         self,
         slug: str,
@@ -1935,7 +2115,7 @@ class _ContentTab(QWidget):
         disable_keeping_focus(self.install_button)
         set_app_status(self, tr("mods.msg.downloading", title or slug))
 
-        def do_install() -> object:
+        def do_install(progress) -> object:
             if self.kind == "resourcepack":
                 return install_resourcepack(
                     slug,
@@ -1943,6 +2123,7 @@ class _ContentTab(QWidget):
                     game_version=game_version,
                     mod_version_id=mod_version_id,
                     isolated=cfg.default_isolation,
+                    progress=progress,
                 )
             if self.kind == "shaderpack":
                 return install_shaderpack(
@@ -1951,6 +2132,7 @@ class _ContentTab(QWidget):
                     game_version=game_version,
                     mod_version_id=mod_version_id,
                     isolated=cfg.default_isolation,
+                    progress=progress,
                 )
             return install_mod(
                 slug,
@@ -1959,21 +2141,128 @@ class _ContentTab(QWidget):
                 game_version=game_version,
                 mod_version_id=mod_version_id,
                 isolated=cfg.default_isolation,
+                progress=progress,
             )
 
-        run_in_background(
-            do_install,
+        self._run_install(
+            kind=self.kind,
+            title=title or slug,
+            job=do_install,
             on_result=self._on_installed,
             on_error=lambda m: set_app_status(self, tr("mods.msg.install_fail", m), "error"),
             on_finished=self._on_install_finished,
+            retry=lambda: self._install_slug(
+                slug,
+                mod_version_id=mod_version_id,
+                loader=loader,
+                game_version=game_version,
+                title=title,
+            ),
+        )
+
+    def _install_content_now(
+        self, slug: str, title: str, *, mod_version_id: str | None, game_version: str | None
+    ) -> None:
+        """A resource pack or a shader pack, downloaded and listed as a task.
+
+        Split out of ``_on_install`` so 重试 can re-run *this* download rather than re-read whatever the
+        page happens to have selected when the retry is pressed.
+        """
+        cfg, _ = config.load()
+        game_dir = cfg.game_dir or paths.default_game_dir()
+        install = install_resourcepack if self.kind == "resourcepack" else install_shaderpack
+
+        def do_install(progress) -> object:
+            return install(
+                slug,
+                game_dir=game_dir,
+                game_version=game_version,
+                mod_version_id=mod_version_id,
+                isolated=cfg.default_isolation,
+                progress=progress,
+            )
+
+        disable_keeping_focus(self.install_button)
+        set_app_status(self, tr("mods.msg.downloading", slug))
+        self._run_install(
+            kind=self.kind,
+            title=title or slug,
+            job=do_install,
+            on_result=self._on_installed,
+            on_error=lambda m: (
+                set_app_status(self, tr("mods.msg.install_fail", m), "error"),
+                show_fatal(self, tr("mods.msg.install_fail", m)),
+            ),
+            on_finished=self._on_install_finished,
+            retry=lambda: self._install_content_now(
+                slug,
+                title,
+                mod_version_id=mod_version_id,
+                game_version=game_version,
+            ),
+        )
+
+    def _install_modpack_now(self, slug: str, mod_version_id: str | None) -> None:
+        """The modpack download itself: behind 安装's confirmation, and behind 重试.
+
+        The pack's own progress line is unchanged - it is the second slot on the same bridge, so the
+        status bar and the download page cannot disagree about how far the pack is.
+        """
+        cfg, _ = config.load()
+        game_dir = cfg.game_dir or paths.default_game_dir()
+
+        def do_install(progress) -> object:
+            return install_modpack(
+                slug,
+                game_dir=game_dir,
+                cache_dir=paths.launcher_dir() / "cache",
+                mod_version_id=mod_version_id,
+                progress=progress,
+            )
+
+        rate_tracker = RateTracker()
+
+        def on_progress(p) -> None:
+            rate_tracker.set_total(p.total_bytes)
+            rate, eta = rate_tracker.update(p.done_bytes)
+            if rate > 0:
+                set_app_status(
+                    self,
+                    tr(
+                        "mods.mp.progress_rate",
+                        p.done_files,
+                        p.total_files,
+                        p.current,
+                        format_rate(rate),
+                        format_eta(eta),
+                    ),
+                )
+            else:
+                set_app_status(
+                    self,
+                    tr("mods.mp.progress", p.done_files, p.total_files, p.current),
+                )
+
+        disable_keeping_focus(self.install_button)
+        set_app_status(self, tr("mods.msg.downloading", slug))
+        self._run_install(
+            kind="modpack",
+            title=slug,
+            job=do_install,
+            on_result=self._on_modpack_installed,
+            on_error=lambda m: (
+                set_app_status(self, tr("mods.msg.install_fail", m), "error"),
+                show_fatal(self, tr("mods.msg.install_fail", m)),
+            ),
+            on_finished=self._on_install_finished,
+            retry=lambda: self._install_modpack_now(slug, mod_version_id),
+            progress_slot=on_progress,
         )
 
     def _on_install(self) -> None:
         if self._current is None:
             return
         mod = self._current
-        cfg, _ = config.load()
-        game_dir = cfg.game_dir or paths.default_game_dir()
 
         if self.kind == "modpack":
             # default_yes: installing a modpack replaces the instance's mods, and the old box's
@@ -1985,53 +2274,7 @@ class _ContentTab(QWidget):
                 default_yes=True,
             ):
                 return
-
-            def do_install(progress) -> object:
-                return install_modpack(
-                    mod.slug,
-                    game_dir=game_dir,
-                    cache_dir=paths.launcher_dir() / "cache",
-                    mod_version_id=self._current_mod_version_id or None,
-                    progress=progress,
-                )
-
-            bridge = ProgressBridge()
-            rate_tracker = RateTracker()
-
-            def on_progress(p) -> None:
-                rate_tracker.set_total(p.total_bytes)
-                rate, eta = rate_tracker.update(p.done_bytes)
-                if rate > 0:
-                    set_app_status(
-                        self,
-                        tr(
-                            "mods.mp.progress_rate",
-                            p.done_files,
-                            p.total_files,
-                            p.current,
-                            format_rate(rate),
-                            format_eta(eta),
-                        ),
-                    )
-                else:
-                    set_app_status(
-                        self,
-                        tr("mods.mp.progress", p.done_files, p.total_files, p.current),
-                    )
-
-            bridge.progress.connect(on_progress)
-            disable_keeping_focus(self.install_button)
-            set_app_status(self, tr("mods.msg.downloading", mod.slug))
-            run_in_background(
-                do_install,
-                bridge,
-                on_result=self._on_modpack_installed,
-                on_error=lambda m: (
-                    set_app_status(self, tr("mods.msg.install_fail", m), "error"),
-                    show_fatal(self, tr("mods.msg.install_fail", m)),
-                ),
-                on_finished=self._on_install_finished,
-            )
+            self._install_modpack_now(mod.slug, self._current_mod_version_id or None)
             return
 
         # No default_yes on the dependency question: this installs without its dependencies, so the
@@ -2052,36 +2295,15 @@ class _ContentTab(QWidget):
             self._install_mod_into(choice, mod.slug, mod.title)
             return
 
-        def do_install() -> object:
-            if self.kind == "resourcepack":
-                return install_resourcepack(
-                    mod.slug,
-                    game_dir=game_dir,
-                    game_version=self._current_game_version or None,
-                    mod_version_id=self._current_mod_version_id or None,
-                    isolated=cfg.default_isolation,
-                )
-            return install_shaderpack(
-                mod.slug,
-                game_dir=game_dir,
-                game_version=self._current_game_version or None,
-                mod_version_id=self._current_mod_version_id or None,
-                isolated=cfg.default_isolation,
-            )
-
-        disable_keeping_focus(self.install_button)
-        set_app_status(self, tr("mods.msg.downloading", mod.slug))
-        run_in_background(
-            do_install,
-            on_result=self._on_installed,
-            on_error=lambda m: (
-                set_app_status(self, tr("mods.msg.install_fail", m), "error"),
-                show_fatal(self, tr("mods.msg.install_fail", m)),
-            ),
-            on_finished=self._on_install_finished,
+        self._install_content_now(
+            mod.slug,
+            mod.title,
+            mod_version_id=self._current_mod_version_id or None,
+            game_version=self._current_game_version or None,
         )
 
     def _on_install_finished(self) -> None:
+        self._active_install = None
         self._update_install_button()
 
     def _on_installed(self, info: ModInfo) -> None:
@@ -2245,6 +2467,21 @@ class ResourcesPage(QWidget):
         if reload_now:
             current._initial_loaded = True
             current._load_page()
+
+    def cancel_running_task(self) -> None:
+        """The window is dropping this page (a language switch rebuilds every page): stop its installs.
+
+        ``MainWindow.build_pages`` asks every built page for this before dropping it. Without it the
+        task would keep the corner icon spinning for the rest of the session: the worker's callbacks
+        are dropped once the page is gone, so nothing would ever report its ending.
+        """
+        for tab in (
+            self.mods_tab,
+            self.modpacks_tab,
+            self.resourcepacks_tab,
+            self.shaderpacks_tab,
+        ):
+            tab.cancel_running_task()
 
     def _on_chip_clicked(self, index: int) -> None:
         if self.tabs.currentIndex() != index:
