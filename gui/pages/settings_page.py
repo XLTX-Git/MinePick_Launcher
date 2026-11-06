@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 from gui import i18n, inwindow_dialog
 from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve_theme
+from gui.view_state import STATE_FILENAME
 from gui.widgets import (
     AccessibilityPreferenceGroup,
     ElidedLabel,
@@ -55,6 +56,7 @@ from gui.widgets import (
     style_page_layout,
 )
 from launcher import config, paths
+from launcher.mods import identity
 
 tr = i18n.tr
 
@@ -397,6 +399,24 @@ class SettingsPage(QWidget):
             self.radius_combo.addItem(label, code)
         self.open_data_dir_button = QPushButton(tr("settings.open_data_dir"))
         self.open_data_dir_button.setObjectName("secondaryButton")
+        # Online recognition: the master switch for the instance detail's four lists. It is a UI
+        # preference (QSettings), not a launcher-config field: it only decides whether a page may
+        # talk to Modrinth, and the page reads it before every lookup.
+        self.online_identity_check = QCheckBox(tr("settings.online_identity"))
+        self.online_identity_hint = QLabel(tr("settings.online_identity.hint"))
+        self.online_identity_hint.setObjectName("hint")
+        self.online_identity_hint.setWordWrap(True)
+        self.online_identity_box = QWidget()
+        online_layout = QVBoxLayout(self.online_identity_box)
+        online_layout.setContentsMargins(0, 0, 0, 0)
+        online_layout.setSpacing(4)
+        online_layout.addWidget(self.online_identity_check)
+        online_layout.addWidget(self.online_identity_hint)
+        # The project-icon store is a real disk cache, so it gets a real "free the space" button
+        # instead of a promise that it cleans itself up.
+        self.clear_icon_cache_button = QPushButton(tr("settings.icon_cache.clear"))
+        self.clear_icon_cache_button.setObjectName("secondaryButton")
+        self.clear_icon_cache_button.clicked.connect(self._clear_icon_cache)
 
         # Accent color: free hex input with a live swatch and a reset-to-default button
         self.accent_edit = QLineEdit()
@@ -468,6 +488,7 @@ class SettingsPage(QWidget):
         form.addRow("", self.source_hint)
         form.addRow(tr("settings.proxy"), self.proxy_edit)
         form.addRow(tr("settings.cf_key"), self.cf_key_edit)
+        form.addRow("", self.online_identity_box)
         form.addRow(tr("settings.window_mode"), self.window_mode_combo)
         form.addRow(tr("settings.theme"), self.theme_combo)
         accent_row = QHBoxLayout()
@@ -495,6 +516,7 @@ class SettingsPage(QWidget):
 
         buttons_row = QHBoxLayout()
         buttons_row.addWidget(self.open_data_dir_button)
+        buttons_row.addWidget(self.clear_icon_cache_button)
         buttons_row.addStretch(1)
 
         inner = QWidget()
@@ -586,6 +608,7 @@ class SettingsPage(QWidget):
             self.trim_memory_check,
             self.analysis_check,
             self.encrypt_check,
+            self.online_identity_check,
         ):
             on_change(check.toggled)
         on_change(self.accessibility_group.changed)
@@ -701,6 +724,8 @@ class SettingsPage(QWidget):
         self.language_combo.setCurrentIndex(max(index, 0))
         index2 = self.ui_language_combo.findData(cfg.ui_language)
         self.ui_language_combo.setCurrentIndex(max(index2, 0))
+        self.online_identity_check.setChecked(self._read_online_identity())
+        identity.set_enabled(self.online_identity_check.isChecked())
         self.speed_limit_spin.setValue(cfg.download_speed_limit_kb)
         index_source_meta = self.source_meta_combo.findData(cfg.download_source_meta)
         self.source_meta_combo.setCurrentIndex(max(index_source_meta, 0))
@@ -721,6 +746,63 @@ class SettingsPage(QWidget):
             self.font_combo.setEditText(cfg.ui_font)
         self.proxy_edit.setText(cfg.http_proxy or "")
         self.cf_key_edit.setText(cfg.curseforge_api_key or "")
+
+    # ---------- online recognition / image cache ----------
+
+    def _settings_store(self) -> QSettings:
+        """The per-view preferences file (the same ``ui_state.ini`` the column widths use)."""
+        return QSettings(
+            str(paths.launcher_dir() / STATE_FILENAME), QSettings.Format.IniFormat
+        )
+
+    def _read_online_identity(self) -> bool:
+        """The stored master switch, default on; an unreadable value means "on"."""
+        value = self._settings_store().value(identity.ONLINE_SETTING_KEY, True)
+        if isinstance(value, str):
+            return value.strip().casefold() not in ("false", "0", "off", "no", "")
+        return bool(value)
+
+    def _write_online_identity(self, enabled: bool) -> None:
+        settings = self._settings_store()
+        settings.setValue(identity.ONLINE_SETTING_KEY, bool(enabled))
+        settings.sync()
+
+    def _clear_icon_cache(self) -> None:
+        """Delete the stored project icons and report how many files and bytes that freed.
+
+        The size is summed *before* the delete (the store only returns a file count), so the message
+        is the space that really became available. Clearing is safe: the next list refill downloads
+        only the icons of the rows that are on screen.
+        """
+        from launcher.net.http_cache import clear_icon_cache, icon_cache_dir
+
+        directory = icon_cache_dir()
+        freed = 0
+        try:
+            files = [path for path in directory.iterdir() if path.is_file()]
+        except OSError:
+            files = []
+        for path in files:
+            try:
+                freed += path.stat().st_size
+            except OSError:
+                continue
+        removed = clear_icon_cache()
+        if removed:
+            set_app_status(
+                self,
+                tr("settings.icon_cache.cleared", removed, self._format_size(freed)),
+            )
+        else:
+            set_app_status(self, tr("settings.icon_cache.empty"))
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        if size >= 1 << 20:
+            return f"{size / (1 << 20):.1f} " + tr("unit.mb")
+        if size >= 1 << 10:
+            return f"{size / (1 << 10):.0f} " + tr("unit.kb")
+        return f"{size} " + tr("unit.bytes")
 
     def _make_preset_button(self, color: str) -> QPushButton:
         """One-click accent swatch."""
@@ -796,6 +878,10 @@ class SettingsPage(QWidget):
         cfg.accent_color = accent or ""
         cfg.ui_font = self._selected_font()
         config.save(cfg, cfg_path)
+        # The online-recognition switch takes effect immediately: the worker checks it before its
+        # next request, so turning it off stops the queue without restarting anything.
+        self._write_online_identity(self.online_identity_check.isChecked())
+        identity.set_enabled(self.online_identity_check.isChecked())
         self._update_accent_swatch()
         # Theme, accent color and UI font take effect immediately
         from gui.theme import apply_theme
