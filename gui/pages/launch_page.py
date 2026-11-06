@@ -670,8 +670,19 @@ class LaunchPage(QWidget):
                 from launcher.instances import resolve_instance
 
                 resolved = resolve_instance(version_id, cfg, game_dir)
+                # The instance may point at another installed profile (base_version): the command
+                # has to be built from that profile, never from the folder name. A pointer at a
+                # profile that is no longer installed falls back to the folder's own profile - the
+                # same answer the instance card gives - instead of turning an instance that still
+                # has a readable profile into a guaranteed missing-profile failure.
+                target_version_id = resolved.version_id
+                if (
+                    target_version_id != version_id
+                    and version_json_path(game_dir / "versions" / target_version_id) is None
+                ):
+                    target_version_id = version_id
                 prepared = prepare_launch(
-                    version_id,
+                    target_version_id,
                     game_dir=game_dir,
                     cache_dir=paths.launcher_dir() / "cache",
                     account=account,
