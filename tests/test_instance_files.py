@@ -24,6 +24,7 @@ unreadable directory must raise so the page can report it, never look like an em
 
 from __future__ import annotations
 
+import base64
 import gzip
 import os
 import struct
@@ -35,11 +36,19 @@ import pytest
 from gui.pages.instance_files import (
     backup_save,
     directory_size,
+    display_file_name,
     format_modified,
+    pack_icon_bytes,
     read_enabled_resource_packs,
     read_level_name,
     scan_content_files,
     scan_saves,
+    strip_formatting_codes,
+)
+
+#: A real 1x1 PNG. The icon reader only accepts real PNG bytes, so the tests must not fake one.
+_PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
 
@@ -188,6 +197,125 @@ def test_backup_zips_the_world_folder_and_skips_the_locked_session_file(ws_tmp):
 
 
 # ---------------------------------------------------------------- formatting
+
+
+def test_formatting_codes_are_removed_from_display_text():
+    assert (
+        strip_formatting_codes("\u00a7cCozyUI\u00a7b+ \u00a77v1.10\u00a7c no-fonts \u00a70.zip")
+        == "CozyUI+ v1.10 no-fonts .zip"
+    )
+    # The modern hex form is just more § pairs: stripping repeats until none is left.
+    assert (
+        strip_formatting_codes(
+            "\u00a7x\u00a7f\u00a7f\u00a7a\u00a7a\u00a70\u00a70VanillaTweaks\u00a7r \u00a77v1.2.zip"
+        )
+        == "VanillaTweaks v1.2.zip"
+    )
+    assert strip_formatting_codes("plain.zip") == "plain.zip"
+
+
+def test_a_name_that_is_only_codes_keeps_its_raw_form():
+    assert strip_formatting_codes("\u00a7c") == ""
+    assert display_file_name("\u00a7c") == "\u00a7c"
+    assert display_file_name("\u00a7x\u00a71\u00a72") == "\u00a7x\u00a71\u00a72"
+    assert display_file_name("\u00a7cCozy.zip") == "Cozy.zip"
+
+
+# ---------------------------------------------------------------- pack icons
+
+
+def test_pack_icon_is_only_the_root_entry_of_a_zip(ws_tmp):
+    pack = ws_tmp / "Pack.zip"
+    with zipfile.ZipFile(pack, "w") as archive:
+        archive.writestr("pack.mcmeta", "{}")
+        archive.writestr("pack.png", _PNG_1PX)
+        archive.writestr("shaders/pack.png", b"a nested file is not the pack icon")
+    assert pack_icon_bytes(pack) == _PNG_1PX
+    # The archive is read, never extracted: only the zip exists in this folder.
+    assert [path.name for path in ws_tmp.iterdir()] == ["Pack.zip"]
+
+
+def test_a_folder_pack_reads_its_own_pack_png(ws_tmp):
+    folder = ws_tmp / "FolderPack"
+    folder.mkdir()
+    (folder / "pack.png").write_bytes(_PNG_1PX)
+    assert pack_icon_bytes(folder) == _PNG_1PX
+
+
+def test_an_empty_pack_png_is_not_an_icon(ws_tmp):
+    empty = ws_tmp / "EmptyPng.zip"
+    with zipfile.ZipFile(empty, "w") as archive:
+        archive.writestr("pack.png", b"")
+    assert pack_icon_bytes(empty) is None
+
+
+def test_a_pack_png_over_the_size_ceiling_is_skipped_without_reading_it(ws_tmp):
+    from gui.pages import instance_files
+
+    huge = ws_tmp / "Huge.zip"
+    # 20 MB of PNG-signature-prefixed zeros: a valid signature but far over the 4 MB ceiling. The
+    # reader must reject it from the zip header instead of pulling 20 MB into memory.
+    padding = 20 * 1024 * 1024 - len(instance_files._PNG_SIGNATURE)
+    payload = instance_files._PNG_SIGNATURE + b"\0" * padding
+    with zipfile.ZipFile(huge, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("pack.png", payload)
+    reads: list[str] = []
+    original = zipfile.ZipFile.read
+
+    def counting_read(self, name, pwd=None):
+        reads.append(str(name))
+        return original(self, name, pwd)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(zipfile.ZipFile, "read", counting_read)
+        assert pack_icon_bytes(huge) is None
+    assert reads == [], "an oversized pack.png must be rejected before its bytes are read"
+
+
+def test_missing_corrupt_or_non_png_pack_icons_are_none(ws_tmp):
+    no_icon = ws_tmp / "NoIcon.zip"
+    with zipfile.ZipFile(no_icon, "w") as archive:
+        archive.writestr("pack.mcmeta", "{}")
+    assert pack_icon_bytes(no_icon) is None
+
+    corrupt = ws_tmp / "Corrupt.zip"
+    corrupt.write_bytes(b"this is not a zip")
+    assert pack_icon_bytes(corrupt) is None
+
+    not_an_image = ws_tmp / "NotAnImage.zip"
+    with zipfile.ZipFile(not_an_image, "w") as archive:
+        archive.writestr("pack.png", b"GIF89a but not a png")
+    assert pack_icon_bytes(not_an_image) is None
+
+    empty = ws_tmp / "EmptyFolder"
+    empty.mkdir()
+    assert pack_icon_bytes(empty) is None
+    assert pack_icon_bytes(ws_tmp / "absent.zip") is None
+
+
+def test_pack_icon_bytes_are_cached_by_path_mtime_and_size(ws_tmp):
+    from gui.pages import instance_files
+
+    pack = ws_tmp / "Cached.zip"
+    with zipfile.ZipFile(pack, "w") as archive:
+        archive.writestr("pack.png", _PNG_1PX)
+    before = instance_files._read_pack_icon.cache_info()
+    assert pack_icon_bytes(pack) == _PNG_1PX
+    assert pack_icon_bytes(pack) == _PNG_1PX
+    after = instance_files._read_pack_icon.cache_info()
+    assert after.misses == before.misses + 1, "the second read must hit the cache"
+    assert after.hits >= before.hits + 1
+
+    # A replaced pack is a different file: new bytes, so the key must miss instead of serving stale.
+    changed = _PNG_1PX + b"different payload"
+    pack.write_bytes(b"")
+    with zipfile.ZipFile(pack, "w") as archive:
+        archive.writestr("pack.png", changed)
+    os.utime(pack, (time.time() + 5, time.time() + 5))
+    assert pack_icon_bytes(pack) == changed
+
+
+# ---------------------------------------------------------------- objects
 
 
 def test_size_and_time_formatting(ws_tmp):

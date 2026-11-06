@@ -18,10 +18,11 @@
 """Disk readers behind the instance detail's resource-pack, shader-pack and save pages.
 
 The pages list what is on disk: one row per file in ``resourcepacks/`` or ``shaderpacks/``, one row
-per folder in ``saves/``. Nothing here draws or decides what a row looks like - the Qt page owns
-that - which is what keeps these functions testable against a temporary directory. A directory that
-exists but cannot be read raises instead of returning an empty list, so an unreadable folder is
-reported as a failure and never rendered as "this instance has nothing installed".
+per folder in ``saves/``. Nothing here draws - the Qt page owns the pixels - but the small helpers
+below turn a disk name into display text and a pack's own ``pack.png`` into bytes, which keeps those
+two decisions testable against a temporary directory. A directory that exists but cannot be read
+raises instead of returning an empty list, so an unreadable folder is reported as a failure and never
+rendered as "this instance has nothing installed".
 
 The one write in this module is :func:`backup_save`: it zips a world folder and leaves the original
 untouched. No function here downloads anything.
@@ -37,9 +38,18 @@ import time
 import zipfile
 import zlib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
+
+#: Minecraft's formatting prefix. The character after it is a colour (``§c``) or a style (``§l``).
+FORMATTING_CODE = "\u00a7"
+#: A real ``pack.png`` is a few KB; anything this large is not a pack icon and is not read.
+PACK_ICON_MAX_BYTES = 4 * 1024 * 1024
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+#: Bounded so a big modpack folder cannot keep the bytes of a thousand packs alive forever.
+_PACK_ICON_CACHE_SIZE = 512
 
 #: NBT tag header of the one field read from ``level.dat``: TAG_String, name length 9, "LevelName".
 _LEVEL_NAME_MARKER = b"\x08\x00\x09LevelName"
@@ -94,6 +104,86 @@ def format_modified(timestamp: float) -> str:
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp))
     except (OverflowError, OSError, ValueError):
         return ""
+
+
+def strip_formatting_codes(name: str) -> str:
+    """Remove Minecraft's ``§`` formatting codes from ``name`` (display text only).
+
+    The game lets a resource-pack or shader-pack file carry colour and style codes: ``§`` plus exactly
+    one character. Removing the pair repeats until no ``§`` is left, so both ``§cCozyUI§b+ §7v1.10.zip``
+    and the modern hex form ``§x§1§2§a§b§c§dName.zip`` come out clean. A trailing ``§`` is dropped on
+    its own because there is no following character to consume. This is a *display* helper: the caller
+    keeps ``name`` for every path operation, and nothing here changes the file on disk.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(name):
+        if name[index] == FORMATTING_CODE:
+            index += 2  # the prefix plus the one character it formats
+            continue
+        out.append(name[index])
+        index += 1
+    return "".join(out)
+
+
+def display_file_name(name: str) -> str:
+    """``name`` without formatting codes, falling back to the raw name when nothing is left.
+
+    A file literally named ``§c`` has no readable text once the code is removed; showing an empty cell
+    would make the row look broken, so the original name is shown instead (the tooltip always carries
+    it anyway).
+    """
+    cleaned = strip_formatting_codes(name)
+    return cleaned or name
+
+
+@lru_cache(maxsize=_PACK_ICON_CACHE_SIZE)
+def _read_pack_icon(source: str, mtime_ns: int, size: int, folder: bool) -> bytes | None:
+    """Body of :func:`pack_icon_bytes`; the arguments are the source file's identity, not its content."""
+    path = Path(source)
+    if folder:
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+    else:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                try:
+                    info = archive.getinfo("pack.png")
+                except KeyError:
+                    return None
+                if info.file_size > PACK_ICON_MAX_BYTES:
+                    return None
+                data = archive.read(info)
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile):
+            return None
+    if len(data) > PACK_ICON_MAX_BYTES or not data.startswith(_PNG_SIGNATURE):
+        return None
+    return data
+
+
+def pack_icon_bytes(path: Path) -> bytes | None:
+    """The PNG bytes of a pack's own ``pack.png``, read locally, or None when it has none.
+
+    A ``.zip`` keeps the icon at the archive root (that is where the game reads it); a folder pack
+    keeps it as ``<folder>/pack.png``. Only that one entry is read - the archive is never extracted.
+    The result is cached by (path, mtime, size), so refilling a list does not reopen every zip, while a
+    replaced pack gets a new entry. A missing, unreadable, corrupt or non-PNG file returns None and the
+    caller draws its neutral placeholder. Nothing here touches the network.
+    """
+    source = Path(path)
+    try:
+        if source.is_dir():
+            icon = source / "pack.png"
+            info = icon.stat()
+            key = (str(icon), info.st_mtime_ns, info.st_size, True)
+        else:
+            info = source.stat()
+            key = (str(source), info.st_mtime_ns, info.st_size, False)
+    except OSError:
+        return None
+    return _read_pack_icon(*key)
 
 
 def read_enabled_resource_packs(options_path: Path) -> set[str] | None:

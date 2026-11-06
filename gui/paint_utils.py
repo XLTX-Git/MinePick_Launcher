@@ -43,6 +43,13 @@ from gui import theme
 _BLOCK_CACHE: dict[tuple[int, str], QPixmap] = {}
 _CHEVRON_CACHE: dict[tuple[bool, str], QPixmap] = {}
 _LETTER_CACHE: dict[tuple[str, int, str, str], QPixmap] = {}
+_CUBE_CACHE: dict[tuple[int, str], QPixmap] = {}
+
+#: The "no artwork" cube: 66% of its slot, thin edges, and FG_HINT at 65% so it sits lightly on the
+#: row instead of reading as a missing-image block. Both numbers are visual constants from the PCL
+#: comparison, not measurements of a specific font.
+WIRE_CUBE_EXTENT = 0.66
+WIRE_CUBE_ALPHA = 0.65
 
 
 def _tokens() -> dict[str, str]:
@@ -196,6 +203,63 @@ def letter_tile_pixmap(text: str, size: int = 48, radius: int = 8) -> QPixmap:
     painter.drawText(QRectF(0, 0, extent, extent), Qt.AlignmentFlag.AlignCenter, letter)
     painter.end()
     _LETTER_CACHE[key] = pixmap
+    return pixmap
+
+
+def wire_cube_pixmap(size: int = 32) -> QPixmap:
+    """The neutral "no artwork" mark: a thin isometric cube outline, centred in its slot.
+
+    This is the stand-in for a resource pack without a ``pack.png``. It is deliberately *only* an
+    outline: no filled faces, no rounded background, no border box, because on a list row those read
+    as "something is missing here". The cube covers :data:`WIRE_CUBE_EXTENT` of the slot and is drawn
+    in FG_HINT at :data:`WIRE_CUBE_ALPHA`, so it is present but never louder than a real pack icon.
+    Geometry: the eight visible corners of a cube, projected isometrically.
+    """
+    hint = QColor(_tokens().get("FG_HINT", "#5b6a7b"))
+    hint.setAlphaF(WIRE_CUBE_ALPHA)
+    key = (size, hint.name(QColor.NameFormat.HexArgb))
+    cached = _CUBE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    pixmap, _ratio = _pixmap(size)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(hint)
+    pen.setWidthF(max(1.0, size / 26.0))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    extent = size * WIRE_CUBE_EXTENT
+    center = size / 2.0
+    top = (size - extent) / 2.0
+    half = extent / 2.0
+    rise = extent * 0.25
+    drop = extent * 0.50
+    top_vertex = QPointF(center, top)
+    right_vertex = QPointF(center + half, top + rise)
+    middle_vertex = QPointF(center, top + rise * 2)
+    left_vertex = QPointF(center - half, top + rise)
+    lower_left = QPointF(center - half, top + rise + drop)
+    lower_middle = QPointF(center, top + rise * 2 + drop)
+    lower_right = QPointF(center + half, top + rise + drop)
+    # The top rhombus, the three verticals and the two lower edges: exactly the visible edges of a
+    # wireframe cube, with no face fills.
+    for start, end in (
+        (top_vertex, right_vertex),
+        (right_vertex, middle_vertex),
+        (middle_vertex, left_vertex),
+        (left_vertex, top_vertex),
+        (left_vertex, lower_left),
+        (middle_vertex, lower_middle),
+        (right_vertex, lower_right),
+        (lower_left, lower_middle),
+        (lower_middle, lower_right),
+    ):
+        painter.drawLine(start, end)
+    painter.end()
+    _CUBE_CACHE[key] = pixmap
     return pixmap
 
 
