@@ -24,9 +24,16 @@ reports exactly that. Nothing is duplicated: isolation only decides whether the 
 directory is the instance folder itself (own saves/mods/config) or the shared game directory.
 
 Optional metadata lives inside the instance folder as `minepick.json`
-(display name, note, star flag, timestamps, isolation choice, the icon choice and
-per-instance setting overrides). Missing or corrupt metadata is tolerated: the
-folder structure stays the source of truth.
+(display name, note, star flag, timestamps, isolation choice, the icon choice,
+per-instance setting overrides and the version profile the instance points at).
+Missing or corrupt metadata is tolerated: the folder structure stays the source
+of truth.
+
+The one field that is not cosmetic is ``base_version``: an instance normally runs
+its own folder's profile (``versions/<id>/<id>.json``), but 修改 may point it at
+another installed profile instead. That is a *pointer* - ``base_version`` names
+the other version's folder, nothing is copied - and ``version_id`` is the id every
+launch path resolves through.
 
 The icon is optional too: ``""`` means "keep deriving it from the version"
 (grass block, command block, gold block, cobblestone or the loader glyph),
@@ -43,6 +50,7 @@ import re
 import shutil
 import time
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -101,6 +109,13 @@ class Instance(BaseModel):
     # "fabric" / "neoforge" / "quilt"); "custom:<file>" = a picture inside the instance folder.
     # An unknown or missing value never hides the instance: the reader falls back to the rule.
     icon: str = ""
+    #: The installed profile this instance runs, as a folder name under ``versions/``. Empty means
+    #: "its own folder", which is the normal one-folder-per-version layout. 修改 sets it to another
+    #: installed profile's id: the instance keeps every file it has and *points* at that profile
+    #: instead, so nothing is duplicated and nothing is moved. A value naming a profile that is no
+    #: longer installed is not silently ignored - launching fails with the usual missing-profile
+    #: message, which is the truth about that state.
+    base_version: str = ""
     settings: InstanceSettings = InstanceSettings()
 
     @property
@@ -110,8 +125,13 @@ class Instance(BaseModel):
 
     @property
     def version_id(self) -> str:
-        """The version id equals the instance id (kept for call-site compatibility)."""
-        return self.id
+        """The version profile this instance launches (``base_version``, else its own folder id).
+
+        Every launch path resolves through this: the GUI instance page and ``launcher/cli.py`` both
+        pass it to ``prepare_launch``, so switching the profile is one field away from the command
+        line that is built.
+        """
+        return self.base_version or self.id
 
 
 @dataclass(frozen=True)
@@ -129,10 +149,13 @@ class ResolvedInstance:
     mods_dir: Path
     memory_from_instance: bool = False  # True when the instance pins its own heap size
     server: str = ""  # direct-connect address; empty = no --server on the command line
+    #: The profile this instance runs (see ``Instance.base_version``); empty = its own folder.
+    base_version: str = ""
 
     @property
     def version_id(self) -> str:
-        return self.id
+        """The profile id to hand to ``prepare_launch`` (the pointer wins over the folder name)."""
+        return self.base_version or self.id
 
 
 class InstancesError(Exception):
@@ -455,6 +478,274 @@ def resolve_instance(
         mods_dir=launch_dir / "mods",
         memory_from_instance=from_instance,
         server=(inst.settings.server or "").strip(),
+        base_version=inst.base_version,
+    )
+
+
+#: The two ways 修改 can re-point an instance: another Minecraft version, or another profile of the
+#: same Minecraft version (a loader, or the same version without one).
+SWITCH_VERSION = "version"
+SWITCH_LOADER = "loader"
+
+
+@dataclass(frozen=True)
+class VersionIdentity:
+    """What an installed version profile is, read from its folder id and its ``inheritsFrom`` chain.
+
+    ``version_id`` is the *profile* (what ``base_version`` would store); ``minecraft`` and ``loader``
+    are what a person reads on the modify page ("1.21.11" and "Fabric 0.19.3"). ``loader`` is empty
+    for a vanilla profile - the label itself is not translated here, because loader names are proper
+    nouns; the page supplies 原版 for the empty case.
+    """
+
+    version_id: str
+    minecraft: str
+    loader: str = ""
+
+    @property
+    def is_loader(self) -> bool:
+        return bool(self.loader)
+
+
+def _known_profile(version_id: str) -> tuple[str, str] | None:
+    """(minecraft version, loader label) for the profile-id shapes this launcher installs."""
+    if version_id.startswith("fabric-loader-"):
+        parts = version_id.split("-")
+        if len(parts) >= 4:
+            return parts[3], "Fabric " + parts[2]
+    if version_id.startswith("quilt-loader-"):
+        parts = version_id.split("-")
+        if len(parts) >= 4:
+            return parts[3], "Quilt " + parts[2]
+    if "-forge-" in version_id:
+        minecraft, loader_version = version_id.split("-forge-", 1)
+        return minecraft, "Forge " + loader_version
+    if version_id.startswith("neoforge-"):
+        loader_version = version_id[len("neoforge-") :]
+        numbers = loader_version.split(".")
+        # NeoForge encodes the Minecraft version in its first two components (21.1.5 -> 1.21.1).
+        minecraft = (
+            f"1.{numbers[0]}.{numbers[1]}"
+            if len(numbers) >= 2 and numbers[0].isdigit() and numbers[1].isdigit()
+            else loader_version
+        )
+        return minecraft, "NeoForge " + loader_version
+    return None
+
+
+def _profile_json(game_dir: Path, version_id: str) -> dict:
+    """The profile's raw JSON (a missing or unreadable profile reads as an empty mapping)."""
+    path = version_json_path(instance_dir(game_dir, version_id))
+    if path is None:
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def profile_identity(game_dir: Path, version_id: str) -> VersionIdentity:
+    """Resolve ``version_id`` to the Minecraft version and loader a launch would actually run.
+
+    The id's own shape is the first answer, because that is how this launcher names loader profiles;
+    an id it does not recognise follows ``inheritsFrom`` (the same walk the instances page does for
+    its cards), which is what a hand-made or renamed pack needs. A cycle, a missing parent or a
+    sparse profile ends the walk instead of raising: the modify page must keep rendering.
+    """
+    seen: set[str] = set()
+    current = version_id
+    while current and current not in seen:
+        seen.add(current)
+        known = _known_profile(current)
+        if known is not None:
+            return VersionIdentity(version_id=version_id, minecraft=known[0], loader=known[1])
+        parent = _profile_json(game_dir, current).get("inheritsFrom")
+        if not isinstance(parent, str) or not parent.strip():
+            return VersionIdentity(version_id=version_id, minecraft=current)
+        current = parent.strip()
+    return VersionIdentity(version_id=version_id, minecraft=version_id)
+
+
+def installed_identities(game_dir: Path) -> list[VersionIdentity]:
+    """Every installed instance, described by what it runs (sorted, so the list is deterministic)."""
+    identities = [
+        profile_identity(game_dir, instance_id) for instance_id in list_instances(game_dir)
+    ]
+    return sorted(identities, key=lambda item: (item.minecraft.casefold(), item.version_id.casefold()))
+
+
+def switch_candidates(
+    game_dir: Path, current_version_id: str, kind: str = SWITCH_VERSION
+) -> list[VersionIdentity]:
+    """The installed profiles 修改 may point this instance at, excluding the one it runs now.
+
+    ``SWITCH_VERSION`` lists the *other* Minecraft versions (whatever loader they carry), and
+    ``SWITCH_LOADER`` lists the profiles of the *same* Minecraft version - another loader, or the
+    same version without one (which is how a loader is removed). Both answer from the local
+    ``versions/`` folder only: nothing is downloaded and no profile is created.
+    """
+    current = profile_identity(game_dir, current_version_id)
+    out: list[VersionIdentity] = []
+    for identity in installed_identities(game_dir):
+        if identity.version_id == current_version_id:
+            continue
+        if kind == SWITCH_LOADER:
+            if identity.minecraft != current.minecraft:
+                continue
+        elif identity.minecraft == current.minecraft:
+            continue
+        out.append(identity)
+    return out
+
+
+def base_version_dependents(version_id: str, game_dir: Path | None = None) -> list[str]:
+    """Instances that point at ``version_id`` through ``base_version`` (what deleting it breaks)."""
+    root = game_dir or _game_dir()
+    return sorted(
+        instance.id
+        for instance in list_instances(root).values()
+        if instance.base_version == version_id and instance.id != version_id
+    )
+
+
+@dataclass(frozen=True)
+class SwitchOutcome:
+    """What a completed switch did: the instance afterwards, what it pointed at, and its backup."""
+
+    instance: Instance
+    previous_version: str  # "" when the instance ran its own folder before
+    target: VersionIdentity
+    backup_path: Path | None = None
+
+
+def _read_sidecar_bytes(folder: Path) -> bytes | None:
+    """The raw sidecar before a switch, for an exact rollback (None when there was no file)."""
+    try:
+        return (folder / INSTANCE_META_FILENAME).read_bytes()
+    except OSError:
+        return None
+
+
+def _restore_sidecar_bytes(folder: Path, raw: bytes | None) -> None:
+    """Put the sidecar back exactly as it was (delete it when there was none)."""
+    path = folder / INSTANCE_META_FILENAME
+    if raw is None:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return
+    tmp = folder / (INSTANCE_META_FILENAME + ".rollback")
+    tmp.write_bytes(raw)
+    tmp.replace(path)
+
+
+def _verify_switch(folder: Path, instance_id: str, target: str, game_dir: Path) -> None:
+    """The write is only a switch if it reads back *and* the profile it names is readable."""
+    if _read_sidecar(folder, instance_id).base_version != target:
+        raise InstancesError(tr_core("instances.switch_verify_failed", target))
+    profile = version_json_path(instance_dir(game_dir, target))
+    if profile is None:
+        raise InstancesError(tr_core("instances.switch_verify_failed", target))
+    try:
+        json.loads(profile.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise InstancesError(tr_core("instances.switch_verify_failed", target)) from exc
+
+
+def _restore_from_archive(zip_path: Path, folder: Path) -> None:
+    """Recreate the instance folder from its backup zip (the last resort of a failed switch).
+
+    The archive is unpacked into a sibling first and only then swapped in, so a half-extracted
+    restore can never be mistaken for the instance. Zip-slip entries are refused exactly like
+    :func:`import_instance` refuses them.
+    """
+    staging = folder.with_name(folder.name + ".restore")
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            for entry in zf.namelist():
+                if entry.endswith(("/", "\\")):
+                    continue
+                relative = Path(entry)
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise InstancesError(tr_core("instances.import_invalid"))
+                destination = staging / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(entry) as source, destination.open("wb") as sink:
+                    shutil.copyfileobj(source, sink)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    shutil.rmtree(folder, ignore_errors=True)
+    staging.replace(folder)
+
+
+def switch_instance_version(
+    instance_id: str,
+    target_version_id: str,
+    game_dir: Path,
+    *,
+    backup_dir: Path | None = None,
+) -> SwitchOutcome:
+    """Point one instance at another installed version profile.
+
+    This is the whole of 切换, and it is deliberately one field: no file is copied, no folder is
+    moved, and the instance's mods, saves and configuration stay exactly where they are. With
+    ``backup_dir`` the current instance is exported to a zip *before* anything is written, so the
+    user holds a complete copy when the profile is re-pointed.
+
+    Failure is not allowed to leave a half-switched instance. The sidecar's exact previous bytes are
+    read first, the new value is verified against the profile it names, and any error restores those
+    bytes; if even that cannot be verified, the zip backup (when there is one) becomes the instance
+    again. ``InstancesError`` says which of the two happened.
+    """
+    inst, folder = _require(instance_id, game_dir)
+    target = instance_dir(game_dir, target_version_id)
+    if version_json_path(target) is None:
+        raise InstancesError(tr_core("instances.switch_target_missing", target_version_id))
+    if target_version_id == inst.version_id:
+        raise InstancesError(tr_core("instances.switch_same", target_version_id))
+
+    backup_path: Path | None = None
+    if backup_dir is not None:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_path = Path(backup_dir) / f"{instance_id}-{stamp}.zip"
+        try:
+            export_instance(instance_id, backup_path, game_dir)
+        except (OSError, InstancesError) as exc:
+            raise InstancesError(tr_core("instances.switch_backup_failed", str(exc))) from exc
+
+    previous = inst.base_version
+    raw = _read_sidecar_bytes(folder)
+    try:
+        inst.base_version = target_version_id
+        _write_sidecar(folder, inst)
+        _verify_switch(folder, instance_id, target_version_id, game_dir)
+    except Exception as exc:  # every failure has to roll back, whatever it was
+        restored = False
+        try:
+            _restore_sidecar_bytes(folder, raw)
+            restored = _read_sidecar(folder, instance_id).base_version == previous
+        except OSError:
+            logging.getLogger(__name__).exception("Cannot restore the instance sidecar: %s", folder)
+        if not restored and backup_path is not None:
+            try:
+                _restore_from_archive(backup_path, folder)
+                restored = True
+            except Exception:  # reported below, never masked
+                logging.getLogger(__name__).exception(
+                    "Cannot restore the instance from its backup: %s", backup_path
+                )
+        key = "instances.switch_failed" if restored else "instances.switch_rollback_failed"
+        raise InstancesError(tr_core(key, str(exc))) from exc
+
+    return SwitchOutcome(
+        instance=_read_sidecar(folder, instance_id),
+        previous_version=previous,
+        target=profile_identity(game_dir, target_version_id),
+        backup_path=backup_path,
     )
 
 
@@ -571,25 +862,79 @@ def delete_instance(instance_id: str, game_dir: Path) -> None:
     shutil.rmtree(folder, ignore_errors=True)
 
 
-def export_instance(instance_id: str, dest_zip: Path, game_dir: Path) -> Path:
+def export_instance(
+    instance_id: str,
+    dest_zip: Path,
+    game_dir: Path,
+    *,
+    on_progress: Callable[[int, int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> Path:
     """Export the instance to a zip archive (files plus metadata).
 
     A custom icon travels inside the archive as ``icon.<ext>``; the sidecar keeps the relative
     ``custom:`` value, so the imported copy still resolves it.
+
+    ``on_progress(done_bytes, total_bytes)`` is called while the archive is written - the byte count
+    is what the archive will hold (metadata included), so the task page's bar is the real size of the
+    job rather than a guess. ``should_stop()`` is polled between files: a True answer deletes the
+    partial archive and raises, which is what the task row's 取消 needs. The zip is written as a
+    ``.tmp`` and renamed at the end, so an interrupted export never leaves a half archive in place.
     """
     inst, source = _require(instance_id, game_dir)
+    files = [
+        path
+        for path in source.rglob("*")
+        # The folder's own sidecar is replaced by the freshly written root one
+        if path.is_file() and path.name != INSTANCE_META_FILENAME
+    ]
+    payload = json.dumps(inst.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    total = len(payload.encode("utf-8"))
+    for path in files:
+        try:
+            total += path.stat().st_size
+        except OSError:
+            pass
     dest_zip.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest_zip.with_name(dest_zip.name + ".tmp")
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(
-            INSTANCE_META_FILENAME,
-            json.dumps(inst.model_dump(mode="json"), ensure_ascii=False, indent=2),
-        )
-        for path in source.rglob("*"):
-            # The folder's own sidecar is replaced by the freshly written root one
-            if path.is_file() and path.name != INSTANCE_META_FILENAME:
+    done = 0
+    last_report = 0.0
+
+    def report(force: bool = False) -> None:
+        """Report the bytes written so far, throttled so a folder of small files cannot flood the UI."""
+        nonlocal last_report
+        if on_progress is None:
+            return
+        now = time.monotonic()
+        if not force and now - last_report < 0.08:
+            return
+        last_report = now
+        on_progress(min(done, total), total)
+
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(INSTANCE_META_FILENAME, payload)
+            done = len(payload.encode("utf-8"))
+            report(force=True)
+            for path in files:
+                if should_stop is not None and should_stop():
+                    raise InstancesError(tr_core("instances.export_cancelled"))
                 zf.write(path, path.relative_to(source).as_posix())
-    tmp.replace(dest_zip)
+                try:
+                    done += path.stat().st_size
+                except OSError:
+                    pass
+                report()
+            report(force=True)
+        tmp.replace(dest_zip)
+    except BaseException:
+        # A cancelled or failed export must not leave the half archive (or its .tmp) behind.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
     return dest_zip
 
 
