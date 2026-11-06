@@ -194,6 +194,12 @@ class LaunchPage(QWidget):
         self.version_label = QLabel(tr("launch.version.none"))
         self.version_label.setObjectName("launchVersionTitle")
         self.version_label.setProperty("versionHero", True)
+        # The panel is 360px wide and 16px of paper on each side plus the 32px block icon leaves this
+        # line 284px. The Japanese "no version selected" sentence is 300px at the 20px hero size, so
+        # the label clipped its tail instead of drawing it. Wrapping keeps the sentence and the type
+        # size as they are (no shorter translation, no smaller font); the panel's stretches absorb the
+        # second line, and every language whose label fits stays exactly one line tall.
+        self.version_label.setWordWrap(True)
         self.version_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self.version_meta = QLabel("")
         self.version_meta.setObjectName("launchVersionMeta")
