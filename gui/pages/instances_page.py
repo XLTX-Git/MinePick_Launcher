@@ -91,6 +91,7 @@ from launcher.instances import (
     resolve_instance,
 )
 from launcher.meta import block_textures
+from launcher.meta.version import version_json_path
 
 tr = i18n.tr
 
@@ -152,7 +153,9 @@ def card_columns(width: int) -> int:
 
 
 def _profile_json(game_dir: Path, version_id: str) -> dict:
-    path = instance_dir(game_dir, version_id) / (version_id + ".json")
+    path = version_json_path(instance_dir(game_dir, version_id))
+    if path is None:
+        return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -200,6 +203,20 @@ def card_version_loader(instance, game_dir: Path) -> tuple[str, str]:
             return current, tr("instances.card.vanilla")
         current = parent.strip()
     return instance.id, tr("instances.card.vanilla")
+
+
+def card_version_meta(instance, game_dir: Path) -> tuple[str, str, str]:
+    """The card's ``版本 · 加载器`` line, or the missing-information sentence instead.
+
+    Returns ``(version, loader, text)``: the first two still drive the card's group, the third is
+    what the card shows. A folder with no profile at all (a damaged install with only its jar left)
+    keeps its card and says 版本信息缺失. A profile that exists but is sparse still labels the card -
+    the loader can come from the folder id, and an empty official-format file is not "missing".
+    """
+    version, loader = card_version_loader(instance, game_dir)
+    if version_json_path(instance_dir(game_dir, instance.id)) is None:
+        return version, loader, tr("instances.card.version_missing")
+    return version, loader, f"{version} · {loader}"
 
 
 def instance_counts(instance, cfg, game_dir: Path) -> tuple[int, int]:
@@ -943,7 +960,7 @@ class InstancesPage(QWidget):
         for inst in ordered:
             if needle and needle not in self._haystack(inst):
                 continue
-            version, loader = card_version_loader(inst, game_dir)
+            version, loader, meta = card_version_meta(inst, game_dir)
             mods, saves = instance_counts(inst, cfg, game_dir)
             counts = " · ".join(
                 part
@@ -955,7 +972,7 @@ class InstancesPage(QWidget):
             )
             card = _InstanceCard(
                 inst,
-                f"{version} · {loader}",
+                meta,
                 counts,
                 self._card_icon(inst, game_dir),
                 current=inst.id == current_id,

@@ -64,3 +64,22 @@ def test_uninstall_removes_dir_and_reports_dependents(ws_tmp):
     assert list_installed_versions(game) == ["fabric-loader-0.19.3-1.20.1"]
     with pytest.raises(MetaError):
         uninstall_version("1.20.1", game)  # already uninstalled
+
+
+def test_renamed_profile_counts_as_installed_and_as_a_dependent(ws_tmp):
+    game, versions, _vdir, _fab = _prepare(ws_tmp)
+    hand = versions / "我的整合包"
+    hand.mkdir()
+    (hand / "version.json").write_text(
+        json.dumps({"id": "我的整合包", "inheritsFrom": "1.20.1"}), encoding="utf-8"
+    )
+
+    assert list_installed_versions(game) == [
+        "1.20.1",
+        "fabric-loader-0.19.3-1.20.1",
+        "我的整合包",
+    ]
+    assert find_version_dependents(game, "1.20.1") == [
+        "fabric-loader-0.19.3-1.20.1",
+        "我的整合包",
+    ]

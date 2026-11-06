@@ -16,10 +16,12 @@
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 """Instance management: every installed version folder *is* an instance.
 
-An instance is `<game dir>/versions/<id>/`, recognised by the presence of
-`<id>/<id>.json` (the same rule the launch page uses). Nothing is duplicated:
-isolation only decides whether the game's working directory is the instance
-folder itself (own saves/mods/config) or the shared game directory.
+An instance is `<game dir>/versions/<id>/`, recognised by its version profile
+(`launcher.meta.version.version_json_path`: `<id>/<id>.json` first, then a single JSON file under
+any other name). A folder whose profile cannot be read - only a client jar is left - does not
+disappear: it stays visible as an instance whose version information is missing, and launching it
+reports exactly that. Nothing is duplicated: isolation only decides whether the game's working
+directory is the instance folder itself (own saves/mods/config) or the shared game directory.
 
 Optional metadata lives inside the instance folder as `minepick.json`
 (display name, note, star flag, timestamps, isolation choice, the icon choice and
@@ -48,7 +50,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from launcher import paths
 from launcher.i18n import tr_core
-from launcher.meta.version import load_version_json
+from launcher.meta.version import (
+    load_version_json,
+    version_json_error,
+    version_json_path,
+)
 
 INSTANCE_META_FILENAME = "minepick.json"  # per-instance metadata inside the folder
 LEGACY_INSTANCES_DIRNAME = "instances"  # pre-0.3.0 layout, no longer used
@@ -268,8 +274,26 @@ def custom_icon_file(folder: Path, icon: str) -> Path | None:
 
 
 def _is_instance_folder(folder: Path) -> bool:
-    """A folder counts as an instance when <id>/<id>.json exists (launch-page rule)."""
-    return folder.is_dir() and (folder / (folder.name + ".json")).is_file()
+    """Whether a folder under ``versions/`` is an instance.
+
+    The version profile is the official signal (:func:`version_json_path`: the folder's own name
+    first, then a single JSON under any other name). A folder this launcher cannot read must not
+    vanish from the cards either: our own sidecar or a client jar directly inside it keeps it
+    visible as an instance, and the card then says the version information is missing. An empty
+    folder is still not an instance.
+    """
+    if not folder.is_dir():
+        return False
+    if version_json_path(folder) is not None:
+        return True
+    if (folder / INSTANCE_META_FILENAME).is_file():
+        return True
+    try:
+        return any(
+            entry.is_file() and entry.suffix.casefold() == ".jar" for entry in folder.iterdir()
+        )
+    except OSError:
+        return False
 
 
 def list_instances(game_dir: Path | None = None) -> dict[str, Instance]:
@@ -455,11 +479,14 @@ def create_instance(
         raise InstancesError(tr_core("instances.exists", name))
     gp = paths.GamePaths(game_dir)
     source = gp.version_dir(version_id)
-    if not (source / (version_id + ".json")).is_file():
+    if not source.is_dir():
         raise InstancesError(tr_core("instances.source_missing", version_id))
+    source_json = version_json_path(source)
+    if source_json is None:
+        raise InstancesError(version_json_error(source))
 
     target.mkdir(parents=True, exist_ok=True)
-    raw = json.loads((source / (version_id + ".json")).read_text(encoding="utf-8"))
+    raw = json.loads(source_json.read_text(encoding="utf-8"))
     raw["id"] = name  # the folder name is the profile id
     (target / (name + ".json")).write_text(
         json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -509,13 +536,26 @@ def rename_instance(instance_id: str, new_id: str, game_dir: Path) -> Instance:
 
     inst = _read_sidecar(old_dir, instance_id)
     old_dir.rename(new_dir)
-    # Rewrite the profile JSON: the id and its file name must follow the folder
-    raw = json.loads((new_dir / (instance_id + ".json")).read_text(encoding="utf-8"))
-    raw["id"] = new_id
-    (new_dir / (instance_id + ".json")).unlink()
-    (new_dir / (new_id + ".json")).write_text(
-        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # Rewrite the profile JSON: the id and its file name must follow the folder. A hand-made folder
+    # may name the profile something else (``version.json``): it is read from wherever it lives and
+    # then written under the official name. A folder without a readable profile (damaged install)
+    # is still renamed - there is no JSON to rewrite, and a rename must never crash on that.
+    profile = version_json_path(new_dir)
+    if profile is not None:
+        try:
+            raw = json.loads(profile.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            logging.getLogger(__name__).warning(
+                "Cannot rewrite the renamed instance profile: %s", profile
+            )
+            raw = None
+        if isinstance(raw, dict):
+            raw["id"] = new_id
+            payload = json.dumps(raw, ensure_ascii=False, indent=2)
+            if profile.name != new_id + ".json":
+                profile.unlink()
+                profile = new_dir / (new_id + ".json")
+            profile.write_text(payload, encoding="utf-8")
     old_jar = new_dir / (instance_id + ".jar")
     if old_jar.is_file():
         old_jar.replace(new_dir / (new_id + ".jar"))
@@ -581,15 +621,23 @@ def import_instance(
             with zf.open(entry) as src, dest.open("wb") as dst:
                 shutil.copyfileobj(src, dst)
 
-    # The zip may carry the source ids in file names; align them with the import name
-    profile = target / (meta.id + ".json")
-    if meta.id != name and profile.is_file():
-        raw = json.loads(profile.read_text(encoding="utf-8"))
-        raw["id"] = name
-        profile.unlink()
-        (target / (name + ".json")).write_text(
-            json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+    # The zip may carry the source ids in file names; align them with the import name. The profile
+    # is found under any JSON name (a hand-made ``version.json`` is a profile too) and normalised to
+    # the official <name>.json so the folder name and the profile id agree.
+    if meta.id != name:
+        profile = version_json_path(target)
+        if profile is not None:
+            try:
+                raw = json.loads(profile.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raw = None
+            if isinstance(raw, dict):
+                raw["id"] = name
+                payload = json.dumps(raw, ensure_ascii=False, indent=2)
+                if profile.name != name + ".json":
+                    profile.unlink()
+                    profile = target / (name + ".json")
+                profile.write_text(payload, encoding="utf-8")
         jar = target / (meta.id + ".jar")
         if jar.is_file():
             jar.replace(target / (name + ".jar"))

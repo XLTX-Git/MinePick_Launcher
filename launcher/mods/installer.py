@@ -39,7 +39,7 @@ from launcher import paths as launcher_paths
 from launcher.i18n import describe_network_error, tr_core
 from launcher.java import JavaRuntime, list_java, match_java
 from launcher.meta.manifest import _new_client
-from launcher.meta.version import required_java_major
+from launcher.meta.version import required_java_major, version_json_path
 from launcher.mods.loaders import ModsError
 from launcher.mods.models import LoaderVersion
 from launcher.net.downloader import DownloadProgress
@@ -133,7 +133,9 @@ def _copy_game_jar(created_id: str, game_dir: Path) -> None:
     but our launch classpath looks under versions/<id>/<id>.jar, so we have to fill it in ourselves.
     """
     gp = launcher_paths.GamePaths(game_dir)
-    profile_file = gp.version_dir(created_id) / (created_id + ".json")
+    profile_file = version_json_path(gp.version_dir(created_id))
+    if profile_file is None:
+        return
     try:
         raw = json.loads(profile_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -141,10 +143,11 @@ def _copy_game_jar(created_id: str, game_dir: Path) -> None:
     parent_id = raw.get("inheritsFrom")
     if not parent_id:
         return
+    parent_profile = version_json_path(gp.version_dir(parent_id))
+    if parent_profile is None:
+        return
     try:
-        parent_raw = json.loads(
-            (gp.version_dir(parent_id) / (parent_id + ".json")).read_text(encoding="utf-8")
-        )
+        parent_raw = json.loads(parent_profile.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
     parent_jar_name = parent_raw.get("jar")

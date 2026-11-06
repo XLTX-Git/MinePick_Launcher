@@ -59,6 +59,7 @@ from launcher.launch import (
     resolve_launch_account,
     run_process,
 )
+from launcher.meta.version import version_json_path
 
 tr = i18n.tr
 _LOGGER = logging.getLogger(__name__)
@@ -447,13 +448,16 @@ class LaunchPage(QWidget):
         """The version JSON's own ``type``, or a local guess when the file is absent.
 
         Read from disk only: a version the user typed but has not installed must not start a
-        manifest download just to label the hero row.
+        manifest download just to label the hero row. The profile is found under any JSON name,
+        so a hand-made ``version.json`` labels the row just as the official layout does.
         """
-        path = self._game_dir() / "versions" / version_id / f"{version_id}.json"
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
+        path = version_json_path(self._game_dir() / "versions" / version_id)
+        data: dict = {}
+        if path is not None:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
         declared = str(data.get("type") or "")
         return declared or _guessed_version_type(version_id)
 

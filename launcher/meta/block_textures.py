@@ -63,7 +63,7 @@ from launcher.meta.manifest import (
     fetch_manifest,
     version_category,
 )
-from launcher.meta.version import load_version_json
+from launcher.meta.version import load_version_json, version_json_path
 
 LOGGER = logging.getLogger(__name__)
 
@@ -454,7 +454,8 @@ def _profile_chain(game_dir: Path, version_id: str):
     current = version_id
     while current and current not in seen and len(seen) < _MAX_CHAIN:
         seen.add(current)
-        raw = _read_json(Path(game_dir) / "versions" / current / (current + ".json"))
+        profile = version_json_path(Path(game_dir) / "versions" / current)
+        raw = _read_json(profile) if profile is not None else {}
         if not raw:
             return
         yield raw, current
@@ -787,7 +788,8 @@ def _local_jars(game_dir: Path) -> list[Path]:
             jar = folder / (folder.name + ".jar")
             if not jar.is_file():
                 continue
-            raw = _read_json(folder / (folder.name + ".json"))
+            profile = version_json_path(folder)
+            raw = _read_json(profile) if profile is not None else {}
             release = raw.get("releaseTime")
             entries.append(
                 (release if isinstance(release, str) else "", jar.stat().st_mtime, jar)

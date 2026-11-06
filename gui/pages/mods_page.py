@@ -75,6 +75,7 @@ from gui.workers import (
     run_in_background,
 )
 from launcher import config, instances, paths
+from launcher.meta.version import version_json_path
 from launcher.mods import (
     ModsError,
     fetch_project,
@@ -241,7 +242,9 @@ _LOADER_LABELS = {
 
 
 def _profile_json(game_dir: Path, version_id: str) -> dict:
-    path = game_dir / "versions" / version_id / (version_id + ".json")
+    path = version_json_path(game_dir / "versions" / version_id)
+    if path is None:
+        return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
