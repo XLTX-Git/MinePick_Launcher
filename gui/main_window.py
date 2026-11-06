@@ -40,6 +40,7 @@ from gui import i18n, nav_icons, theme, window_effects
 
 tr = i18n.tr
 from gui.pages.about_page import AboutPage
+from gui.pages.downloads_page import DownloadsPage
 from gui.pages.instances_page import InstancesPage
 from gui.pages.java_page import JavaPage
 from gui.pages.launch_page import LaunchPage
@@ -52,6 +53,10 @@ from gui.tasks import TaskCenter
 from gui.wizard_overlay import BulletList, OptionGrid, WizardOverlay, WizardStep
 
 NAV_KEYS = ["launch", "instances", "versions", "java", "account", "mods", "settings", "about"]
+#: The download page's key. Deliberately *not* in :data:`NAV_KEYS`: it is a page of the stack without an
+#: entry in the rail, because it is not somewhere the launcher goes - it is where the corner icon takes
+#: you while something is downloading.
+DOWNLOADS_KEY = "downloads"
 PAGE_FADE_MS = 150  # interactive, so it stays under the 200ms ceiling (guideline §2.3)
 # The floor every page fits at vertically. The layout cannot state it: the stack ignores its height
 # policy on purpose (see below), so only the widest *width* is a real layout requirement and the
@@ -165,6 +170,11 @@ class MainWindow(QMainWindow):
         # The task views float over the content area and are positioned by hand. Declared before the
         # first resize (below), because resizeEvent already asks them where they belong.
         self.task_overlay: TaskOverlay | None = None
+        # The download page is built the first time the corner icon opens it, and it is not a rail
+        # destination: it is the ninth page of the stack with no sidebar item of its own. The page it
+        # was opened from is remembered here, on the window, so 返回 can go back to it.
+        self._downloads: DownloadsPage | None = None
+        self._downloads_origin: str = NAV_KEYS[0]
         # The DWM corner preference is a one-shot window attribute, applied in showEvent once the
         # native handle exists. False means "not attempted yet", not "failed": on Windows 10 it will
         # simply stay False and the window keeps the square frame it always had.
@@ -258,6 +268,11 @@ class MainWindow(QMainWindow):
         # One handler for both jobs: it builds the page if this is its first visit, shows it, refreshes
         # it. Connecting the stack directly as well would fight it over which widget is current.
         self.sidebar.currentRowChanged.connect(self._on_nav_changed)
+        # A click on the row that is *already* selected emits no currentRowChanged, and that is exactly
+        # the state the window is in while the download page is open (the rail keeps the remembered
+        # origin highlighted). Without this, clicking that entry again would leave the user on the
+        # download page with no way back through the rail.
+        self.sidebar.itemClicked.connect(self._on_nav_clicked)
         self.build_pages()
         self.sidebar.setCurrentRow(0)
         # A settings change is compared against this snapshot to tell "the current game folder
@@ -376,6 +391,10 @@ class MainWindow(QMainWindow):
                     stop()
         # A fresh registry: after a language switch every page must be built again in the new language
         self.pages = _LazyPages(self)
+        # The download page is a stack page too, and it is about to be destroyed with the rest: dropping
+        # the reference here is what makes the next icon click build it again in the new language.
+        self._downloads = None
+        self._downloads_origin = NAV_KEYS[0]
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
         for key in NAV_KEYS:
@@ -483,6 +502,23 @@ class MainWindow(QMainWindow):
 
     def _on_nav_changed(self, row: int) -> None:
         """Show the page for ``row`` - building it on first visit - then refresh and fade it in."""
+        self._show_page(row)
+
+    def _on_nav_clicked(self, item) -> None:
+        """A rail entry was clicked, including the one that is already selected.
+
+        The download page leaves the rail's selection on the page it was opened from, so clicking that
+        entry produces no ``currentRowChanged`` - and the click has to land somewhere: it re-shows that
+        page, which is also how the rail gets the user back out of the download page.
+        """
+        row = self.sidebar.row(item)
+        if row < 0:
+            return
+        if self.stack.currentWidget() is self._downloads:
+            self._show_page(row)
+
+    def _show_page(self, row: int) -> None:
+        """The real navigation: build, show, inset, refresh, paint the rail, fade in."""
         if not 0 <= row < len(NAV_KEYS):
             return
         # Every top-level page is reached through the main rail, so entering one always restores it.
@@ -504,6 +540,66 @@ class MainWindow(QMainWindow):
             page.refresh_installed()
         elif key == "about":
             page.refresh()  # the update settings may have changed elsewhere
+        self._refresh_nav_icons()
+        self._fade_in_current_page()
+
+    # ---------- the download page (a page with no rail entry) ----------
+
+    def downloads_page(self) -> DownloadsPage | None:
+        """The download page if it has ever been opened (it is built on demand, never pre-built)."""
+        return self._downloads
+
+    def downloads_origin(self) -> str:
+        """The navigation key the download page will return to (the page it was opened from)."""
+        return self._downloads_origin
+
+    def _downloads_page(self) -> DownloadsPage:
+        """The download page, built the first time the corner icon asks for it.
+
+        Built on demand for the same reason every other page is: it is a whole page of widgets and most
+        sessions never open it. It is added straight to the stack - the registry ``pages`` only knows the
+        eight rail destinations - so it does not appear in the rail, in ``len(pages)``, or in any audit
+        that walks the navigation.
+        """
+        page = self._downloads
+        if page is None:
+            page = DownloadsPage(self.tasks)
+            page.back_requested.connect(self.close_download_page)
+            self.stack.addWidget(page)
+            self._downloads = page
+        return page
+
+    def open_download_page(self) -> None:
+        """Show the download page, remembering the page it was opened from.
+
+        The origin is read from the widget that is on screen, not from the rail's selected row: the
+        rail can be pointed elsewhere while the detail view of an instance is open. A page that is
+        already the current one (a second click on the icon) keeps the origin it already recorded.
+        """
+        current = self.stack.currentWidget()
+        for key in NAV_KEYS:
+            if self.pages.peek(key) is current:
+                self._downloads_origin = key
+                break
+        page = self._downloads_page()
+        page.sync()
+        self.stack.setCurrentWidget(page)
+        # The page keeps the ordinary inset: it is a normal content page, not the edge-to-edge launch
+        # page, and the 12px frame is what every other page's cards sit inside.
+        self._apply_page_inset(DOWNLOADS_KEY)
+        page.focus_back()
+        self._fade_in_current_page()
+
+    def close_download_page(self) -> None:
+        """The page's 返回: go back to the page it was opened from (never to a fixed one)."""
+        key = self._downloads_origin if self._downloads_origin in NAV_KEYS else NAV_KEYS[0]
+        target = self.pages.peek(key)
+        if target is None:  # the origin was dropped (a language switch): show it again from scratch
+            target = self.pages[key]
+        self.stack.setCurrentWidget(target)
+        self._apply_page_inset(key)
+        # The rail was never moved while the download page was open, so it already marks the origin;
+        # repainting it here only matters when the origin page was rebuilt in the meantime.
         self._refresh_nav_icons()
         self._fade_in_current_page()
 

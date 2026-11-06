@@ -15,16 +15,20 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""The two task views on the real window: no icon without tasks, three faces, the panel, and its rows.
+"""The window's corner icon: no icon without tasks, three faces, and the page it opens.
 
-The window is the real ``MainWindow`` built offscreen, so the button and the panel live exactly where the
-product puts them (a child of the content area, positioned by hand) and the assertions can be about the
-widget tree rather than about a mock: "there is no icon" is ``findChild`` returning nothing, and "the
-icon did not change the window's minimum width" is the window's own ``minimumSizeHint``.
+The window is the real ``MainWindow`` built offscreen, so the button lives exactly where the product
+puts it (a child of the content area, positioned by hand) and the assertions can be about the widget
+tree rather than about a mock: "there is no icon" is ``findChildren`` returning nothing, and "the icon
+did not change the window's minimum width" is the window's own ``minimumSizeHint``.
 
-The ring is judged on pixels, not on a number the test asks the widget for: three points on the circle are
-sampled, and the arc has to cover exactly the ones the percentage says it covers. A bug that painted a
-full ring for every value would pass a ``percent() == 25`` assertion and fail this one.
+The ring is judged on pixels, not on a number the test asks the widget for: three points on the circle
+are sampled, and the arc has to cover exactly the ones the percentage says it covers. A bug that painted
+a full ring for every value would pass a ``percent() == 25`` assertion and fail this one.
+
+The list itself is no longer a panel: the icon opens a page (``gui/pages/downloads_page.py``), and that
+page's own tests live in ``tests/test_downloads_page.py``. What is left here is the icon and the one
+thing this file can prove about the page: it does not exist until the icon is asked for it.
 """
 
 from __future__ import annotations
@@ -39,15 +43,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 
 from gui import i18n, theme
 from gui.pages.settings_page import ACCENT_PRESETS
-from gui.task_ui import (
-    ACTION_HEIGHT,
-    EDGE,
-    ICON_SIZE,
-    PANEL_WIDTH,
-    ROW_HEIGHT,
-    TaskButton,
-    TaskPanel,
-)
+from gui.task_ui import EDGE, ICON_SIZE, TaskButton
 from launcher.meta.manifest import ManifestVersion, VersionManifest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -161,7 +157,7 @@ def test_without_tasks_the_icon_does_not_exist(window, app) -> None:
     """Not hidden, not transparent: absent. No widget, no focus stop, nothing to walk or to grab."""
     assert window.tasks.tasks() == ()
     assert window.findChildren(TaskButton) == [], "an icon exists with no task to report"
-    assert window.findChild(TaskPanel) is None, "the panel is built on demand, not up front"
+    assert window.downloads_page() is None, "the download page is built on demand, not up front"
 
     # The walkthrough's own rule: a focus stop is a widget inside a page's focus chain. There is no
     # task button in any page's chain, because there is no task button at all.
@@ -170,6 +166,16 @@ def test_without_tasks_the_icon_does_not_exist(window, app) -> None:
     for page in window.pages.values():
         stops = walkthrough._page_focus_stops(page)
         assert not any(isinstance(stop, TaskButton) for stop in stops)
+
+
+def test_the_download_page_is_not_a_rail_entry(window) -> None:
+    """Eight rail items and eight rail pages: the page is a ninth stack page with no destination."""
+    from gui.main_window import NAV_KEYS
+
+    assert len(NAV_KEYS) == 8
+    assert window.sidebar.count() == 8
+    assert window.downloads_page() is None
+    assert window.stack.count() == len(window.pages.built_keys())
 
 
 # ---------- 2. the icon: where it is and what it says ----------
@@ -265,6 +271,7 @@ def test_the_icon_says_done_after_a_success_and_leaves_after_its_hold(window, ap
     button = window.findChild(TaskButton)
     assert button is not None and button.state() == "done"
     assert button.accessibleName() == i18n.tr("tasks.icon.done")
+    assert button.toolTip() == f"{i18n.tr('tasks.icon.done')} · {i18n.tr('tasks.icon.open')}"
 
     assert _pump(app, lambda: window.task_overlay.button() is None, timeout=3.0), (
         "the icon outlived the finished task it was reporting"
@@ -322,116 +329,12 @@ def test_the_three_faces_are_three_different_pictures(window, app) -> None:
     _settle_deletes(app)
 
 
-# ---------- 3. the panel ----------
+# ---------- 3. measurements: sizes and contrast ----------
 
 
-def test_the_panel_lists_the_tasks_and_their_numbers(window, app) -> None:
-    running = window.tasks.add_task("tasks.title.install", "1.21.11")
-    running.set_progress(3 * 1024 * 1024, 12 * 1024 * 1024, 1.2 * 1024 * 1024)
-    failed = window.tasks.add_task("tasks.title.install", "1.20.1")
-    failed.set_progress(1, 2, 0)
-    failed.fail(i18n.tr("tasks.error.partial", 2))
-    app.processEvents()
-
-    window.task_overlay.open_panel()
-    app.processEvents()
-    panel = window.task_overlay.panel()
-    assert panel is not None and panel.isVisible() and panel.is_open()
-    assert panel.width() == PANEL_WIDTH
-    rows = panel.rows()
-    assert [row.task for row in rows] == [running, failed]
-    assert rows[0].accessibleName() == (
-        f"{i18n.tr('tasks.title.install', '1.21.11')} · {i18n.tr('tasks.state.running')} · 25%"
-    )
-    assert running.percent_text() == "25%"
-    assert running.size_text() == "3.0 MB / 12.0 MB"
-    assert running.speed_text() == "1.2 MB/s"
-    assert rows[0].action.text() == i18n.tr("tasks.cancel")
-    assert rows[1].action.text() == i18n.tr("tasks.dismiss")
-
-    # The panel sits above the button and inside the content area: it can never be a window.
-    assert panel.parent() is window.content
-    assert panel.geometry().right() < window.content.width()
-    assert panel.geometry().bottom() < window.content.height()
-
-
-def test_the_panel_says_there_are_no_tasks_when_the_last_one_goes(window, app) -> None:
-    window.tasks.completed_hold_ms = 60
-    task = window.tasks.add_task("tasks.title.install", "1.21.11")
-    window.task_overlay.open_panel()
-    app.processEvents()
-    panel = window.task_overlay.panel()
-    assert panel is not None
-    assert not panel.empty_label.isVisible()
-
-    task.finish()
-    assert _pump(app, lambda: not window.tasks.tasks(), timeout=3.0)
-    _settle_deletes(app)
-    assert panel.empty_label.isVisible(), "an empty list has to say so"
-    assert panel.empty_label.text() == i18n.tr("tasks.empty")
-    assert panel.rows() == [] and panel.is_empty()
-    assert window.findChildren(TaskButton) == [], "the icon left with the last task"
-    window.task_overlay.close_panel()
-    _pump(app, lambda: not panel.isVisible(), timeout=2.0)
-    assert not panel.is_open()
-
-
-def test_a_cancelled_task_is_what_the_panel_shows(window, app) -> None:
-    stopped: list[bool] = []
-    task = window.tasks.add_task(
-        "tasks.title.install", "1.21.11", cancel=lambda _task: stopped.append(True)
-    )
-    task.set_progress(1, 4, 0)
-    window.task_overlay.open_panel()
-    app.processEvents()
-    panel = window.task_overlay.panel()
-    row = panel.rows()[0]
-
-    row.action.click()  # the row's 取消
-    app.processEvents()
-    assert stopped == [True], "the cancel button did not ask the producer to stop"
-    assert task.state == "cancelled"
-    assert row.action.text() == i18n.tr("tasks.dismiss")
-    assert task.percent() == 25
-    _settle_deletes(app)
-
-
-def test_a_panel_row_is_a_focus_stop_with_a_name(window, app) -> None:
-    task = window.tasks.add_task("tasks.title.install", "1.21.11")
-    window.task_overlay.open_panel()
-    app.processEvents()
-    panel = window.task_overlay.panel()
-    row = panel.rows()[0]
-    assert row.action.focusPolicy() != Qt.FocusPolicy.NoFocus
-    assert row.action.accessibleName() == f"{i18n.tr('tasks.cancel')} · {task.title()}"
-    task.cancel()
-    _settle_deletes(app)
-
-
-# ---------- 4. measurements: sizes, fonts, contrast ----------
-
-
-def test_the_sizes_are_the_ones_the_spec_names() -> None:
+def test_the_icon_size_is_the_one_the_spec_names() -> None:
     assert ICON_SIZE == 48
     assert EDGE == 16
-    assert PANEL_WIDTH == 360
-    assert ROW_HEIGHT == 96
-    assert ACTION_HEIGHT == 32
-
-
-def test_the_row_paints_its_text_at_a_readable_size_and_weight(window, app) -> None:
-    task = window.tasks.add_task("tasks.title.install", "1.21.11")
-    window.task_overlay.open_panel()
-    app.processEvents()
-    row = window.task_overlay.panel().rows()[0]
-
-    title = row.title_font()
-    small = row.small_font()
-    assert title.pixelSize() == 14 and title.weight() == 600
-    assert small.pixelSize() == 12 and small.weight() == 400
-    assert row.action.height() == ACTION_HEIGHT, "the touch target stays the design metric"
-    task.cancel()
-    _settle_deletes(app)
 
 
 def _contrast(foreground: str, background: str) -> float:
@@ -444,11 +347,10 @@ def test_every_text_in_the_task_views_clears_the_contrast_floor(theme_name) -> N
     palette = theme.theme_palette(theme_name)
     for foreground, background in (
         (palette["FG_SELECTED"], palette["ACCENT_BUTTON"]),  # the ring, the number, the glyph
-        (palette["FG_TEXT"], palette["BG_SECTION"]),  # the row title
-        (palette["FG_HINT"], palette["BG_SECTION"]),  # the state, the sizes, the rate
+        (palette["FG_TEXT"], palette["BG_SECTION"]),  # the download row's title
+        (palette["FG_HINT"], palette["BG_SECTION"]),  # the row's state, sizes and rate
         (palette["DANGER_FG"], palette["BG_SECTION"]),  # a failed task's state and reason
         (palette["ACCENT_TEXT"], palette["BG_SECTION"]),  # a finished task's state
-        (palette["FG_EMPTY_STATE"], palette["BG_LIST"]),  # 暂无任务 inside the panel
     ):
         assert _contrast(foreground, background) >= 4.5, (foreground, background, theme_name)
     # Non-text: the bar's fill against the track it moves over.

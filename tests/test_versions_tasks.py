@@ -196,9 +196,9 @@ def test_an_install_becomes_a_task_and_finishes_as_one(window, app, monkeypatch)
     assert row is not None and not row.install_running()
     assert row.install.isVisible()
 
-    built.task_overlay.open_panel()
+    built.open_download_page()
     app.processEvents()
-    assert built.task_overlay.panel().rows()[0].task is task
+    assert built.downloads_page().rows()[0].task is task
 
 
 # ---------- cancelling: the transfer stops ----------
@@ -279,13 +279,18 @@ def test_cancel_stops_the_real_download_and_is_not_reported_as_a_failure(
     part = slow.dest / "client.jar.part"
     assert _pump(app, lambda: part.exists(), timeout=5.0), "the download never started writing"
 
-    built.task_overlay.open_panel()
+    built.open_download_page()
     app.processEvents()
-    assert built.task_overlay.panel().rows()[0].task is task
+    assert built.downloads_page().rows()[0].task is task
 
-    built.task_overlay.panel().rows()[0].action.click()  # 取消
+    built.downloads_page().rows()[0].action.click()  # 取消
     app.processEvents()
     assert task.state == "cancelled"
+    # Back to the versions page: the assertions below are about what its row shows, and a widget on a
+    # page that is not in the stack is not visible (the download page has the stack right now).
+    built.close_download_page()
+    app.processEvents()
+    assert built.stack.currentWidget() is page
     assert not page.progress_row.isVisible(), "the removed bar must not come back"
     row = page._row_for("1.21.11")
     assert row is not None and not row.install_running(), (
