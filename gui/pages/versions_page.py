@@ -1134,6 +1134,13 @@ class VersionsPage(QWidget):
         self.launch_button = QPushButton(tr("versions.goto"))
         self.launch_button.setObjectName("secondaryButton")
         self.launch_button.setEnabled(False)
+        # The four actions above only ever act on the selected row: with no row selected they are
+        # hidden (not left clickable-but-dead), and this one line says how to bring them back. It keeps
+        # the row's height so showing/hiding the buttons never moves the list.
+        self.action_hint = QLabel(tr("versions.select.hint"))
+        self.action_hint.setObjectName("hint")
+        self.action_hint.setFixedHeight(32)
+        self.action_hint.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.auto_jre_check = QCheckBox(tr("versions.auto_jre"))
         self.auto_jre_check.setChecked(True)  # checked by default
         self.auto_jre_check.setObjectName("hint")
@@ -1186,6 +1193,7 @@ class VersionsPage(QWidget):
         buttons.addWidget(self.open_instance_button)
         buttons.addWidget(self.detail_button)
         buttons.addWidget(self.launch_button)
+        buttons.addWidget(self.action_hint)
         buttons.addStretch(1)
         layout.addLayout(buttons)
         layout.addWidget(self.auto_jre_check)
@@ -1237,6 +1245,7 @@ class VersionsPage(QWidget):
         self._rate = RateTracker()
         self._fetch_started = False
         self._refresh_installed()
+        self._sync_actions(None)  # an empty list has nothing to act on: hide the four buttons
 
     def showEvent(self, event) -> None:
         """Fetch the manifest on first show instead of at construction (lazy page data)."""
@@ -1898,7 +1907,11 @@ class VersionsPage(QWidget):
             self.list.blockSignals(False)
 
         ids = self.version_ids()
-        selected = current if current in ids else (ids[0] if ids else None)
+        # Never select a row on the user's behalf: an automatic selection would make the bottom action
+        # bar look usable the moment a fold opens (or a search returns hits), which is exactly the
+        # "selected-looking but nobody selected it" state the bar now waits for a real selection to
+        # avoid. A rebuild only keeps a selection that is still visible; otherwise the bar hides.
+        selected = current if current in ids else None
         if selected is not None:
             self.list.setCurrentRow(self._row_index(selected))
         else:
@@ -2002,6 +2015,7 @@ class VersionsPage(QWidget):
 
     def _update_result_line(self) -> None:
         """The line above the list: "N 个结果" while searching, the manifest total otherwise."""
+        total = len(self.manifest.versions) if self.manifest is not None else 0
         if self._search_needle:
             text = tr("versions.search.results", self._search_total)
             if self._auto_groups:
@@ -2010,15 +2024,17 @@ class VersionsPage(QWidget):
             self.result_count.setText(text)
             self.result_count.setVisible(True)
             version_id = self._selected_id()
+            # Without a selection the line below the list is not a second "select a version" hint:
+            # the action bar's own hint says that. It shows the manifest total, as it does in the
+            # fold view, so the two lines do not repeat the same instruction.
             self.info_label.setText(
                 tr("versions.info.selected", version_id)
                 if version_id
-                else tr("versions.info.default")
+                else tr("versions.msg.shown", total)
             )
             return
         self.result_count.clear()
         self.result_count.setVisible(False)
-        total = len(self.manifest.versions) if self.manifest is not None else 0
         self.info_label.setText(tr("versions.msg.shown", total))
 
     def _restore_scroll(self, value: int) -> None:
@@ -2064,11 +2080,41 @@ class VersionsPage(QWidget):
     def _sync_row_selection(self, version_id: str | None) -> None:
         for row in self.rows:
             row.set_selected(row.version_id == version_id)
+        self._sync_actions(version_id)
+
+    def _sync_actions(self, version_id: str | None) -> None:
+        """Show the four action buttons only while a row is selected, and close the same hole.
+
+        The buttons act on one version; with no row selected there is nothing for them to act on, and
+        a clickable button that can only answer "please select a version" is the dead control this
+        page had. Hiding them also takes them out of the Tab chain for free (Qt skips hidden
+        widgets), and the hint in their place says how to make them appear.
+
+        ``install_button``'s enabled state is deliberately not touched: the frozen install flow uses
+        it as its busy signal (``_start_from_step`` checks it, ``on_finished`` hands it back), so
+        showing the button is this page's decision while enabling it stays the flow's.
+        """
+        selected = version_id is not None
+        for button in (
+            self.install_button,
+            self.open_instance_button,
+            self.detail_button,
+            self.launch_button,
+        ):
+            button.setVisible(selected)
+        self.action_hint.setVisible(not selected)
+        self.open_instance_button.setEnabled(selected)
+        self.detail_button.setEnabled(selected)
+        self.launch_button.setEnabled(selected)
 
     def _on_select(self, row: int = -1) -> None:
         version_id = self._selected_id()
         self._sync_row_selection(version_id)
         if version_id is None:
+            # The line below the list used to keep the last "已选择: x" after the row was collapsed
+            # away; put back whatever this mode shows without a selection (the result hint in search,
+            # the manifest total in the fold view).
+            self._update_result_line()
             return
         self.info_label.setText(tr("versions.info.selected", version_id))
 

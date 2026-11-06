@@ -363,7 +363,7 @@ def test_ui_language_switch(app, monkeypatch, ws_tmp):
         assert window.sidebar.item(1).text() == "Instances"
         assert window.sidebar.item(5).text() == "Resources"
         assert window.pages["launch"].launch_button.text() == "Launch Game"
-        assert window.pages["versions"].install_button.text() == "Install Selected"
+        assert window.pages["versions"].install_button.text() == "Install This Version"
         assert window.pages["mods"].mods_tab.open_folder_button.text() == "Open Mods Folder"
         # restore Chinese
         i18n.set_language("zh_cn")

@@ -350,3 +350,76 @@ def test_the_new_controls_paint_a_keyboard_focus_ring(page) -> None:
             app.processEvents()
     finally:
         app.removeEventFilter(tracker)
+
+
+# ---------- 7. the bottom actions exist only while a row is selected ----------
+
+
+def _action_buttons(page):
+    return (
+        page.install_button,
+        page.open_instance_button,
+        page.detail_button,
+        page.launch_button,
+    )
+
+
+def _assert_actions_hidden(page) -> None:
+    for button in _action_buttons(page):
+        assert button.isHidden(), f"{button.text()} is still offered with no selected row"
+    assert not page.action_hint.isHidden(), "the empty bar must say how to make the actions appear"
+    assert page.action_hint.isVisibleTo(page)
+
+
+def _assert_actions_available(page) -> None:
+    for button in _action_buttons(page):
+        assert not button.isHidden(), f"{button.text()} did not appear for the selected row"
+        assert button.isEnabled(), f"{button.text()} is shown but disabled for a selected row"
+    assert page.action_hint.isHidden(), "the hint has nothing to explain once a row is selected"
+
+
+def test_no_selection_hides_the_bottom_actions_and_keeps_the_hint(page) -> None:
+    from gui import i18n
+
+    assert page._selected_id() is None
+    _assert_actions_hidden(page)
+    assert page.action_hint.text() == i18n.tr("versions.select.hint")
+
+    # Opening a fold must not select its first row on the user's behalf: the bar stays away.
+    page.group_headers()["release"].click()
+    assert page._selected_id() is None
+    assert page.list.count() == 4 + 3
+    _assert_actions_hidden(page)
+
+    # A real selection brings the four actions back; collapsing that fold takes them away again.
+    page.list.setCurrentRow(page._row_index("1.21.0"))
+    _assert_actions_available(page)
+    page.collapse_group("release")
+    assert page._selected_id() is None
+    _assert_actions_hidden(page)
+
+
+def test_selecting_a_row_shows_and_enables_every_action(page) -> None:
+    page.group_headers()["release"].click()
+    page.list.setCurrentRow(page._row_index("1.21.1"))
+
+    assert page._selected_id() == "1.21.1"
+    _assert_actions_available(page)
+
+
+def test_search_results_follow_the_same_selection_rule(page) -> None:
+    page.search_edit.setText("1.21.")
+    page._refilter()
+
+    assert page._selected_id() is None
+    _assert_actions_hidden(page)
+
+    page.list.setCurrentRow(page._row_index("1.21.2"))
+    assert page._selected_id() == "1.21.2"
+    _assert_actions_available(page)
+
+    # A new query that no longer holds the selected row clears the selection and the bar with it.
+    page.search_edit.setText("snap-")
+    page._refilter()
+    assert page._selected_id() is None
+    _assert_actions_hidden(page)
