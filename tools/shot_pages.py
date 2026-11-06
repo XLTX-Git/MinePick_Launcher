@@ -24,6 +24,17 @@
 ``--warm-cache`` fills the project-icon disk cache before the window is built, so the resource rows
 paint real icons instead of letter tiles; ``--expect-icons`` refuses to save any page whose rows are
 still showing a tile. They can be combined in one run: warm first, then render and verify.
+
+Pictures are rendered with :func:`render_page_image`, not ``QWidget.grab()``: the grab pixmap's
+unpainted pixels belong to the platform style, not to the page. Qt fills them with the palette window
+background (measured #efefef with no stylesheet, BG_WINDOW under the theme), and a translucent widget
+leaves them black - none of those is the ``BG_PAGE`` paper the stylesheet defines. Rendering into an
+opaque QImage that starts as the current theme's ``BG_PAGE`` decides every such pixel here, on every
+platform, and keeps the PNG opaque.
+
+The white corners that prompted this were a separate bug: the demo iris icon was an opaque 400x400
+white PNG (see ``FAKE_MOD_ICONS``). The prefill is the belt for the next unpainted pixel, not the
+repair for that one.
 """
 
 from __future__ import annotations
@@ -59,7 +70,14 @@ FAKE_MODS = [
 #: ``FAKE_MODS`` so the four-tuple stays the shared contract for the other render/measure tools.
 FAKE_MOD_ICONS = {
     "sodium": "https://cdn.modrinth.com/data/AANobbMI/icon.png",
-    "iris": "https://cdn.modrinth.com/data/YL57xq9U/icon.png",
+    # Not ``icon.png``: that file is an opaque 400x400 PNG with a white background (colour type 2,
+    # no alpha), so its square stays white on the card. The URL the search API actually hands the
+    # launcher is this transparent _96.webp; it is what a real screenshot shows, and its transparent
+    # corners are what make the card colour visible.
+    "iris": (
+        "https://cdn.modrinth.com/data/YL57xq9U/"
+        "18d0e7f076d3d6ed5bedd472b853909aac5da202_96.webp"
+    ),
     "lithium": "https://cdn.modrinth.com/data/gvQqBUqZ/icon.png",
     "fabric-api": "https://cdn.modrinth.com/data/P7dR8mSH/icon.png",
     "jei": (
@@ -494,9 +512,44 @@ def assert_no_focus_mark(*roots) -> None:
     names = ", ".join(sorted({describe_widget(w) for w in marked}))
     raise SystemExit(
         f"refusing to save: {len(marked)} widget(s) still carry {FOCUS_MARK}=true "
-        f"({names}); the grab would carry a keyboard focus ring. "
-        "Call defocus_for_shot() before grabbing, and find who set the mark."
+        f"({names}); the picture would carry a keyboard focus ring. "
+        "Call defocus_for_shot() before rendering, and find who set the mark."
     )
+
+
+def page_paper_color():
+    """The page background of the theme currently in force (the ``BG_PAGE`` token).
+
+    Never a hard-coded white: the token is the same value the stylesheet paints every page with, so a
+    light render gets the light paper and a dark render the dark one.
+    """
+    from PySide6.QtGui import QColor
+
+    from gui import theme
+
+    return QColor(theme.current_tokens().get("BG_PAGE", "#0a1622"))
+
+
+def render_page_image(widget):
+    """Render ``widget`` into an opaque QImage pre-filled with the page paper colour.
+
+    ``QWidget.grab()`` hands back a pixmap that Qt first fills with the palette window background, so
+    a pixel the widget tree never paints keeps a platform/style colour instead of a colour this
+    screenshot's own stylesheet defines - black, for a widget that sets ``WA_TranslucentBackground``.
+    Rendering into an image that starts as the current ``BG_PAGE`` makes those pixels the paper:
+    every widget that does paint (the card fill under an icon included) still overwrites it, and the
+    image is opaque, so the saved PNG cannot be re-composited against white by a later viewer.
+    """
+    from PySide6.QtGui import QImage
+
+    ratio = float(widget.devicePixelRatioF()) or 1.0
+    width = max(1, round(widget.width() * ratio))
+    height = max(1, round(widget.height() * ratio))
+    image = QImage(width, height, QImage.Format.Format_RGB32)
+    image.setDevicePixelRatio(ratio)
+    image.fill(page_paper_color())
+    widget.render(image)
+    return image
 
 
 def main() -> int:
@@ -519,7 +572,7 @@ def main() -> int:
     parser.add_argument("--font", default="", help="custom UI font family")
     parser.add_argument("--radius", default="", help="corner radius preset: compact / default / round")
     parser.add_argument(
-        "--scroll-bottom", action="store_true", help="scroll the page to the bottom before grabbing"
+        "--scroll-bottom", action="store_true", help="scroll the page to the bottom before rendering"
     )
     parser.add_argument("--pages", default="", help="comma separated page subset, e.g. launch,settings")
     parser.add_argument(
@@ -531,6 +584,11 @@ def main() -> int:
         "--dialog-shot",
         action="store_true",
         help="also render the crash diagnosis dialog over the instances page",
+    )
+    parser.add_argument(
+        "--detail-shot",
+        action="store_true",
+        help="also render the instance detail page (index 8) for the selected demo instance",
     )
     parser.add_argument(
         "--warm-cache",
@@ -735,15 +793,58 @@ def main() -> int:
         # keyboardFocus mark survived (see defocus_for_shot/assert_no_focus_mark).
         defocus_for_shot(window, window.pages[name])
         assert_no_focus_mark(window, window.pages[name])
-        pixmap = window.grab()
-        pixmap.save(str(target))
-        print(f"saved {target} ({pixmap.width()}x{pixmap.height()})")
+        image = render_page_image(window)
+        image.save(str(target))
+        print(f"saved {target} ({image.width()}x{image.height()})")
 
     if args.dialog_shot:
         _render_dialog_shot(app, window, Path(game_dir), out_dir, prefix)
+    if args.detail_shot:
+        _render_detail_shot(app, window, out_dir, prefix)
 
     window.close()
     return 0
+
+
+def _render_detail_shot(app, window, out_dir: Path, prefix: str) -> None:
+    """Render the instance detail page, the card grid's drill-down target.
+
+    The published set is eight nav pages plus this one: the detail view has no nav-rail entry of its
+    own, so the page loop above can never reach it. Opening it also drops the main rail (the detail
+    page has an eight-entry sidebar of its own), which is part of the picture and the reason this
+    pass renders the whole window rather than the page widget.
+
+    Runs last on purpose: the rail is hidden while the detail page is up, so a later page pass would
+    have to restore the grid first.
+    """
+    from PySide6.QtCore import QThreadPool
+
+    from gui.main_window import NAV_KEYS
+
+    window.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
+    for _ in range(8):
+        app.processEvents()
+        time.sleep(0.05)
+    page = window.pages["instances"]
+    ids = page.card_ids()
+    if not ids:
+        raise SystemExit(
+            "refusing to save page 'instance_detail': the preview tree has no demo instance"
+        )
+    # The second demo instance is the modded one (ensure_preview creates it that way), so it has the
+    # fullest detail page. One instance is still enough for the picture.
+    if not page.open_instance(ids[1] if len(ids) > 1 else ids[0]):
+        raise SystemExit("refusing to save page 'instance_detail': the instance could not be opened")
+    wait_for_workers(app, QThreadPool.globalInstance(), 8.0)
+    for _ in range(10):
+        app.processEvents()
+        time.sleep(0.05)
+    defocus_for_shot(window, page)
+    assert_no_focus_mark(window, page)
+    image = render_page_image(window)
+    target = out_dir / f"{prefix}8_instance_detail.png"
+    image.save(str(target))
+    print(f"saved {target} ({image.width()}x{image.height()})")
 
 
 def _render_dialog_shot(app, window, game_dir: Path, out_dir: Path, prefix: str) -> None:
@@ -780,13 +881,13 @@ def _render_dialog_shot(app, window, game_dir: Path, out_dir: Path, prefix: str)
         app.processEvents()
         time.sleep(0.05)
     # The dialog is part of the picture too: its own default button is marked from the FocusIn a
-    # dialog sends when it opens, so the same rule applies before this grab.
+    # dialog sends when it opens, so the same rule applies before this render.
     defocus_for_shot(window, dialog)
     assert_no_focus_mark(window, dialog)
-    pixmap = window.grab()
+    image = render_page_image(window)
     target = out_dir / f"{prefix}9_dialog.png"  # index 9 keeps the driver's name pattern intact
-    pixmap.save(str(target))
-    print(f"saved {target} ({pixmap.width()}x{pixmap.height()})")
+    image.save(str(target))
+    print(f"saved {target} ({image.width()}x{image.height()})")
     dialog.close()
 
 
