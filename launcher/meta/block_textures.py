@@ -53,7 +53,7 @@ from pathlib import Path
 
 import httpx
 
-from launcher.meta import sources
+from launcher.meta import loader_logos, sources
 from launcher.meta.assets import fetch_asset_index
 from launcher.meta.manifest import (
     APRIL_FOOLS_IDS,
@@ -590,11 +590,16 @@ def _webp_as_png(data: bytes) -> bytes | None:
 
 
 def start_prefetch(launcher_dir: Path, game_dir: Path | None = None) -> threading.Thread | None:
-    """Fill the texture cache in a daemon thread; returns ``None`` when nothing is missing.
+    """Fill the texture cache in a daemon thread; returns that thread, or ``None`` when no texture is
+    missing.
 
     Called once after the main window is shown. The cache hit check is five ``stat`` calls, so the
-    every-day start does no thread and no network at all.
+    every-day start does no thread and no network at all. The official mod-loader logos are started at
+    the same moment, in a daemon thread of their own (see ``launcher.meta.loader_logos``), so the
+    return value only speaks for the block textures: a logo that is not cached yet leaves its drawn
+    glyph in place, and a slow logo host never delays a texture.
     """
+    loader_logos.start_prefetch(Path(launcher_dir))
     if not missing_textures(launcher_dir):
         return None
     thread = threading.Thread(

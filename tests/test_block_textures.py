@@ -410,7 +410,7 @@ def test_prefetch_failure_is_silent_and_writes_nothing(ws_tmp):
     assert not (bt.texture_cache_root(ws_tmp / "data") / bt.MODERN_BUCKET).exists()
 
 
-def test_complete_cache_is_not_downloaded_again(ws_tmp):
+def test_complete_cache_is_not_downloaded_again(ws_tmp, monkeypatch):
     root = bt.texture_cache_root(ws_tmp / "data") / bt.MODERN_BUCKET
     for name in bt.TEXTURE_NAMES:
         _write_png(root / (name + ".png"))
@@ -418,6 +418,8 @@ def test_complete_cache_is_not_downloaded_again(ws_tmp):
     assert bt.prefetch_missing_textures(ws_tmp / "data", client=client) == 0
     assert client.urls == []
     assert bt.missing_textures(ws_tmp / "data") == []
+    # The logo prefetch is a separate daemon thread; this test is about the texture cache only.
+    monkeypatch.setattr(bt.loader_logos, "start_prefetch", lambda *_a, **_k: None)
     assert bt.start_prefetch(ws_tmp / "data") is None
 
 
@@ -635,6 +637,7 @@ def test_start_prefetch_uses_a_daemon_thread(ws_tmp, monkeypatch):
     monkeypatch.setattr(
         bt, "prefetch_missing_textures", lambda launcher_dir, **_kw: calls.append(launcher_dir) or 0
     )
+    monkeypatch.setattr(bt.loader_logos, "start_prefetch", lambda *_a, **_k: None)
     thread = bt.start_prefetch(ws_tmp / "data")
     assert thread is not None and thread.daemon
     thread.join(timeout=5)

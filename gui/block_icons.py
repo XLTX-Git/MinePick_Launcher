@@ -36,6 +36,12 @@ A source that is already a finished picture of a cube (mcmod.cn's 128px icons, o
 is drawn as it is: cubing a picture of a cube would paint a little cube on every face. The threshold
 is :data:`ICON_SOURCE_EDGE`, far above every 16x16 vanilla texture.
 
+Loader marks are the loaders' own artwork, not ours: ``launcher.meta.loader_logos`` fetches each logo at
+runtime and keeps it in ``<launcher data dir>/cache/loader-logos/``. A loader whose logo is cached is
+drawn from that file, preserving its own colours and transparency; when there is no fresh logo (a cold
+start, an offline machine, an expired cache) the bundled Lucide glyph is used instead, exactly as
+before.
+
 Scaling is deliberately nearest-neighbour for the 16x16 faces: the source is pixel art, and a
 smoothed scale would turn it into mush. A finished icon is an ordinary picture and is scaled smoothly.
 The cube is cached per (source, mtime, size, device ratio), so a list of a thousand manifest rows
@@ -53,7 +59,7 @@ from PySide6.QtWidgets import QApplication
 
 from gui import nav_icons, paint_utils, theme
 from launcher.instances import ICON_CUSTOM_PREFIX, custom_icon_file
-from launcher.meta import block_textures
+from launcher.meta import block_textures, loader_logos
 
 #: Loader kinds that have a bundled Lucide glyph (the loader -> file mapping lives in nav_icons:
 #: forge -> anvil, fabric/quilt -> spool, neoforge -> flame).
@@ -128,6 +134,8 @@ GRASS_TINT = "#91bd59"
 _IMAGE_CACHE: dict[str, QImage] = {}
 _CUBE_CACHE: dict[tuple[str, str, int, int], QPixmap] = {}
 _ICON_CACHE: dict[tuple[str, int, int], QPixmap] = {}
+#: Official loader logos, keyed by (cache file, mtime, logical edge, device ratio).
+_LOGO_CACHE: dict[tuple[str, int, int, int], QPixmap] = {}
 #: Custom pictures, keyed by (path, mtime, logical edge, device ratio): uploading over ``icon.png``
 #: changes the mtime, so the next paint cannot show the previous picture.
 _CUSTOM_CACHE: dict[tuple[str, int, int, int], QPixmap] = {}
@@ -138,6 +146,7 @@ def clear_cache() -> None:
     _IMAGE_CACHE.clear()
     _CUBE_CACHE.clear()
     _ICON_CACHE.clear()
+    _LOGO_CACHE.clear()
     _CUSTOM_CACHE.clear()
 
 
@@ -199,8 +208,25 @@ def block_pixmap(
     return pixmap
 
 
-def loader_pixmap(loader: str, color: str, size: int = 22) -> QPixmap:
-    """The loader's Lucide glyph in the theme accent (drawn block if the glyph is unavailable)."""
+def loader_pixmap(
+    loader: str,
+    color: str,
+    size: int = 22,
+    *,
+    logo_cache_dir: Path | None = None,
+) -> QPixmap:
+    """The loader's official logo when cached, else its Lucide glyph in the theme accent.
+
+    ``loader_logos.find_cached_logo`` only reads the user's cache; painting never requests anything.
+    The logo is scaled as the picture it is (smoothly, aspect ratio kept), so the manufacturer's
+    colours and transparent background survive. Everything else - no cache entry, an expired entry, a
+    file Qt cannot decode - falls back to the existing drawn glyph and then to the accent block.
+    """
+    logo = loader_logos.find_cached_logo(loader, cache_dir=logo_cache_dir)
+    if logo is not None:
+        official = _loader_logo(logo, size)
+        if official is not None:
+            return official
     if loader in LOADER_GLYPHS:
         icon = nav_icons.nav_icon(loader, color, size)
         if not icon.isNull():
@@ -218,7 +244,7 @@ def instance_icon_pixmap(
 ) -> QPixmap:
     """The icon of one instance, in the order the field is read.
 
-    ``icon`` empty -> the automatic rule (grass / command block / gold / cobblestone / loader glyph);
+    ``icon`` empty -> the automatic rule (grass / command block / gold / cobblestone / loader mark);
     a rule name -> that rule; ``custom:<file>`` -> the picture inside the instance folder, drawn as
     the picture itself (rounded, never cubed). A custom value whose file is missing, unreadable or
     undecodable falls back to the automatic rule and is **not** cleared from the metadata: a volume
@@ -246,7 +272,7 @@ def automatic_icon_pixmap(
     game_dir: Path | None = None,
     cache_root: Path | None = None,
 ) -> QPixmap:
-    """The rule-derived icon for a version/profile id: loader glyph, else the category block.
+    """The rule-derived icon for a version/profile id: loader mark, else the category block.
 
     The loader is read from the profile chain (so a renamed Forge instance still resolves to Forge),
     and the block category from the version type: release -> grass, snapshot -> command block,
@@ -254,7 +280,7 @@ def automatic_icon_pixmap(
     """
     kind = block_textures.loader_kind(version_id, game_dir=game_dir)
     if kind is not None:
-        return loader_pixmap(kind, _accent(), 22)
+        return loader_pixmap(kind, _accent(), 22, logo_cache_dir=_loader_logo_dir(cache_root))
     version_type = block_textures.version_type_for(version_id, game_dir=game_dir)
     category = block_textures.icon_category(version_id, version_type)
     block = block_textures.block_name_for_category(category)
@@ -277,13 +303,13 @@ def rule_icon_pixmap(
     """One of the eight pinnable rule icons at ``size`` logical pixels.
 
     A block rule uses the real texture (the same renderer as the automatic rule); a loader rule
-    draws its glyph centred in a transparent tile at 60% of the edge, so the four line glyphs read
-    at the same weight as the four blocks beside them.
+    shows the loader's cached official logo, or its glyph while that logo is unavailable, centred in
+    a transparent tile at 60% of the edge so the four marks read at the same weight as the blocks.
     """
     block = RULE_ICON_BLOCKS.get(rule)
     if block is not None:
         return block_pixmap(block, size, game_dir=game_dir, cache_root=cache_root)
-    return _loader_tile(rule, size)
+    return _loader_tile(rule, size, logo_cache_dir=_loader_logo_dir(cache_root))
 
 
 def custom_icon_pixmap(folder: Path, icon: str, size: int) -> QPixmap | None:
@@ -340,10 +366,10 @@ def custom_icon_pixmap(folder: Path, icon: str, size: int) -> QPixmap | None:
     return pixmap
 
 
-def _loader_tile(rule: str, size: int) -> QPixmap:
-    """A loader glyph centred in a transparent ``size`` tile (the picker's 48px slot)."""
+def _loader_tile(rule: str, size: int, *, logo_cache_dir: Path | None = None) -> QPixmap:
+    """A loader logo or glyph centred in a transparent ``size`` tile (the picker's 48px slot)."""
     glyph_size = max(16, round(int(size) * 0.6))
-    glyph = loader_pixmap(rule, _accent(), glyph_size)
+    glyph = loader_pixmap(rule, _accent(), glyph_size, logo_cache_dir=logo_cache_dir)
     ratio = _screen_ratio()
     edge = max(1, round(int(size) * ratio))
     canvas = QPixmap(edge, edge)
@@ -359,6 +385,67 @@ def _loader_tile(rule: str, size: int) -> QPixmap:
     )
     painter.end()
     return canvas
+
+
+def _loader_logo(path: Path, size: int) -> QPixmap | None:
+    """Scale a cached official logo into a transparent ``size`` tile, or ``None`` if unreadable.
+
+    The picture keeps its aspect ratio and is centred; nothing is tinted, cropped or recoloured, so
+    what the card shows is the loader project's own mark. The result is cached per (file, mtime,
+    edge, device ratio) because a page builds one card per instance.
+    """
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return None
+    ratio = _screen_ratio()
+    key = (str(path), mtime, int(size), round(ratio * 100))
+    cached = _LOGO_CACHE.get(key)
+    if cached is not None:
+        return cached
+    image = QImage(str(path))
+    if image.isNull():
+        return None
+    edge = max(1, round(int(size) * ratio))
+    scaled = image.scaled(
+        edge,
+        edge,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    if scaled.isNull():
+        return None
+    canvas = QImage(edge, edge, QImage.Format.Format_ARGB32_Premultiplied)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.drawImage(
+        max(0, (edge - scaled.width()) // 2),
+        max(0, (edge - scaled.height()) // 2),
+        scaled,
+    )
+    painter.end()
+    pixmap = QPixmap.fromImage(canvas)
+    pixmap.setDevicePixelRatio(ratio)
+    if len(_LOGO_CACHE) > 64:
+        _LOGO_CACHE.clear()
+    _LOGO_CACHE[key] = pixmap
+    return pixmap
+
+
+def _loader_logo_dir(cache_root: Path | None) -> Path | None:
+    """``<launcher>/cache/loader-logos`` when the caller already knows ``<launcher>/cache``.
+
+    The block-texture root is ``<launcher data dir>/cache/block-textures``; deriving the sibling from
+    it means the cards use the same launcher directory the textures came from, without the icon
+    renderer having to resolve the user's data directory itself (tests pass a temporary one).
+    """
+    if cache_root is None:
+        return None
+    root = Path(cache_root)
+    if root.name != block_textures.CACHE_DIRNAME:
+        return None
+    return root.parent / loader_logos.CACHE_DIRNAME
 
 
 def _accent() -> str:
