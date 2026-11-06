@@ -62,7 +62,7 @@ from launcher.updates import is_newer, parse_version
 ROOT = Path(__file__).resolve().parents[1]
 
 # The last version published to users: the build under test has to be strictly newer than this.
-LAST_RELEASED = "0.4.1"
+LAST_RELEASED = "0.4.2"
 
 # Each of the nine READMEs announces the newest published release on one bolded line near the top.
 # The wording is per language ("**Current release: X.Y.Z**", "**当前版本 X.Y.Z**", ...), so the line
