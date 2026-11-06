@@ -15,14 +15,16 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Disk readers behind the instance detail's resource-pack, shader-pack and save pages.
+"""Disk readers behind the instance detail's mod, resource-pack, shader-pack and save lists.
 
-The pages list what is on disk: one row per file in ``resourcepacks/`` or ``shaderpacks/``, one row
-per folder in ``saves/``. Nothing here draws - the Qt page owns the pixels - but the small helpers
-below turn a disk name into display text and a pack's own ``pack.png`` into bytes, which keeps those
-two decisions testable against a temporary directory. A directory that exists but cannot be read
-raises instead of returning an empty list, so an unreadable folder is reported as a failure and never
-rendered as "this instance has nothing installed".
+The pages list what is on disk: one row per file in ``mods/``, ``resourcepacks/`` or ``shaderpacks/``,
+one row per folder in ``saves/``. Nothing here draws - the Qt page owns the pixels - but the small
+helpers below turn a disk name into display text, pull a project's own artwork out of a jar or a zip,
+and read the two fields a world folder holds about itself (its name and when it was created). Keeping
+those decisions here means they can be measured against a temporary directory, which is exactly how
+the tests exercise them. A directory that exists but cannot be read raises instead of returning an
+empty list, so an unreadable folder is reported as a failure and never rendered as "this instance has
+nothing installed".
 
 The one write in this module is :func:`backup_save`: it zips a world folder and leaves the original
 untouched. No function here downloads anything.
@@ -33,6 +35,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import re
 import struct
 import time
 import zipfile
@@ -47,15 +50,40 @@ LOGGER = logging.getLogger(__name__)
 FORMATTING_CODE = "\u00a7"
 #: A real ``pack.png`` is a few KB; anything this large is not a pack icon and is not read.
 PACK_ICON_MAX_BYTES = 4 * 1024 * 1024
+#: A mod's logo is a project icon, so it follows the same 2 MB cap the online icon store uses.
+MOD_ICON_MAX_BYTES = 2 * 1024 * 1024
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-#: Bounded so a big modpack folder cannot keep the bytes of a thousand packs alive forever.
+#: Image signatures Qt can decode. A jar entry that merely *looks* like an icon is not one.
+_IMAGE_MAGIC = (
+    _PNG_SIGNATURE,
+    b"\xff\xd8\xff",  # JPEG
+    b"GIF87a",
+    b"GIF89a",
+)
+#: Bounded so a big modpack folder cannot keep the bytes of a thousand jars alive forever.
+_MOD_ICON_CACHE_SIZE = 512
+#: Bounded for the same reason; a world icon is a 64x64 PNG.
+_SAVE_ICON_CACHE_SIZE = 512
+#: Bounded for the same reason; a pack icon is read once per refill.
 _PACK_ICON_CACHE_SIZE = 512
+#: Where a mod jar keeps its logo when its metadata does not name one. The depth limit stops a jar
+#: with a thousand ``icon.png`` files from being scanned for a picture nobody asked for.
+_MOD_ICON_FALLBACK_NAMES = frozenset({"icon.png", "logo.png"})
+_MOD_ICON_FALLBACK_DEPTH = 3
+#: Forge/NeoForge declare the logo as ``logoFile = "..."`` in the mods table.
+_LOGO_FILE = re.compile(r"""^\s*logoFile\s*=\s*["']([^"']+)["']""", re.MULTILINE)
 
-#: NBT tag header of the one field read from ``level.dat``: TAG_String, name length 9, "LevelName".
+#: NBT tag header of the fields read from ``level.dat``. TAG_String, name length 9, "LevelName";
+#: TAG_Long, name length 7, "Created" (milliseconds since the epoch).
 _LEVEL_NAME_MARKER = b"\x08\x00\x09LevelName"
+_LEVEL_CREATED_MARKER = b"\x04\x00\x07Created"
 #: A world name longer than this is not a name; refusing the length also keeps a corrupt file from
 #: making the page read an arbitrary slice as text.
 _LEVEL_NAME_MAX_BYTES = 512
+#: A creation stamp outside this window is not a date a person wrote a world on (Minecraft 1.0 is
+#: 2011; the upper bound is generous for a clock-skewed machine).
+_LEVEL_CREATED_MIN = 1_230_768_000.0  # 2009-01-01
+_LEVEL_CREATED_MAX = 4_102_444_800.0  # 2100-01-01
 #: Files a running world keeps open and that carry no world data. Zipping one of them fails with a
 #: sharing violation while the game is running, so a backup skips it instead of failing as a whole.
 _BACKUP_SKIP = frozenset({"session.lock"})
@@ -77,13 +105,22 @@ class ContentFile:
 
 @dataclass(frozen=True)
 class SaveFolder:
-    """One world folder in ``saves/``; ``world_name`` comes from ``level.dat`` when it has one."""
+    """One world folder in ``saves/``.
+
+    ``world_name`` comes from ``level.dat`` when it has one; ``created`` is the game's own
+    ``Data.Created`` stamp (milliseconds since the epoch) when it is readable and the folder's
+    creation time otherwise, so a world is never listed without a date. ``icon`` is the world's
+    ``icon.png`` - Minecraft screenshots the game the first time the world is saved - and ``None``
+    when the world has never been saved in game.
+    """
 
     folder: str
     world_name: str
     path: Path
     modified: float
     size: int
+    created: float = 0.0
+    icon: bytes | None = None
 
 
 def directory_size(path: Path) -> int:
@@ -102,6 +139,14 @@ def format_modified(timestamp: float) -> str:
     """Format a modification time the way the overview formats a last-played time."""
     try:
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp))
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+def format_day(timestamp: float) -> str:
+    """Format a timestamp as a bare calendar day (``2026/08/09``), for a row's two date fields."""
+    try:
+        return time.strftime("%Y/%m/%d", time.localtime(timestamp))
     except (OverflowError, OSError, ValueError):
         return ""
 
@@ -186,6 +231,180 @@ def pack_icon_bytes(path: Path) -> bytes | None:
     return _read_pack_icon(*key)
 
 
+def _looks_like_image(data: bytes) -> bool:
+    """True for the raster formats Qt decodes without an extra plugin (PNG/JPEG/GIF/WebP)."""
+    if data.startswith(_IMAGE_MAGIC):
+        return True
+    return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+
+
+def _icon_path(value: object) -> str:
+    """A metadata ``icon`` value -> one archive path.
+
+    Fabric and Quilt accept both shapes: a plain string, or a dictionary keyed by the icon size
+    (``{"64": "icon_64.png", "128": "icon_128.png"}``). The largest key wins because that is the
+    sharpest picture the author shipped; a dictionary with non-numeric keys falls back to its
+    longest value so the choice stays deterministic instead of following dict order.
+    """
+    if isinstance(value, str):
+        return value.strip().lstrip("/")
+    if not isinstance(value, dict):
+        return ""
+    candidates: list[tuple[tuple[int, int], str]] = []
+    for key, item in value.items():
+        if not isinstance(item, str) or not item.strip():
+            continue
+        text = str(key).strip()
+        rank = int(text) if text.isdigit() else -1
+        candidates.append(((rank, len(item)), item.strip().lstrip("/")))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda entry: entry[0], reverse=True)
+    return candidates[0][1]
+
+
+def _metadata_icon_path(archive: zipfile.ZipFile, names: set[str]) -> str:
+    """The icon a mod's own metadata names, in the order the loaders declare it."""
+    candidates: list[str] = []
+    if "fabric.mod.json" in names:
+        try:
+            data = json.loads(archive.read("fabric.mod.json").decode("utf-8", "replace"))
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile):
+            data = {}
+        if isinstance(data, dict):
+            candidates.append(_icon_path(data.get("icon")))
+    if "quilt.mod.json" in names:
+        try:
+            data = json.loads(archive.read("quilt.mod.json").decode("utf-8", "replace"))
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile):
+            data = {}
+        if isinstance(data, dict):
+            loader = data.get("quilt_loader") if isinstance(data.get("quilt_loader"), dict) else {}
+            metadata = loader.get("metadata") if isinstance(loader.get("metadata"), dict) else {}
+            candidates.append(_icon_path(metadata.get("icon")))
+            candidates.append(_icon_path(data.get("icon")))
+    for toml_name in ("META-INF/mods.toml", "META-INF/neoforge.mods.toml"):
+        if toml_name not in names:
+            continue
+        try:
+            text = archive.read(toml_name).decode("utf-8", "replace")
+        except (OSError, RuntimeError, zipfile.BadZipFile):
+            continue
+        match = _LOGO_FILE.search(text)
+        if match:
+            candidates.append(match.group(1).strip().lstrip("/"))
+    return next((path for path in candidates if path), "")
+
+
+def _fallback_icon_name(names: list[str]) -> str:
+    """The shallowest ``icon.png`` / ``logo.png`` (depth <= 3), or ``""``.
+
+    Root ``icon.png`` wins over ``assets/<mod>/icon.png``, and a short path wins over a long one,
+    so two jars that both ship artwork resolve to the same entry run to run.
+    """
+    best = ""
+    best_rank: tuple[int, int, str] | None = None
+    for name in names:
+        if not name or name.endswith("/"):
+            continue
+        base = name.rsplit("/", 1)[-1].casefold()
+        if base not in _MOD_ICON_FALLBACK_NAMES:
+            continue
+        depth = name.count("/")
+        if depth > _MOD_ICON_FALLBACK_DEPTH:
+            continue
+        rank = (depth, len(name), name.casefold())
+        if best_rank is None or rank < best_rank:
+            best_rank, best = rank, name
+    return best
+
+
+def _archive_entry(archive: zipfile.ZipFile, name: str) -> zipfile.ZipInfo | None:
+    """One entry by path, accepting a differently-cased spelling when the exact name is absent."""
+    try:
+        return archive.getinfo(name)
+    except KeyError:
+        pass
+    wanted = name.casefold()
+    for entry in archive.infolist():
+        if entry.filename.casefold() == wanted:
+            return entry
+    return None
+
+
+def _read_archive_icon(archive: zipfile.ZipFile, names: set[str]) -> bytes | None:
+    """Read the icon a jar names, then the conventional fallbacks; ``None`` when it has none."""
+    candidates = [_metadata_icon_path(archive, names)]
+    candidates.append(_fallback_icon_name(archive.namelist()))
+    for name in candidates:
+        if not name:
+            continue
+        info = _archive_entry(archive, name)
+        if info is None or info.is_dir() or info.file_size > MOD_ICON_MAX_BYTES:
+            continue
+        try:
+            data = archive.read(info)
+        except (OSError, RuntimeError, zipfile.BadZipFile):
+            continue
+        if data and len(data) <= MOD_ICON_MAX_BYTES and _looks_like_image(data):
+            return data
+    return None
+
+
+@lru_cache(maxsize=_MOD_ICON_CACHE_SIZE)
+def _read_mod_icon(source: str, mtime_ns: int, size: int) -> bytes | None:
+    """Body of :func:`mod_icon_bytes`; the arguments are the jar's identity, not its content."""
+    try:
+        with zipfile.ZipFile(Path(source)) as archive:
+            return _read_archive_icon(archive, set(archive.namelist()))
+    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile):
+        return None
+
+
+def mod_icon_bytes(path: Path) -> bytes | None:
+    """The PNG/JPEG/WebP bytes of a mod jar's own icon, read locally, or None when it has none.
+
+    The order is the one the loaders themselves use, because the first answer is what the game
+    shows: Fabric/Quilt's ``icon`` metadata (a string, or a size-keyed dictionary), Forge/NeoForge's
+    ``logoFile``, and only then the conventional ``icon.png`` / ``logo.png`` somewhere in the first
+    three levels of the archive. The archive is never extracted, and a missing, unreadable, corrupt
+    or oversized entry is simply "no artwork" - the page draws its neutral cube. The result is
+    cached by (path, mtime, size), so refilling a list does not reopen every jar, while a replaced
+    jar gets a new entry.
+    """
+    source = Path(path)
+    try:
+        info = source.stat()
+    except OSError:
+        return None
+    return _read_mod_icon(str(source), info.st_mtime_ns, info.st_size)
+
+
+def save_icon_bytes(folder: Path) -> bytes | None:
+    """The world's own ``icon.png`` (the screenshot Minecraft saves), or None when it has none.
+
+    A world that has never been saved in game has no icon; the caller draws the neutral cube. Only
+    that one file is read - the world folder is never scanned for pictures.
+    """
+    icon = Path(folder) / "icon.png"
+    try:
+        info = icon.stat()
+    except OSError:
+        return None
+    return _read_save_icon(str(icon), info.st_mtime_ns, info.st_size)
+
+
+@lru_cache(maxsize=_SAVE_ICON_CACHE_SIZE)
+def _read_save_icon(source: str, mtime_ns: int, size: int) -> bytes | None:
+    try:
+        data = Path(source).read_bytes()
+    except OSError:
+        return None
+    if not data or len(data) > PACK_ICON_MAX_BYTES or not data.startswith(_PNG_SIGNATURE):
+        return None
+    return data
+
+
 def read_enabled_resource_packs(options_path: Path) -> set[str] | None:
     """The pack ids ``options.txt`` records as enabled, in lower case.
 
@@ -245,13 +464,8 @@ def scan_content_files(directory: Path, *, enabled: set[str] | None = None) -> l
     return items
 
 
-def read_level_name(level_dat: Path) -> str | None:
-    """The ``LevelName`` string in a save's ``level.dat``, or None when it cannot be recovered.
-
-    Minecraft writes a gzip-compressed NBT compound (``Data.LevelName``). Only that one field is
-    read - the whole file is not modelled - so a world whose format this launcher does not
-    understand still lists under its folder name instead of failing the page.
-    """
+def _level_bytes(level_dat: Path) -> bytes | None:
+    """The uncompressed NBT body of a ``level.dat``, or None when it cannot be read."""
     try:
         raw = level_dat.read_bytes()
     except OSError:
@@ -261,6 +475,19 @@ def read_level_name(level_dat: Path) -> str | None:
             raw = gzip.decompress(raw)
         except (OSError, EOFError, zlib.error):
             return None
+    return raw
+
+
+def read_level_name(level_dat: Path) -> str | None:
+    """The ``LevelName`` string in a save's ``level.dat``, or None when it cannot be recovered.
+
+    Minecraft writes a gzip-compressed NBT compound (``Data.LevelName``). Only that one field is
+    read - the whole file is not modelled - so a world whose format this launcher does not
+    understand still lists under its folder name instead of failing the page.
+    """
+    raw = _level_bytes(level_dat)
+    if raw is None:
+        return None
     position = raw.find(_LEVEL_NAME_MARKER)
     if position < 0:
         return None
@@ -278,11 +505,40 @@ def read_level_name(level_dat: Path) -> str | None:
     return name.strip() or None
 
 
+def read_level_created(level_dat: Path) -> float | None:
+    """``Data.Created`` - the game's own world creation time - as seconds since the epoch.
+
+    The game stores milliseconds in a TAG_Long; the conversion is decided by magnitude (a value past
+    :data:`_LEVEL_CREATED_MAX` in seconds can only be milliseconds, and the other way round), so both
+    the millisecond field the game writes and a seconds field some editor may write come out as a
+    date. A missing, corrupt or implausible value returns None and the caller falls back to the
+    folder's own creation time rather than showing 1970.
+    """
+    raw = _level_bytes(level_dat)
+    if raw is None:
+        return None
+    position = raw.find(_LEVEL_CREATED_MARKER)
+    if position < 0:
+        return None
+    start = position + len(_LEVEL_CREATED_MARKER)
+    if start + 8 > len(raw):
+        return None
+    value = struct.unpack_from(">q", raw, start)[0]
+    if value <= 0:
+        return None
+    seconds = value / 1000.0 if value > int(_LEVEL_CREATED_MAX) else float(value)
+    if not _LEVEL_CREATED_MIN <= seconds <= _LEVEL_CREATED_MAX:
+        return None
+    return seconds
+
+
 def scan_saves(directory: Path) -> list[SaveFolder]:
     """The world folders in ``saves/``, newest first.
 
     Like :func:`scan_content_files`: a missing ``saves/`` is empty, one that exists but cannot be
-    listed raises. ``level.dat`` is only read for the display name; the folder name is the fallback.
+    listed raises. ``level.dat`` supplies the display name and the in-game creation time (the folder
+    name / the folder's own creation time are the fallbacks), and the world's ``icon.png`` is read
+    here - not on the GUI thread - so a list of worlds paints its thumbnails in the first pass.
     """
     if not directory.exists():
         return []
@@ -293,6 +549,8 @@ def scan_saves(directory: Path) -> list[SaveFolder]:
             path=entry,
             modified=entry.stat().st_mtime,
             size=directory_size(entry),
+            created=read_level_created(entry / "level.dat") or entry.stat().st_ctime,
+            icon=save_icon_bytes(entry),
         )
         for entry in directory.iterdir()
         if entry.is_dir()
