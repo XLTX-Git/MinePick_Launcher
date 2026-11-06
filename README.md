@@ -83,7 +83,7 @@ single portable EXE.
 - Optional token encryption (cryptography Fernet + password, `MCLAUNCHER_TOKEN_PASSWORD` supported)
 
 ### Versions & Java
-- Official version manifest with category tabs (release / snapshot / April Fools / legacy), "Latest release"
+- Official version manifest with collapsible version groups (release / snapshot / April Fools / legacy), "Latest release"
   and "Latest snapshot" cards, name search, one-click install & uninstall, version details
 - Isolation is decided per instance — always isolated, never, or follow the policy for new instances
   (an instance that already holds mods or saves keeps its own folder automatically)

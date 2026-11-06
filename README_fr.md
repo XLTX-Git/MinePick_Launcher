@@ -85,7 +85,7 @@ dans un seul EXE portable.
 - Chiffrement facultatif des jetons (cryptography Fernet + mot de passe, `MCLAUNCHER_TOKEN_PASSWORD` pris en charge)
 
 ### Versions et Java
-- Manifeste officiel des versions avec onglets par catégorie (version stable / snapshot / poisson d'avril /
+- Manifeste officiel des versions avec groupes de versions repliables (version stable / snapshot / poisson d'avril /
   anciennes), cartes « Dernière version stable » et « Dernier snapshot », recherche par nom, installation et
   désinstallation en un clic, détails de version
 - L'isolation se décide instance par instance — soit toujours isolée, soit jamais, soit selon la politique

@@ -82,7 +82,7 @@ einzelne portable EXE.
 - Optionale Token-Verschlüsselung (cryptography Fernet + Passwort, `MCLAUNCHER_TOKEN_PASSWORD` wird unterstützt)
 
 ### Versionen & Java
-- Offizielles Versions-Manifest mit Kategorie-Tabs (Release / Snapshot / Aprilscherz / Legacy), Karten „Neueste
+- Offizielles Versions-Manifest mit aufklappbaren Versionsgruppen (Release / Snapshot / Aprilscherz / Legacy), Karten „Neueste
   Version“ und „Neuester Snapshot“, Namenssuche, Ein-Klick-Installation & -Deinstallation, Versionsdetails
 - Isolation wird pro Instanz entschieden — immer isoliert, nie, oder der Richtlinie für neue Instanzen
   folgen (eine Instanz, die bereits Mods oder Spielstände enthält, behält automatisch ihren eigenen Ordner)

@@ -84,7 +84,7 @@ recursos de Modrinth y CurseForge, cargadores Fabric/Forge/NeoForge/Quilt, insta
 - Cifrado opcional de tokens (cryptography Fernet + contraseña, con soporte de `MCLAUNCHER_TOKEN_PASSWORD`)
 
 ### Versiones y Java
-- Lista oficial de versiones con pestañas por categoría (estable / snapshot / día de los inocentes / heredadas), tarjetas
+- Lista oficial de versiones con grupos de versiones plegables (estable / snapshot / día de los inocentes / heredadas), tarjetas
   «Última versión estable» y «Última snapshot», búsqueda por nombre, instalación y desinstalación en un clic,
   detalles de la versión
 - El aislamiento se decide por instancia — siempre aislada, nunca, o seguir la política para las instancias
