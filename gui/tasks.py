@@ -64,7 +64,7 @@ STATE_KEYS = {
     FAILED: "tasks.state.failed",
 }
 
-#: The five kinds of job the launcher runs as a task, and the title each one is listed under. The kind
+#: The six kinds of job the launcher runs as a task, and the title each one is listed under. The kind
 #: is what picks the row's glyph on the download page; the title key is what the row says.
 KIND_TITLE_KEYS: dict[str, str] = {
     "version": "tasks.title.install",
@@ -72,6 +72,10 @@ KIND_TITLE_KEYS: dict[str, str] = {
     "modpack": "tasks.title.modpack",
     "resourcepack": "tasks.title.resourcepack",
     "shaderpack": "tasks.title.shaderpack",
+    # An export is not a download, but it is a job with a real byte count and a place on the same
+    # page: the instance page starts it, the row shows its progress and the status line says where
+    # the archive landed.
+    "export": "tasks.title.export",
 }
 
 #: The reverse map: a task created by title key alone still gets its kind (the versions page's adapter
@@ -136,7 +140,7 @@ class Task:
 
     @property
     def kind(self) -> str:
-        """Which of the five jobs this is (``version``/``mod``/``modpack``/...), for the page's glyph."""
+        """Which job this is (``version``/``mod``/``modpack``/.../``export``), for the row's glyph."""
         return self._kind
 
     @property
@@ -337,7 +341,7 @@ class TaskCenter(QObject):
         """Create and list a running task. ``cancel`` is what actually stops the underlying work.
 
         ``retry`` is the way back: the producer's own entry point, called when the user presses 重试 on
-        a settled row. ``kind`` names which of the five jobs it is (see :data:`KIND_TITLE_KEYS`); when
+        a settled row. ``kind`` names which job it is (see :data:`KIND_TITLE_KEYS`); when
         it is left empty it is derived from the title key, so a caller that only knows the title still
         gets the right glyph.
         """

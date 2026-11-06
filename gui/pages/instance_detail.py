@@ -28,13 +28,28 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
 import time
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QImage, QPixmap
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontMetrics,
+    QGuiApplication,
+    QIcon,
+    QImage,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -64,11 +79,14 @@ from gui.accessibility_launch import (
 from gui.errors import show_fatal
 from gui.pages.instance_files import (
     backup_save,
+    display_file_name,
     format_modified,
+    pack_icon_bytes,
     read_enabled_resource_packs,
     scan_content_files,
     scan_saves,
 )
+from gui.tasks import CANCELLED, task_center_of
 from gui.view_state import remember_column_widths
 from gui.widgets import (
     PAGE_HEADER_GAP,
@@ -84,7 +102,7 @@ from gui.widgets import (
     style_form,
     style_page_layout,
 )
-from gui.workers import ProgressBridge, run_in_background
+from gui.workers import ProgressBridge, RateTracker, run_in_background
 from launcher import config, paths
 from launcher.accessibility import TriggerSource
 from launcher.auth import AccountStore
@@ -92,6 +110,8 @@ from launcher.instances import (
     ISOLATION_FOLLOW,
     ISOLATION_OFF,
     ISOLATION_ON,
+    SWITCH_LOADER,
+    SWITCH_VERSION,
     InstancesError,
     delete_instance,
     display_version_name,
@@ -99,11 +119,14 @@ from launcher.instances import (
     get_instance,
     instance_dir,
     legacy_instances_dir,
+    profile_identity,
     rename_instance,
     reset_instance_settings,
     resolve_instance,
     set_instance_icon,
     set_instance_settings,
+    switch_candidates,
+    switch_instance_version,
     update_instance,
     update_instance_note,
 )
@@ -114,6 +137,7 @@ from launcher.launch import (
     run_process,
 )
 from launcher.meta import block_textures
+from launcher.meta.version import version_json_path
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
 from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
 
@@ -176,10 +200,10 @@ ICON_PICKER_ICON = 48
 ICON_PICKER_TILE = 64
 ICON_PICKER_COLUMNS = 4
 
-#: The letter tile each resource/shader row carries inside its name cell. 20px keeps the 30px table
-#: row compact; the tile is drawn with the same painter as the resource list's placeholder icons.
-CONTENT_ICON_SIZE = 20
-CONTENT_ICON_RADIUS = 6
+#: One icon slot per resource/shader row: the pack's own pack.png when it has one, otherwise the
+#: bundled Lucide "package" cube. Both are drawn into the same 32px square, so a row without artwork
+#: never shifts its name left.
+CONTENT_ICON_SIZE = 32
 
 
 def human_size(size: int) -> str:
@@ -191,6 +215,52 @@ def human_size(size: int) -> str:
     if size >= 1 << 10:
         return f"{size / (1 << 10):.0f} " + tr("unit.kb")
     return f"{size} " + tr("unit.bytes")
+
+
+def _scaled_icon_pixmap(image: QImage) -> QPixmap:
+    """Centre one pack.png in an exact :data:`CONTENT_ICON_SIZE` square, DPR-aware."""
+    app = QGuiApplication.instance()
+    screen = app.primaryScreen() if app is not None else None
+    ratio = max(1.0, float(screen.devicePixelRatio()) if screen is not None else 1.0)
+    box = max(1, round(CONTENT_ICON_SIZE * ratio))
+    scaled = image.scaled(
+        box,
+        box,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    # The scaled raster is in device pixels; tagging it with the ratio makes drawImage place it at its
+    # logical size (a 32px slot), which keeps the icon sharp instead of upscaling it again.
+    scaled.setDevicePixelRatio(ratio)
+    pixmap = QPixmap(box, box)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap.setDevicePixelRatio(ratio)
+    painter = QPainter(pixmap)
+    painter.drawImage(
+        QPointF(
+            (box - scaled.width()) / (2.0 * ratio),
+            (box - scaled.height()) / (2.0 * ratio),
+        ),
+        scaled,
+    )
+    painter.end()
+    return pixmap
+
+
+def content_icon(path: Path) -> QIcon:
+    """The row icon for one resource or shader pack: its own pack.png, else a neutral cube.
+
+    Reading is local (:func:`gui.pages.instance_files.pack_icon_bytes`): one zip entry or the folder's
+    sibling ``pack.png``, never the network. A missing, corrupt or non-image pack.png falls back to
+    :func:`gui.paint_utils.wire_cube_pixmap` - a thin FG_HINT outline, deliberately not a letter tile
+    and not the accent colour, because it is a "no artwork" placeholder, not a status.
+    """
+    data = pack_icon_bytes(path)
+    if data:
+        image = QImage.fromData(data)
+        if not image.isNull():
+            return QIcon(_scaled_icon_pixmap(image))
+    return QIcon(paint_utils.wire_cube_pixmap(CONTENT_ICON_SIZE))
 
 
 def save_custom_icon(source: Path, folder: Path) -> str:
@@ -459,6 +529,248 @@ class _ModsTable(QTableWidget):
             event.ignore()
 
 
+#: The switch pickers: one 56px card per installed version, the same shape the versions page gives a
+#: loader choice (a painted button), because it is the same kind of decision - pick one row, go.
+CHOICE_ROW_HEIGHT = 56
+CHOICE_ROW_PADDING = 16
+CHOICE_ROW_RADIUS = 8
+CHOICE_ROW_CHEVRON = 12
+#: The picker's list scrolls instead of growing the card past the window.
+CHOICE_LIST_MAX_HEIGHT = 320
+
+
+class _VersionChoiceRow(QAbstractButton):
+    """One installed version the instance can be pointed at: its identity over its profile id.
+
+    A real ``QAbstractButton``: it is one Tab stop, Space/Enter activate it and assistive technology
+    reads both lines as the button's name. Painted rather than composed for the reason the versions
+    page paints its loader rows: the text has to elide on one line instead of reporting an unwrapped
+    width, which would widen the dialog for the longest id.
+    """
+
+    def __init__(self, identity, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.identity = identity
+        self.setObjectName("versionChoiceRow")
+        self.setFixedHeight(CHOICE_ROW_HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._hover = False
+        self.setAccessibleName(self.label_text())
+        self.setAccessibleDescription(identity.version_id)
+        self.setToolTip(identity.version_id)
+
+    def label_text(self) -> str:
+        """``1.21.11 · Fabric 0.19.3`` - what the instance would run, in one line."""
+        loader = self.identity.loader or tr("instances.detail.modify.vanilla")
+        return f"{self.identity.minecraft} · {loader}"
+
+    # ---------- interaction ----------
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    # ---------- painting ----------
+
+    def paintEvent(self, event) -> None:
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0.5, 0.5, self.width() - 1.0, CHOICE_ROW_HEIGHT - 1.0)
+        border = QColor(tokens.get("BORDER_TABLE", "#dfe4ea"))
+        background = QColor(tokens.get("BG_LIST", "#ffffff"))
+        if self._hover:
+            border = QColor(tokens.get("BORDER_HOVER", border.name()))
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            border = QColor(tokens.get("FOCUS_RING", border.name()))
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(background)
+        painter.drawRoundedRect(card, CHOICE_ROW_RADIUS, CHOICE_ROW_RADIUS)
+
+        chevron_left = self.width() - CHOICE_ROW_PADDING - CHOICE_ROW_CHEVRON
+        text_left = CHOICE_ROW_PADDING
+        text_width = max(0, chevron_left - 12 - text_left)
+        title_font = QFont(self.font())
+        title_font.setPixelSize(15)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(12)
+
+        painter.setFont(title_font)
+        painter.setPen(QColor(tokens.get("FG_TEXT", "#1f2a36")))
+        painter.drawText(
+            QRectF(text_left, 8, text_width, 20),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            QFontMetrics(title_font).elidedText(
+                self.label_text(), Qt.TextElideMode.ElideRight, int(text_width)
+            ),
+        )
+        painter.setFont(meta_font)
+        painter.setPen(QColor(tokens.get("FG_HINT", "#4f6070")))
+        painter.drawText(
+            QRectF(text_left, 28, text_width, 18),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            QFontMetrics(meta_font).elidedText(
+                self.identity.version_id, Qt.TextElideMode.ElideMiddle, int(text_width)
+            ),
+        )
+
+        # A drawn chevron: the UI font has no guaranteed U+203A, and a missing glyph would be a tofu
+        # box in the middle of the row.
+        pen = QPen(QColor(tokens.get("FG_HINT", "#4f6070")))
+        pen.setWidthF(1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        middle = CHOICE_ROW_HEIGHT / 2.0
+        inset = CHOICE_ROW_CHEVRON * 0.28
+        painter.drawPolyline(
+            QPolygonF(
+                [
+                    QPointF(chevron_left + inset, middle - inset * 1.6),
+                    QPointF(chevron_left + CHOICE_ROW_CHEVRON - inset, middle),
+                    QPointF(chevron_left + inset, middle + inset * 1.6),
+                ]
+            )
+        )
+        painter.end()
+
+
+class _VersionChoiceDialog(inwindow_dialog.InWindowDialog):
+    """The installed-version list: one row per candidate, then 取消.
+
+    Choosing a row closes the card and returns the identity; the page then asks the second question
+    (the confirmation with the backup option). Nothing is written here - this dialog is a list, and
+    the only thing it decides is which profile the user wants.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        *,
+        title: str,
+        hint: str,
+        identities: list,
+        empty_text: str,
+    ) -> None:
+        super().__init__(parent, title=title, severity="question")
+        self.chosen = None
+        self.rows: list[_VersionChoiceRow] = []
+        self.list_area: QScrollArea | None = None
+        # A plain label, not add_body(): the body helper builds a *scroll area* with stretch 1, which
+        # took the whole card and left the list a clipped strip at the bottom (measured on the
+        # 更换游戏版本 shot). The hint is one sentence; it needs no scroller.
+        hint_label = QLabel(hint)
+        hint_label.setObjectName("overlayBody")
+        hint_label.setWordWrap(True)
+        hint_label.setAccessibleName(title)
+        self.card_layout.addWidget(hint_label)
+        if identities:
+            area = QScrollArea()
+            area.setObjectName("overlayScroll")
+            area.setWidgetResizable(True)
+            area.setFrameShape(QFrame.Shape.NoFrame)
+            area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            # The list sizes itself to its rows until it would take over the window, then it scrolls.
+            rows_height = len(identities) * CHOICE_ROW_HEIGHT + max(0, len(identities) - 1) * 8
+            area.setFixedHeight(min(rows_height, CHOICE_LIST_MAX_HEIGHT))
+            # The rows are the Tab stops; the viewport itself must not be one more invisible stop.
+            area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            body = QWidget()
+            layout = QVBoxLayout(body)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(8)
+            for identity in identities:
+                row = _VersionChoiceRow(identity)
+                row.clicked.connect(partial(self._choose, identity))
+                layout.addWidget(row)
+                self.rows.append(row)
+            layout.addStretch(1)
+            area.setWidget(body)
+            self.card_layout.addWidget(area)
+            self.list_area = area
+        else:
+            empty = QLabel(empty_text)
+            empty.setObjectName("overlayBody")
+            empty.setWordWrap(True)
+            empty.setAccessibleName(empty_text)
+            self.card_layout.addWidget(empty)
+        self.add_buttons(
+            [(tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED)], default=None
+        )
+
+    def _choose(self, identity) -> None:
+        """One click is the whole choice: remember the row and close."""
+        self.chosen = identity
+        self._finish(inwindow_dialog.Outcome.ACCEPTED)
+
+    def _focus_initial(self) -> None:
+        if self.rows:
+            self.rows[0].setFocus(Qt.FocusReason.TabFocusReason)
+        else:
+            super()._focus_initial()
+
+    def focusNextPrevChild(self, next: bool) -> bool:
+        """Keep the tab trap, and scroll the newly focused row into view (the list can overflow)."""
+        handled = super().focusNextPrevChild(next)
+        target = QApplication.focusWidget()
+        if self.list_area is not None and target is not None:
+            self.list_area.ensureWidgetVisible(target)
+        return handled
+
+
+class _SwitchConfirmDialog(inwindow_dialog.InWindowDialog):
+    """The second confirmation: what changes, what stays, and the backup option.
+
+    The backup is checked by default and lives inside the question rather than in a settings page:
+    the user asked for one switch, and the copy that protects it belongs to that one answer. Enter
+    activates 取消 on purpose - re-pointing a working instance is not something a stray Return should
+    do, so the safe answer is the default one.
+    """
+
+    def __init__(self, parent: QWidget | None, *, current: str, target: str) -> None:
+        super().__init__(
+            parent,
+            title=tr("instances.detail.modify.confirm.title"),
+            severity="question",
+        )
+        self.add_body(tr("instances.detail.modify.confirm.body", target, current))
+        self.backup_check = QCheckBox(tr("instances.detail.modify.confirm.backup"))
+        self.backup_check.setChecked(True)
+        self.backup_check.setAccessibleName(tr("instances.detail.modify.confirm.backup"))
+        self.backup_check.setToolTip(tr("instances.detail.modify.confirm.backup"))
+        self.card_layout.addWidget(self.backup_check)
+        self.add_buttons(
+            [
+                (tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED),
+                (
+                    tr("instances.detail.modify.confirm.accept"),
+                    inwindow_dialog.Outcome.ACCEPTED,
+                ),
+            ],
+            default=inwindow_dialog.Outcome.REJECTED,
+        )
+
+    @property
+    def wants_backup(self) -> bool:
+        return self.backup_check.isChecked()
+
+
 class InstanceDetail(QWidget):
     """Right-hand column of the instances page: everything about one instance."""
 
@@ -488,6 +800,14 @@ class InstanceDetail(QWidget):
         self._content_empty_text: dict[str, str] = {}
         self._saves: list = []
         self._badge_counts: dict[str, int] = {key: 0 for key in _BADGED_SECTIONS}
+        #: 修改: one switch runs at a time, and its two buttons stay disabled while it does.
+        self._switch_busy = False
+        #: 导出: the running export's task, its progress bridge, its stop flag and its destination.
+        self._export_task = None
+        self._export_bridge: ProgressBridge | None = None
+        self._export_stop: threading.Event | None = None
+        self._export_rate: RateTracker | None = None
+        self._export_dest: Path | None = None
 
         self.tab_group = QButtonGroup(self)
         self.tab_group.setExclusive(True)
@@ -941,10 +1261,10 @@ class InstanceDetail(QWidget):
     ) -> QWidget:
         """One file list: title, [icon|name|size|enabled], empty state, open/delete.
 
-        The icon is drawn into the name cell with the same letter-tile painter the resource list
-        uses, so a row is one line of text with a picture rather than a second column of blank
-        squares. Resource packs carry the enabled state the game recorded; shader packs do not have
-        one in options.txt, so their table has no status column instead of a fake "off".
+        The icon is the pack's own ``pack.png`` when the file has one, and the same 32px neutral cube
+        when it does not, so every name starts at the same x. Resource packs carry the enabled state
+        the game recorded; shader packs do not have one in options.txt, so their table has no status
+        column instead of a fake "off".
         """
         box = QWidget()
         layout = QVBoxLayout(box)
@@ -964,7 +1284,9 @@ class InstanceDetail(QWidget):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setIconSize(QSize(CONTENT_ICON_SIZE, CONTENT_ICON_SIZE))
         table.horizontalHeader().setStretchLastSection(True)
-        table.setColumnWidth(0, 280)
+        # 280px held a 20px letter tile plus the name. The icon is 32px now, so 292 (+12) keeps the
+        # same width for the text instead of letting the larger picture eat into every name.
+        table.setColumnWidth(0, 292)
         if with_status:
             table.setColumnWidth(1, 90)
         remember_column_widths(table, "instance_" + subdir)
@@ -1114,26 +1436,98 @@ class InstanceDetail(QWidget):
         return page
 
     def _build_modify(self) -> QWidget:
-        return self._build_not_implemented("modify")
+        """修改: what the instance runs now, and the two ways to point it at something else.
 
-    def _build_export(self) -> QWidget:
-        return self._build_not_implemented("export")
-
-    def _build_not_implemented(self, key: str) -> QWidget:
-        """An honest placeholder page: the capability is absent, so no control pretends to offer it."""
+        The page is read-only rows plus two buttons, because a switch is one field in the instance's
+        own metadata (``base_version``): there is nothing else to configure and no migration to run.
+        """
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
+
         card, card_layout = self._make_card()
-        heading = self._card_heading("instances.detail.not_implemented.title")
-        body = QLabel(tr("instances.detail.not_implemented." + key))
-        body.setObjectName("hint")
-        body.setWordWrap(True)
-        card_layout.addWidget(heading)
-        card_layout.addWidget(body)
+        card_layout.addWidget(self._card_heading("instances.detail.nav.modify"))
+        form = QFormLayout()
+        style_form(form)
+        self.modify_values: dict[str, ElidedLabel] = {}
+        for key, label_key in (
+            ("game_version", "instances.detail.modify.game_version"),
+            ("loader", "instances.detail.modify.loader"),
+            ("point_to", "instances.detail.modify.point_to"),
+        ):
+            title = QLabel(tr(label_key))
+            title.setObjectName("hint")
+            value = ElidedLabel(
+                tr("instances.detail.value.none"), elide_mode=Qt.TextElideMode.ElideMiddle
+            )
+            self.modify_values[key] = value
+            form.addRow(title, value)
+        card_layout.addLayout(form)
+
+        self.modify_hint = QLabel(tr("instances.detail.modify.hint"))
+        self.modify_hint.setObjectName("hint")
+        self.modify_hint.setWordWrap(True)
+        card_layout.addWidget(self.modify_hint)
+
+        self.change_version_button = QPushButton(tr("instances.detail.modify.change_version"))
+        self.change_version_button.setObjectName("secondaryButton")
+        self.change_version_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.change_loader_button = QPushButton(tr("instances.detail.modify.change_loader"))
+        self.change_loader_button.setObjectName("secondaryButton")
+        self.change_loader_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(6)
+        buttons.addWidget(self.change_version_button)
+        buttons.addWidget(self.change_loader_button)
+        buttons.addStretch(1)
+        card_layout.addLayout(buttons)
+
         layout.addWidget(card)
         layout.addStretch(1)
+        # Nothing selected yet: a switch needs the instance the panel shows, and _fill_modify is what
+        # enables these two once one is loaded.
+        self.change_version_button.setEnabled(False)
+        self.change_loader_button.setEnabled(False)
+        self.change_version_button.clicked.connect(self.change_game_version)
+        self.change_loader_button.clicked.connect(self.change_loader)
+        return page
+
+    def _build_export(self) -> QWidget:
+        """导出: the whole instance as one zip, run as a task on the download page."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        card, card_layout = self._make_card()
+        card_layout.addWidget(self._card_heading("instances.detail.nav.export"))
+        self.export_hint = QLabel(tr("instances.detail.export.hint"))
+        self.export_hint.setObjectName("hint")
+        self.export_hint.setWordWrap(True)
+        card_layout.addWidget(self.export_hint)
+
+        self.export_button = QPushButton(tr("instances.detail.export.button"))
+        self.export_button.setObjectName("primaryButton")
+        self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(6)
+        buttons.addWidget(self.export_button)
+        buttons.addStretch(1)
+        card_layout.addLayout(buttons)
+
+        # Not a link: there is no document to point at, so the sentence is the whole answer. The
+        # archive this page offers is the instance itself, never a modpack manifest.
+        self.export_modpack_note = QLabel(tr("instances.detail.export.modpack"))
+        self.export_modpack_note.setObjectName("hint")
+        self.export_modpack_note.setWordWrap(True)
+        card_layout.addWidget(self.export_modpack_note)
+
+        layout.addWidget(card)
+        layout.addStretch(1)
+        self.export_button.clicked.connect(self.export)
         return page
 
     def _refresh_log(self) -> None:
@@ -1438,6 +1832,7 @@ class InstanceDetail(QWidget):
         self._fill_overview()
         self._fill_settings()
         self._fill_banners()
+        self._fill_modify()
         self._refresh_badge_counts()
         self._loaded_tabs = set()
         self._reload_mods()
@@ -1471,6 +1866,11 @@ class InstanceDetail(QWidget):
         self.saves_table.setVisible(False)
         self.saves_empty.setText(self.saves_empty_text)
         self.saves_empty.setVisible(True)
+        for value in self.modify_values.values():
+            value.setText(tr("instances.detail.value.none"))
+            value.setToolTip("")
+        self.change_version_button.setEnabled(False)
+        self.change_loader_button.setEnabled(False)
         for key in _BADGED_SECTIONS:
             self._set_badge_count(key, 0)
 
@@ -1552,6 +1952,148 @@ class InstanceDetail(QWidget):
             label.setText(tr("instances.detail.share.banner", shared))
             banner.setVisible(True)
 
+    def _fill_modify(self) -> None:
+        """Show what the instance would launch now: game version, loader and the profile it points at.
+
+        Every value comes from the profile the launch path will read (``resolved.version_id``,
+        followed through ``inheritsFrom``), so the page cannot claim a version the launcher would not
+        start. A folder whose profile is unreadable says so instead of guessing from its name.
+        """
+        values = self.modify_values
+        if self.instance is None or self.resolved is None:
+            for value in values.values():
+                value.setText(tr("instances.detail.value.none"))
+                value.setToolTip("")
+            self.change_version_button.setEnabled(False)
+            self.change_loader_button.setEnabled(False)
+            return
+        version_id = self.resolved.version_id
+        values["point_to"].setText(version_id)
+        values["point_to"].setToolTip(version_id)
+        if version_json_path(instance_dir(self.game_dir, version_id)) is None:
+            unknown = tr("instances.detail.modify.unknown")
+            values["game_version"].setText(unknown)
+            values["loader"].setText(unknown)
+        else:
+            identity = profile_identity(self.game_dir, version_id)
+            values["game_version"].setText(identity.minecraft or tr("instances.detail.modify.unknown"))
+            values["loader"].setText(identity.loader or tr("instances.detail.modify.vanilla"))
+        enabled = not self._switch_busy
+        self.change_version_button.setEnabled(enabled)
+        self.change_loader_button.setEnabled(enabled)
+
+    def change_game_version(self) -> None:
+        """更换游戏版本: the other Minecraft versions already installed in this game folder."""
+        self._choose_switch_target(SWITCH_VERSION)
+
+    def change_loader(self) -> None:
+        """更换加载器: the other profiles of the same Minecraft version (another loader, or none)."""
+        self._choose_switch_target(SWITCH_LOADER)
+
+    def _identity_text(self, version_id: str) -> str:
+        """``1.21.11 · Fabric 0.19.3`` for one profile id (the sentence the dialogs read)."""
+        identity = profile_identity(self.game_dir, version_id)
+        loader = identity.loader or tr("instances.detail.modify.vanilla")
+        return f"{identity.minecraft} · {loader}"
+
+    def _choose_switch_target(self, kind: str) -> None:
+        """Open the candidate list for one kind of switch, then ask for confirmation."""
+        if self._require_instance() is None or self.resolved is None or self._switch_busy:
+            return
+        is_loader = kind == SWITCH_LOADER
+        candidates = switch_candidates(self.game_dir, self.resolved.version_id, kind)
+        dialog = _VersionChoiceDialog(
+            self,
+            title=tr(
+                "instances.detail.modify.change_loader"
+                if is_loader
+                else "instances.detail.modify.change_version"
+            ),
+            hint=tr(
+                "instances.detail.modify.hint.loader"
+                if is_loader
+                else "instances.detail.modify.hint.version"
+            ),
+            identities=candidates,
+            empty_text=tr(
+                "instances.detail.modify.empty.loader"
+                if is_loader
+                else "instances.detail.modify.empty.version"
+            ),
+        )
+        dialog.ask()
+        chosen = dialog.chosen
+        dialog.deleteLater()
+        if chosen is None:
+            return
+        self._confirm_switch(chosen)
+
+    def _confirm_switch(self, target) -> None:
+        """The second question: what the switch does, and whether to back the instance up first."""
+        if self._require_instance() is None or self.resolved is None:
+            return
+        dialog = _SwitchConfirmDialog(
+            self,
+            current=self._identity_text(self.resolved.version_id),
+            target=f"{target.minecraft} · "
+            + (target.loader or tr("instances.detail.modify.vanilla")),
+        )
+        outcome = dialog.ask()
+        wants_backup = dialog.wants_backup
+        dialog.deleteLater()
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
+            return
+        self._start_switch(target.version_id, backup=wants_backup)
+
+    def _start_switch(self, target_version_id: str, *, backup: bool) -> None:
+        """Run the switch (and the optional backup) in the background, never on the UI thread."""
+        instance_id = self.instance_id
+        if instance_id is None or self._switch_busy:
+            return
+        self._switch_busy = True
+        self.change_version_button.setEnabled(False)
+        self.change_loader_button.setEnabled(False)
+        backup_dir = (paths.launcher_dir() / "backups") if backup else None
+        set_app_status(self, tr("instances.detail.modify.switching", target_version_id))
+        run_in_background(
+            partial(
+                switch_instance_version,
+                instance_id,
+                target_version_id,
+                self.game_dir,
+                backup_dir=backup_dir,
+            ),
+            on_result=self._on_switched,
+            on_error=self._on_switch_failed,
+            on_finished=self._on_switch_finished,
+        )
+
+    def _on_switched(self, outcome) -> None:
+        """The switch is on disk: rebuild this page and let the instance cards follow."""
+        target = outcome.target
+        loader = target.loader or tr("instances.detail.modify.vanilla")
+        self.reload()
+        self.changed.emit()  # the card list shows the new profile immediately, no restart
+        name = f"{target.minecraft} · {loader}"
+        if outcome.backup_path is not None:
+            set_app_status(
+                self,
+                tr("instances.detail.modify.switched_backup", name, str(outcome.backup_path)),
+            )
+        else:
+            set_app_status(self, tr("instances.detail.modify.switched", name))
+
+    def _on_switch_failed(self, message: str) -> None:
+        """The switch failed; the launcher's message already says what was restored."""
+        self.reload()
+        set_app_status(self, message, "error")
+
+    def _on_switch_finished(self) -> None:
+        self._switch_busy = False
+        has_instance = self.instance is not None and self.resolved is not None
+        self.change_version_button.setEnabled(has_instance)
+        self.change_loader_button.setEnabled(has_instance)
+
     def _fill_settings(self) -> None:
         inst = self.instance
         settings = inst.settings
@@ -1618,6 +2160,14 @@ class InstanceDetail(QWidget):
             set_app_status(self, tr("instances.msg.need_select"), "warning")
             return None
         return self.instance_id
+
+    def effective_version_id(self) -> str:
+        """The profile the next launch will resolve (the pointer's target when 修改 set one).
+
+        One accessor for the fact the launch path depends on, so a test can assert what 启动 would
+        use without starting a process.
+        """
+        return self.resolved.version_id if self.resolved is not None else ""
 
     def _fill_icon(self) -> None:
         """Show the effective icon: the chosen rule / picture, else the automatic rule."""
@@ -1817,26 +2367,114 @@ class InstanceDetail(QWidget):
         set_app_status(self, tr("instances.msg.note_saved", self.instance_id))
 
     def export(self) -> None:
+        """导出为 zip: ask where with the native dialog, then hand the work to a task."""
         if self._require_instance() is None:
             return
         instance_id = self.instance_id
         dest, _filter = QFileDialog.getSaveFileName(
-            self, tr("instances.export"), instance_id + ".zip", "Zip (*.zip)"
+            self,
+            tr("instances.detail.nav.export"),
+            instance_id + ".zip",
+            tr("instances.detail.export.filter"),
         )
         if not dest:
             return
-        game_dir = self.game_dir
+        path = Path(dest)
+        if path.suffix.lower() != ".zip":
+            path = path.with_name(path.name + ".zip")
+        self.export_to(path)
+
+    def export_to(self, dest: Path) -> None:
+        """Start one export into ``dest``: a task on the download page, with its real byte count."""
+        instance_id = self.instance_id
+        if instance_id is None:
+            return
+        if self._export_task is not None and self._export_task.is_running():
+            return  # one export at a time; the running row owns 取消
+        center = task_center_of(self)
+        self._export_dest = Path(dest)
+        self._export_stop = threading.Event()
+        self._export_rate = RateTracker()
+        self._export_bridge = ProgressBridge()
+        self._export_bridge.progress.connect(self._on_export_progress)
+        self._export_task = (
+            center.add_task(
+                "tasks.title.export",
+                instance_id,
+                kind="export",
+                cancel=self._cancel_export,
+            )
+            if center is not None
+            else None
+        )
+        set_app_status(self, tr("instances.detail.export.running", str(self._export_dest)))
+        bridge = self._export_bridge
+
+        def report(done: int, total: int) -> None:
+            """Worker-thread hook: one queued signal per call, never a widget touch from here."""
+            bridge((done, total))
+
         run_in_background(
-            partial(export_instance, instance_id, Path(dest), game_dir),
+            partial(
+                export_instance,
+                instance_id,
+                self._export_dest,
+                self.game_dir,
+                on_progress=report,
+                should_stop=self._export_stop.is_set,
+            ),
             on_result=self._on_exported,
             on_error=self._on_export_failed,
+            on_finished=self._on_export_finished,
         )
 
+    def _on_export_progress(self, payload) -> None:
+        """The worker's ``(done, total)`` pair, with the rate the tracker measured between them."""
+        task = self._export_task
+        rate_tracker = self._export_rate
+        if task is None or rate_tracker is None:
+            return
+        try:
+            done, total = payload
+            done_bytes, total_bytes = int(done), int(total)
+        except (TypeError, ValueError):
+            return
+        rate_tracker.set_total(total_bytes)
+        rate, _eta = rate_tracker.update(done_bytes)
+        task.set_progress(done_bytes, total_bytes, rate)
+
+    def _cancel_export(self, task) -> None:
+        """The row's 取消: ask the exporter to stop at its next file, and say so at once."""
+        if self._export_stop is not None:
+            self._export_stop.set()
+        set_app_status(self, tr("tasks.status.cancelled", task.title()))
+
     def _on_exported(self, path) -> None:
-        set_app_status(self, tr("instances.msg.exported", str(path)))
+        task, self._export_task = self._export_task, None
+        if task is not None:
+            task.finish()
+        try:
+            size = Path(path).stat().st_size
+        except OSError:
+            size = 0
+        set_app_status(
+            self, tr("instances.detail.export.done", str(path), human_size(size))
+        )
 
     def _on_export_failed(self, message: str) -> None:
+        task, self._export_task = self._export_task, None
+        if task is not None and task.state == CANCELLED:
+            # The user stopped it: the export raising on purpose is not a failure to report.
+            set_app_status(self, tr("tasks.status.cancelled", task.title()))
+            return
+        if task is not None:
+            task.fail(message)
         set_app_status(self, tr("instances.msg.export_fail", message), "error")
+
+    def _on_export_finished(self) -> None:
+        """The worker is gone: drop the bridge so a late queued tick cannot touch it."""
+        self._export_bridge = None
+        self._export_stop = None
 
     def delete(self) -> None:
         if self._require_instance() is None:
@@ -1965,13 +2603,21 @@ class InstanceDetail(QWidget):
         set_app_status(self, tr("instances.detail.settings.reset.done", instance_id))
 
     def _selected_values(self, table: QTableWidget) -> list[str]:
-        """Names of the selected rows of a content table (column 0 holds the name)."""
+        """Real file names of the selected rows (column 0 holds the display name + UserRole name).
+
+        The cell text may have had Minecraft formatting codes removed for display, so it must never be
+        used for a delete/open decision: the untouched name stored next to it is the one on disk.
+        """
         rows = sorted({index.row() for index in table.selectedItems()})
         out = []
         for row in rows:
             item = table.item(row, 0)
-            if item is not None and item.text():
-                out.append(item.text())
+            if item is None:
+                continue
+            stored = item.data(Qt.ItemDataRole.UserRole)
+            name = stored if isinstance(stored, str) and stored else item.text()
+            if name:
+                out.append(name)
         return out
 
     # ---------- mods ----------
@@ -2023,10 +2669,15 @@ class InstanceDetail(QWidget):
                 )
                 check.setData(Qt.UserRole, m.file)
                 self.mods_table.setItem(row, 0, check)
-                for col, text in enumerate(
-                    (m.name, m.mod_id, m.version, m.loader, m.file), start=1
-                ):
+                for col, text in enumerate((m.name, m.mod_id, m.version, m.loader), start=1):
                     self.mods_table.setItem(row, col, QTableWidgetItem(text))
+                # Same rule as the content pages: the file column is display text with the game's
+                # formatting codes removed, while UserRole keeps the name the delete uses and the
+                # tooltip shows the name as it is on disk.
+                file_item = QTableWidgetItem(display_file_name(m.file))
+                file_item.setData(Qt.ItemDataRole.UserRole, m.file)
+                file_item.setToolTip(m.file)
+                self.mods_table.setItem(row, 5, file_item)
         finally:
             self._filling_mods = False
         if not shown and self._mods:
@@ -2064,7 +2715,8 @@ class InstanceDetail(QWidget):
         for row in rows:
             item = self.mods_table.item(row, 5)
             if item:
-                files.append(item.text())
+                stored = item.data(Qt.ItemDataRole.UserRole)
+                files.append(stored if isinstance(stored, str) and stored else item.text())
         if not inwindow_dialog.question(
             self,
             tr("instances.mods.delete"),
@@ -2170,16 +2822,11 @@ class InstanceDetail(QWidget):
             table.setRowCount(0)
             table.setRowCount(len(items))
             for row, item in enumerate(items):
-                name_item = QTableWidgetItem(item.name)
-                # The same letter tile the resource list uses for a project without an icon: a
-                # column of packages reads better than a column of names with no picture at all.
-                name_item.setIcon(
-                    QIcon(
-                        paint_utils.letter_tile_pixmap(
-                            item.name, CONTENT_ICON_SIZE, CONTENT_ICON_RADIUS
-                        )
-                    )
-                )
+                # Formatting codes are display-only: the item keeps the real name in UserRole, which
+                # is what selection/deletion resolves, and the tooltip shows it verbatim.
+                name_item = QTableWidgetItem(display_file_name(item.name))
+                name_item.setData(Qt.ItemDataRole.UserRole, item.name)
+                name_item.setIcon(content_icon(item.path))
                 name_item.setToolTip(item.name)
                 table.setItem(row, 0, name_item)
                 table.setItem(
@@ -2412,12 +3059,15 @@ class InstanceDetail(QWidget):
 
     def _launch_now(self, instance_id: str, cfg, resolved) -> None:
         """The actual launch worker, reached only through the single pre-launch accessibility gate."""
+        # The profile the instance points at, not its folder name: 修改 may have re-pointed it, and
+        # every launch path resolves through the same field (launcher.instances.Instance.version_id).
+        version_id = resolved.version_id
 
         def do_prepare() -> object:
             try:
                 account = resolve_launch_account(AccountStore(), cfg.selected_account, None)
                 prepared = prepare_launch(
-                    instance_id,
+                    version_id,
                     game_dir=resolved.game_dir,
                     cache_dir=paths.launcher_dir() / "cache",
                     account=account,

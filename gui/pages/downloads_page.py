@@ -88,6 +88,7 @@ KIND_ICONS = {
     "modpack": "export",
     "resourcepack": "resourcepacks",
     "shaderpack": "shaderpacks",
+    "export": "export",
 }
 FALLBACK_ICON = "versions"
 
