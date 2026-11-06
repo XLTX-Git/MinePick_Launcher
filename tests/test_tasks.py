@@ -32,10 +32,13 @@ from PySide6.QtWidgets import QApplication, QWidget
 from gui import i18n
 from gui.tasks import (
     CANCELLED,
+    CANCELLED_HOLD_MS,
     COMPLETED_HOLD_MS,
     DONE,
     FAILED,
+    KIND_TITLE_KEYS,
     RUNNING,
+    Task,
     TaskCenter,
     format_size,
     task_center_of,
@@ -228,9 +231,12 @@ def test_a_failed_task_stays_until_it_is_dismissed(app) -> None:
         center.clear()
 
 
-def test_a_cancelled_task_leaves_like_a_finished_one(app) -> None:
+def test_a_cancelled_task_leaves_after_its_own_longer_hold(app) -> None:
+    """A cancelled row shows where the transfer stopped, so it is held twice as long as a finished one."""
+    assert CANCELLED_HOLD_MS == 10000
+    assert CANCELLED_HOLD_MS > COMPLETED_HOLD_MS
     center = TaskCenter()
-    center.completed_hold_ms = 30
+    center.cancelled_hold_ms = 30  # not the product's 10s: the product's value is asserted above
     try:
         task = center.add_task("tasks.title.install", "a")
         task.cancel()
@@ -247,8 +253,105 @@ def test_dismissing_a_running_task_cancels_it_instead(center) -> None:
     assert center.tasks() == (task,)
 
 
-# ---------- text ----------
+# ---------- the download page's additions to the model ----------
 
+
+def test_the_five_kinds_are_their_own_titles_and_their_own_glyph(center) -> None:
+    """One task per install category, each with the title key and the kind its row's glyph reads."""
+    for kind, title_key in KIND_TITLE_KEYS.items():
+        task = center.add_task(title_key, "x", kind=kind)
+        assert task.kind == kind
+        assert task.title() == i18n.tr(title_key, "x")
+    kinds = [task.kind for task in center.tasks()]
+    assert kinds == list(KIND_TITLE_KEYS), "the five kinds must all be listable at once"
+    assert len(set(kinds)) == 5
+
+
+def test_a_task_created_by_title_key_alone_still_knows_its_kind(center) -> None:
+    """The versions adapter only knows its title key; the version glyph has to follow from it."""
+    version = center.add_task("tasks.title.install", "1.21.11")
+    assert version.kind == "version"
+    mod = center.add_task("tasks.title.mod", "sodium")
+    assert mod.kind == "mod"
+    other = center.add_task("something.unknown", "x")
+    assert other.kind == ""
+
+
+def test_the_counts_are_the_four_sections(center) -> None:
+    running = center.add_task("tasks.title.install", "a")
+    done = center.add_task("tasks.title.install", "b")
+    failed = center.add_task("tasks.title.install", "c")
+    cancelled = center.add_task("tasks.title.install", "d")
+    done.finish()
+    failed.fail("boom")
+    cancelled.cancel()
+
+    assert center.counts() == {RUNNING: 1, DONE: 1, FAILED: 1, CANCELLED: 1}
+    assert center.tasks_in(FAILED) == (failed,)
+    assert center.tasks_in(RUNNING) == (running,)
+    assert center.tasks_in(DONE) == (done,)
+
+
+def test_cancel_running_asks_every_running_job_and_nothing_else(center) -> None:
+    stopped: list[str] = []
+    first = center.add_task("tasks.title.install", "a", cancel=lambda t: stopped.append(t.title()))
+    second = center.add_task("tasks.title.install", "b", cancel=lambda t: stopped.append(t.title()))
+    settled = center.add_task("tasks.title.install", "c")
+    settled.finish()
+
+    assert center.cancel_running() == 2
+    assert first.state == CANCELLED and second.state == CANCELLED
+    assert settled.state == DONE, "an already finished job is not cancelled by 全部取消"
+    assert len(stopped) == 2
+    assert center.cancel_running() == 0
+
+
+def test_retry_drops_the_failed_row_and_asks_the_producer_again(center) -> None:
+    attempts: list[Task] = []
+
+    def start_again() -> None:
+        attempts.append(center.add_task("tasks.title.mod", "sodium", kind="mod"))
+
+    task = center.add_task("tasks.title.mod", "sodium", kind="mod", retry=start_again)
+    failures = center.add_task("tasks.title.install", "no-retry")
+    failures.fail("boom")
+    assert not task.can_retry(), "a running job has nothing to retry yet"
+    assert not failures.can_retry(), "a task without a producer entry point never offers 重试"
+    assert failures.retry() is False, "a task without a producer entry point cannot be retried"
+
+    task.fail("boom")
+    assert task.can_retry()
+    assert task.retry() is True
+    assert task not in center.tasks(), "the failed row is replaced by the new attempt"
+    assert len(attempts) == 1 and attempts[0] in center.tasks()
+    assert attempts[0].is_running()
+
+
+def test_retry_refuses_a_running_task(center) -> None:
+    calls: list[bool] = []
+    task = center.add_task("tasks.title.install", "a", retry=lambda: calls.append(True))
+    assert task.retry() is False
+    assert calls == []
+    assert center.tasks() == (task,)
+
+
+def test_a_settled_task_reports_how_long_it_took(app) -> None:
+    """耗时 is measured from the moment the row appeared to the moment it settled."""
+    center = TaskCenter()
+    try:
+        first = center.add_task("tasks.title.install", "a")
+        first.set_progress(1, 10)
+        assert first.duration_seconds() >= 0.0
+        first.finish()
+        settled = first.duration_seconds()
+        assert _pump(app, lambda: False, timeout=0.1) is False  # let a little wall-clock pass
+        assert first.duration_seconds() == settled, "a settled task's duration must not keep growing"
+        assert first.duration_text() == i18n.tr("tasks.duration", f"{settled:.1f}")
+    finally:
+        center.clear()
+
+
+# ---------- text ----------
 
 def test_the_title_is_translated_when_it_is_read(center) -> None:
     task = center.add_task("tasks.title.install", "1.21.11")

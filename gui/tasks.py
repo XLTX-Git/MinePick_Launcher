@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""The task model behind the window's task list: one download, one object.
+"""The task model behind the window's download page: one download, one object.
 
 Before this module the versions page tracked a download in the page's own widgets - the bottom bar held
 the percentage, the row held a copy of it, and a failure existed only as one status line that the next
@@ -24,8 +24,8 @@ five seconds ago, or about the one the user cancelled halfway through.
 
 So the download reports to a task instead: ``add_task(title)`` returns an object whose whole surface is
 ``set_progress(value, total, speed)``, ``finish()``, ``fail(message)`` and ``cancel()``. The window's
-floating icon and its panel are then two views of that list - they hold no state of their own, which is
-what keeps "the icon says 42%" and "the row says 42%" from ever disagreeing.
+corner icon and its download page are then two views of that list - they hold no state of their own,
+which is what keeps "the icon says 42%" and "the row says 42%" from ever disagreeing.
 
 Deliberately not a widget and deliberately not a QObject: a task is data plus a state machine, so the
 whole list - including the five-second removal and the two shots the icon's state depends on - can be
@@ -40,6 +40,7 @@ that "cancelled" would be a lie the next launch contradicts.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -55,7 +56,7 @@ DONE = "done"
 CANCELLED = "cancelled"
 FAILED = "failed"
 
-#: The state text of each, as an i18n key. The panel prints the value, tests compare against it.
+#: The state text of each, as an i18n key. The download page prints the value, tests compare against it.
 STATE_KEYS = {
     RUNNING: "tasks.state.running",
     DONE: "tasks.state.done",
@@ -63,8 +64,25 @@ STATE_KEYS = {
     FAILED: "tasks.state.failed",
 }
 
-#: How long a finished or cancelled task stays in the list before removing itself.
+#: The five kinds of job the launcher runs as a task, and the title each one is listed under. The kind
+#: is what picks the row's glyph on the download page; the title key is what the row says.
+KIND_TITLE_KEYS: dict[str, str] = {
+    "version": "tasks.title.install",
+    "mod": "tasks.title.mod",
+    "modpack": "tasks.title.modpack",
+    "resourcepack": "tasks.title.resourcepack",
+    "shaderpack": "tasks.title.shaderpack",
+}
+
+#: The reverse map: a task created by title key alone still gets its kind (the versions page's adapter
+#: creates "tasks.title.install" and must not have to know the download page's vocabulary).
+TITLE_KINDS: dict[str, str] = {key: kind for kind, key in KIND_TITLE_KEYS.items()}
+
+#: How long a finished task stays in the list before removing itself.
 COMPLETED_HOLD_MS = 5000
+#: How long a cancelled task stays. Longer than a finished one on purpose: a cancelled row carries the
+#: percentage it was stopped at, and that is the only place the user can read where it stopped.
+CANCELLED_HOLD_MS = 10000
 
 
 def format_size(num_bytes: float) -> str:
@@ -92,23 +110,34 @@ class Task:
         title_key: str,
         title_args: tuple[object, ...] = (),
         cancel: Callable[[Task], None] | None = None,
+        kind: str = "",
+        retry: Callable[[], None] | None = None,
     ) -> None:
         self._center = center
         self._title_key = title_key
         self._title_args = tuple(title_args)
         self._cancel = cancel
+        self._retry = retry
+        self._kind = kind or TITLE_KINDS.get(title_key, "")
         self._state = RUNNING
         self._done_bytes = 0
         self._total_bytes = 0
         self._speed_bps = 0.0
         self._error = ""
         self._timer: QTimer | None = None
+        self._started_at = time.monotonic()
+        self._ended_at: float | None = None
 
     # ---------- data ----------
 
     @property
     def state(self) -> str:
         return self._state
+
+    @property
+    def kind(self) -> str:
+        """Which of the five jobs this is (``version``/``mod``/``modpack``/...), for the page's glyph."""
+        return self._kind
 
     @property
     def error(self) -> str:
@@ -165,9 +194,30 @@ class Task:
         speed = self.speed_text()
         return f"{self.size_text()} · {speed}" if speed else self.size_text()
 
+    def duration_seconds(self) -> float:
+        """How long the job took, counted from the moment its task was listed.
+
+        A running task is measured against now, a settled one against the moment it settled: the page
+        prints this only for a finished job, but the number is honest in both states.
+        """
+        end = self._ended_at if self._ended_at is not None else time.monotonic()
+        return max(0.0, end - self._started_at)
+
+    def duration_text(self) -> str:
+        """``耗时 12.3 秒`` - the one thing a finished row says that a running one cannot."""
+        return tr("tasks.duration", f"{self.duration_seconds():.1f}")
+
     def action_text(self) -> str:
-        """What the row's one button says: stop a running job, dismiss a settled one."""
+        """What the row's primary button says: stop a running job, dismiss a settled one."""
         return tr("tasks.cancel") if self.is_running() else tr("tasks.dismiss")
+
+    def can_retry(self) -> bool:
+        """Whether the row may offer 重试: a settled job whose producer registered a way to re-run it."""
+        return self._retry is not None and not self.is_running()
+
+    def retry_callback(self) -> Callable[[], None]:
+        """The producer's own entry point, re-entered by :meth:`TaskCenter.retry`."""
+        return self._retry  # type: ignore[return-value]  # guarded by can_retry()
 
     # ---------- transitions ----------
 
@@ -211,17 +261,33 @@ class Task:
             return
         self._center.remove(self)
 
+    def retry(self) -> bool:
+        """Run this job again: drop the settled row, then let its producer start a fresh attempt.
+
+        Returns False when there is nothing to retry with (a running task, or a producer that did not
+        register a way back). Starting the job is the producer's own entry point, so the new attempt
+        becomes a new task exactly the way the first one did - no second code path into an install.
+        """
+        return self._center.retry(self)
+
     # ---------- private ----------
 
     def _settle(self) -> None:
         """Enter a final state: tell the views, and schedule this task's own removal when it may go."""
+        if self._ended_at is None:
+            self._ended_at = time.monotonic()
         self._center.notify()
         if self._state == FAILED:
             return  # a failure stays until somebody dismisses it
+        hold = (
+            self._center.cancelled_hold_ms
+            if self._state == CANCELLED
+            else self._center.completed_hold_ms
+        )
         self._timer = QTimer(self._center)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(lambda: self._center.remove(self))
-        self._timer.start(max(0, self._center.completed_hold_ms))
+        self._timer.start(max(0, hold))
 
     def _stop_timer(self) -> None:
         """Stop this task's removal timer.
@@ -251,11 +317,13 @@ class TaskCenter(QObject):
         self._tasks: list[Task] = []
         #: How long a finished task stays listed. A test shortens it; the product uses the default.
         self.completed_hold_ms = COMPLETED_HOLD_MS
+        #: How long a cancelled task stays listed (longer: it carries where the transfer stopped).
+        self.cancelled_hold_ms = CANCELLED_HOLD_MS
 
     # ---------- list ----------
 
     def tasks(self) -> tuple[Task, ...]:
-        """The tasks in the order they were added (oldest first, which is how the panel shows them)."""
+        """The tasks in the order they were added (oldest first, which is how the page shows them)."""
         return tuple(self._tasks)
 
     def add_task(
@@ -263,12 +331,29 @@ class TaskCenter(QObject):
         title_key: str,
         *title_args: object,
         cancel: Callable[[Task], None] | None = None,
+        kind: str = "",
+        retry: Callable[[], None] | None = None,
     ) -> Task:
-        """Create and list a running task. ``cancel`` is what actually stops the underlying work."""
-        task = Task(self, title_key, title_args, cancel)
+        """Create and list a running task. ``cancel`` is what actually stops the underlying work.
+
+        ``retry`` is the way back: the producer's own entry point, called when the user presses 重试 on
+        a settled row. ``kind`` names which of the five jobs it is (see :data:`KIND_TITLE_KEYS`); when
+        it is left empty it is derived from the title key, so a caller that only knows the title still
+        gets the right glyph.
+        """
+        task = Task(self, title_key, title_args, cancel, kind, retry)
         self._tasks.append(task)
         self.notify()
         return task
+
+    def retry(self, task: Task) -> bool:
+        """Drop a settled task and ask its producer to run the job again (see :meth:`Task.retry`)."""
+        if task.is_running() or not task.can_retry():
+            return False
+        callback = task.retry_callback()
+        self.remove(task)
+        callback()
+        return True
 
     def remove(self, task: Task) -> None:
         """Drop one task (its own five-second timer, or the row's dismiss button)."""
@@ -296,6 +381,24 @@ class TaskCenter(QObject):
     def failed_count(self) -> int:
         return sum(1 for task in self._tasks if task.state == FAILED)
 
+    def tasks_in(self, state: str) -> tuple[Task, ...]:
+        """Every task in one state, oldest first (the download page's four sections)."""
+        return tuple(task for task in self._tasks if task.state == state)
+
+    def counts(self) -> dict[str, int]:
+        """How many tasks each state holds, including the zeroes (the page's summary line)."""
+        counts = {RUNNING: 0, DONE: 0, FAILED: 0, CANCELLED: 0}
+        for task in self._tasks:
+            counts[task.state] = counts.get(task.state, 0) + 1
+        return counts
+
+    def cancel_running(self) -> int:
+        """Ask every running task to stop; return how many were asked (the page's 全部取消)."""
+        running = [task for task in self._tasks if task.is_running()]
+        for task in running:
+            task.cancel()
+        return len(running)
+
     def icon_state(self) -> str | None:
         """Which of the icon's three faces to show, or None when there is nothing to show at all.
 
@@ -304,8 +407,8 @@ class TaskCenter(QObject):
         point the alert appears and stays.
 
         ``done`` is the only face with a deadline, and it means *all* of them: a list holding a
-        cancelled task is not "all done", so it shows no icon at all (the row is still in the panel
-        for its five seconds, but there is nothing interesting to report in the corner of the window).
+        cancelled task is not "all done", so it shows no icon at all (the row is still on the download
+        page for its ten seconds, but there is nothing interesting to report in the corner of the window).
         """
         if not self._tasks:
             return None
