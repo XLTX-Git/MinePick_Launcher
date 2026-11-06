@@ -43,12 +43,14 @@ from PySide6.QtGui import (
     QIcon,
     QImage,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QPolygonF,
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QAbstractItemView,
     QApplication,
     QButtonGroup,
     QCheckBox,
@@ -60,13 +62,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -80,24 +82,23 @@ from gui.errors import show_fatal
 from gui.pages.instance_files import (
     backup_save,
     display_file_name,
-    format_modified,
+    format_day,
+    mod_icon_bytes,
     pack_icon_bytes,
     read_enabled_resource_packs,
     scan_content_files,
     scan_saves,
 )
 from gui.tasks import CANCELLED, task_center_of
-from gui.view_state import remember_column_widths
+from gui.view_state import STATE_FILENAME
 from gui.widgets import (
     PAGE_HEADER_GAP,
     ElidedLabel,
     EmptyState,
     NoWheelDoubleSpinBox,
-    NumericTableItem,
     add_search_icon,
     apply_no_focus_outline,
     disable_keeping_focus,
-    name_table_for_screen_readers,
     set_app_status,
     style_form,
     style_page_layout,
@@ -138,8 +139,11 @@ from launcher.launch import (
 )
 from launcher.meta import block_textures
 from launcher.meta.version import version_json_path
+from launcher.mods import identity
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
 from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
+from launcher.mods.zh_names import zh_name
+from launcher.net import http_cache
 
 tr = i18n.tr
 
@@ -205,6 +209,47 @@ ICON_PICKER_COLUMNS = 4
 #: never shifts its name left.
 CONTENT_ICON_SIZE = 32
 
+#: The four content lists are two-line cards, not tables: a 64px card holds one 32px icon, a title
+#: line and a detail line, with an 8px gap between two cards (the list slot is therefore 72px). The
+#: numbers are the design's, not derived from a font: a translated title may elide, the row height
+#: stays put, which is what keeps the list from re-flowing between languages.
+CONTENT_ROW_HEIGHT = 64
+CONTENT_ROW_SLOT = CONTENT_ROW_HEIGHT + 8
+CONTENT_ROW_RADIUS = 8
+CONTENT_ROW_PADDING = 12
+CONTENT_ROW_GAP = 12
+CONTENT_BADGE_HEIGHT = 20
+CONTENT_TAG_HEIGHT = 18
+#: The mods list's enable switch: 20px, vertically centred, at the right edge of the card.
+CONTENT_CHECK_SIZE = 20
+#: The list a two-line card lives in never scrolls sideways; the text elides instead.
+CARD_TEXT_FONT = 14
+CARD_DETAIL_FONT = 12
+CARD_TAG_FONT = 11
+CARD_BADGE_FONT = 11
+
+
+def online_identity_enabled() -> bool:
+    """The user's online-recognition switch, default on, stored beside the column widths.
+
+    It is read here rather than from :mod:`launcher.config` because the setting belongs to the
+    interface (it only decides whether a page may talk to Modrinth), and because a QSettings file is
+    the one store the settings page can write without changing the on-disk config schema. Any failure
+    to read it means "on": a missing preference file must not silently disable a feature.
+    """
+    try:
+        from PySide6.QtCore import QSettings
+
+        settings = QSettings(
+            str(paths.launcher_dir() / STATE_FILENAME), QSettings.Format.IniFormat
+        )
+        value = settings.value(identity.ONLINE_SETTING_KEY, True)
+    except Exception:  # noqa: BLE001 - a broken settings file must not break the page
+        return True
+    if isinstance(value, str):
+        return value.strip().casefold() not in ("false", "0", "off", "no", "")
+    return bool(value)
+
 
 def human_size(size: int) -> str:
     """Format a byte count with the launcher's unit strings."""
@@ -261,6 +306,568 @@ def content_icon(path: Path) -> QIcon:
         if not image.isNull():
             return QIcon(_scaled_icon_pixmap(image))
     return QIcon(paint_utils.wire_cube_pixmap(CONTENT_ICON_SIZE))
+
+
+def pixmap_from_image_bytes(data: bytes | None) -> QPixmap | None:
+    """Decode stored/online image bytes into the 32px row slot, or None when they are not an image.
+
+    This is also the corruption guard of the icon cache: bytes that Qt refuses to decode are treated
+    exactly like "no icon" by the caller, which then asks for a fresh download instead of painting a
+    blank square.
+    """
+    if not data:
+        return None
+    image = QImage.fromData(data)
+    if image.isNull():
+        return None
+    return _scaled_icon_pixmap(image)
+
+
+def _elided(metrics: QFontMetrics, text: str, width: float) -> str:
+    """Elide on the right; a non-positive width yields an empty string instead of a Qt warning."""
+    return metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(0, int(width)))
+
+
+class _ContentRow(QWidget):
+    """One two-line card in a content list: 32px icon, title line, detail line, right-aligned marks.
+
+    Painted rather than composed of labels for the reason the resource rows on the mods page are: a
+    list of a hundred files must elide its text on one line (a QLabel either wraps or reports a width
+    wider than it paints, which the overflow audit flags), and one widget per row keeps a theme swap
+    cheap. The row itself takes no focus - the list is the single keyboard stop and the arrow keys
+    move its current row - so a page with sixty mods does not add sixty Tab stops.
+
+    The first line is the display name plus the local identity (mod id, installed version); the
+    second is the online identity (tag pills and the summary) or the state that replaced it ("not
+    recognized", "online recognition is off"). The right edge carries the "updatable" marker, and the
+    resource list's enabled state; the mods list additionally owns a checkbox that renames the jar,
+    exactly like the checkable column it replaces.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        key: str = "",
+        meta: str = "",
+        detail: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.key = key
+        self.title = title
+        self.meta = meta
+        self.detail = detail
+        self.tags: tuple[str, ...] = ()
+        self.description = ""
+        self.badge = ""
+        self.status = ""
+        self.kind = ""
+        self.installed_version = ""
+        self.icon_url = ""
+        #: The untouched on-disk name when the title had Minecraft formatting codes stripped; the
+        #: tooltip carries it so the file a delete acts on stays readable.
+        self.raw_name = ""
+        #: True when the picture came from the file on disk (a jar's own logo, a pack.png, a world's
+        #: screenshot): that artwork then wins over anything the online lookup could offer.
+        self.artwork_is_local = False
+        self.check: QCheckBox | None = None
+        self._icon: QPixmap | None = None
+        self._selected = False
+        self._hover = False
+        self._select_handler = None
+        self._check_handler = None
+        #: The list item this row is installed on (set by _ContentList.add_row), so a late online
+        #: answer can also refresh the text a screen reader reads from the item.
+        self.item: QListWidgetItem | None = None
+        self.setFixedHeight(CONTENT_ROW_SLOT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+        self._sync_accessible_text()
+
+    # ---------- data ----------
+
+    def _sync_accessible_text(self) -> None:
+        parts = [self.title]
+        if self.meta:
+            parts.append(self.meta)
+        if self.detail:
+            parts.append(self.detail)
+        text = " · ".join(part for part in parts if part)
+        self.setAccessibleName(text)
+        tooltip = text
+        if self.raw_name and self.raw_name != self.title:
+            tooltip += "\n" + self.raw_name
+        self.setToolTip(tooltip)
+        if self.item is not None:
+            try:
+                # The item paints nothing (the widget paints the card), so its visible text stays
+                # empty; the accessible text is what a screen reader reads from the item.
+                self.item.setData(Qt.ItemDataRole.AccessibleTextRole, self.accessible_text())
+            except RuntimeError:  # the item is already gone with its list
+                self.item = None
+
+    def accessible_text(self) -> str:
+        """What a list item (and a screen reader reading the item) says about this row."""
+        lines = [self.title]
+        if self.meta:
+            lines.append(self.meta)
+        if self.tags:
+            lines.append(" ".join(self.tags))
+        if self.description:
+            lines.append(self.description)
+        elif self.detail:
+            lines.append(self.detail)
+        return "\n".join(line for line in lines if line)
+
+    def apply(
+        self,
+        *,
+        title: str | None = None,
+        meta: str | None = None,
+        detail: str | None = None,
+        tags: tuple[str, ...] | None = None,
+        description: str | None = None,
+        badge: str | None = None,
+        status: str | None = None,
+    ) -> None:
+        """Replace only the fields the caller names, then repaint once."""
+        changed = False
+        for name, value in (
+            ("title", title),
+            ("meta", meta),
+            ("detail", detail),
+            ("description", description),
+            ("badge", badge),
+            ("status", status),
+        ):
+            if value is not None and getattr(self, name) != value:
+                setattr(self, name, value)
+                changed = True
+        if tags is not None and self.tags != tags:
+            self.tags = tags
+            changed = True
+        if changed:
+            self._sync_accessible_text()
+            self.update()
+
+    def set_icon_pixmap(self, pixmap: QPixmap | None, *, local: bool = False) -> None:
+        self._icon = pixmap
+        if local and pixmap is not None:
+            self.artwork_is_local = True
+        self.update()
+
+    def icon_pixmap(self) -> QPixmap | None:
+        """The artwork currently drawn (the online/local picture), or None for the neutral cube."""
+        return self._icon
+
+    def painted_icon_pixmap(self) -> QPixmap:
+        """What the row actually draws in its 32px slot: the artwork, else the neutral wire cube."""
+        return self._icon or paint_utils.wire_cube_pixmap(CONTENT_ICON_SIZE)
+
+    def set_select_handler(self, handler) -> None:
+        self._select_handler = handler
+
+    def add_checkbox(self, checked: bool, handler) -> QCheckBox:
+        """Give the row its own enable switch (the mods list); the list stays the focus stop."""
+        self.check = QCheckBox(self)
+        self.check.setObjectName("contentRowCheck")
+        self.check.setFixedSize(CONTENT_CHECK_SIZE, CONTENT_CHECK_SIZE)
+        self.check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.check.setChecked(bool(checked))
+        self.check.setToolTip(self.title)
+        self._check_handler = handler
+        self.check.toggled.connect(self._on_check_toggled)
+        self._place_checkbox()
+        return self.check
+
+    def _on_check_toggled(self, checked: bool) -> None:
+        if self._check_handler is not None:
+            self._check_handler(checked)
+
+    def _place_checkbox(self) -> None:
+        if self.check is None:
+            return
+        self.check.move(
+            max(0, self.width() - CONTENT_ROW_PADDING - CONTENT_CHECK_SIZE),
+            (CONTENT_ROW_HEIGHT - CONTENT_CHECK_SIZE) // 2,
+        )
+
+    def set_selected(self, selected: bool) -> None:
+        if self._selected != selected:
+            self._selected = selected
+            self.update()
+
+    def is_selected(self) -> bool:
+        return self._selected
+
+    # ---------- interaction ----------
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._select_handler is not None:
+            self._select_handler(self)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._place_checkbox()
+
+    # ---------- painting ----------
+
+    def _tokens(self) -> dict[str, str]:
+        return theme.current_tokens() or theme.theme_palette("light")
+
+    @staticmethod
+    def _pill_width(metrics: QFontMetrics, text: str) -> int:
+        return metrics.horizontalAdvance(text) + 16
+
+    def _paint_pill(
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        text: str,
+        background: QColor,
+        foreground: QColor,
+        font: QFont,
+    ) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(background)
+        painter.drawRoundedRect(rect, rect.height() / 2.0, rect.height() / 2.0)
+        painter.setFont(font)
+        painter.setPen(foreground)
+        metrics = QFontMetrics(font)
+        painter.drawText(
+            rect,
+            int(Qt.AlignmentFlag.AlignCenter),
+            _elided(metrics, text, rect.width() - 10),
+        )
+
+    def paintEvent(self, event) -> None:
+        tokens = self._tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0.5, 0.5, max(1.0, self.width() - 1.0), CONTENT_ROW_HEIGHT - 1.0)
+        background = QColor(tokens.get("BG_LIST", "#ffffff"))
+        border = QColor(tokens.get("BORDER_LIST", "#c9d2dc"))
+        if self._selected:
+            border = QColor(tokens.get("ACCENT", "#35a06a"))
+            background = QColor(tokens.get("ACCENT_TINT", background.name()))
+        elif self._hover:
+            background = QColor(tokens.get("ACCENT_TINT", background.name()))
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(background)
+        painter.drawRoundedRect(card, CONTENT_ROW_RADIUS, CONTENT_ROW_RADIUS)
+
+        icon_rect = QRectF(
+            CONTENT_ROW_PADDING,
+            (CONTENT_ROW_HEIGHT - CONTENT_ICON_SIZE) / 2.0,
+            CONTENT_ICON_SIZE,
+            CONTENT_ICON_SIZE,
+        )
+        clip = QPainterPath()
+        clip.addRoundedRect(icon_rect, 6, 6)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.drawPixmap(
+            icon_rect.toRect(),
+            self._icon or paint_utils.wire_cube_pixmap(CONTENT_ICON_SIZE),
+        )
+        painter.restore()
+
+        text_left = CONTENT_ROW_PADDING + CONTENT_ICON_SIZE + CONTENT_ROW_GAP
+        right = float(self.width() - CONTENT_ROW_PADDING)
+        if self.check is not None:
+            right = self.check.x() - CONTENT_ROW_GAP
+
+        text_color = QColor(tokens.get("FG_TEXT", "#1f2a36"))
+        hint_color = QColor(tokens.get("FG_HINT", "#4f6070"))
+        section = QColor(tokens.get("BG_SECTION", "#f1f3f6"))
+
+        badge_metrics = QFontMetrics(self._font(CARD_BADGE_FONT))
+        badge_font = self._font(CARD_BADGE_FONT)
+        update_background = QColor(tokens.get("ACCENT_BUTTON", "#35a06a"))
+        update_foreground = QColor(tokens.get("FG_SELECTED", "#ffffff"))
+        for text, background, foreground in (
+            (self.badge, update_background, update_foreground),
+            (self.status, section, hint_color),
+        ):
+            if not text:
+                continue
+            width = self._pill_width(badge_metrics, text)
+            if right - width < text_left:
+                continue
+            rect = QRectF(right - width, (CONTENT_ROW_HEIGHT - CONTENT_BADGE_HEIGHT) / 2.0, width,
+                          CONTENT_BADGE_HEIGHT)
+            self._paint_pill(painter, rect, text, background, foreground, badge_font)
+            right -= width + 6
+
+        width = right - text_left
+        if width <= 4:
+            painter.end()
+            return
+
+        title_font = self._font(CARD_TEXT_FONT, bold=True)
+        title_metrics = QFontMetrics(title_font)
+        meta_font = self._font(CARD_DETAIL_FONT)
+        meta_metrics = QFontMetrics(meta_font)
+        meta = self.meta
+        meta_width = min(
+            float(meta_metrics.horizontalAdvance(meta)) if meta else 0.0,
+            max(0.0, width * 0.55),
+        )
+        title_room = max(0.0, width - (meta_width + 8 if meta else 0.0))
+        painter.setFont(title_font)
+        painter.setPen(text_color)
+        title = _elided(title_metrics, self.title, title_room)
+        painter.drawText(
+            QRectF(text_left, 8, title_room, 20),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            title,
+        )
+        if meta and title_room < width:
+            title_width = title_metrics.horizontalAdvance(title)
+            meta_room = max(0.0, width - title_width - 8)
+            painter.setFont(meta_font)
+            painter.setPen(hint_color)
+            painter.drawText(
+                QRectF(text_left + title_width + 8, 10, meta_room, 18),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                _elided(meta_metrics, meta, meta_room),
+            )
+
+        cursor = float(text_left)
+        tag_font = self._font(CARD_TAG_FONT)
+        tag_metrics = QFontMetrics(tag_font)
+        for tag in self.tags[:2]:
+            tag_width = self._pill_width(tag_metrics, tag)
+            if cursor + tag_width > right:
+                break
+            rect = QRectF(cursor, 36, tag_width, CONTENT_TAG_HEIGHT)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(section)
+            painter.drawRoundedRect(rect, 4, 4)
+            painter.setFont(tag_font)
+            painter.setPen(hint_color)
+            painter.drawText(
+                rect,
+                int(Qt.AlignmentFlag.AlignCenter),
+                _elided(tag_metrics, tag, tag_width - 10),
+            )
+            cursor += tag_width + 6
+
+        detail = self.description or self.detail
+        if self.tags and detail:
+            cursor += 2
+        if detail and cursor < right:
+            detail_metrics = QFontMetrics(meta_font)
+            painter.setFont(meta_font)
+            painter.setPen(hint_color)
+            painter.drawText(
+                QRectF(cursor, 36, right - cursor, 18),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                _elided(detail_metrics, detail, right - cursor),
+            )
+        painter.end()
+
+    @staticmethod
+    def _font(pixel_size: int, *, bold: bool = False) -> QFont:
+        font = QFont()
+        font.setPixelSize(pixel_size)
+        if bold:
+            font.setWeight(QFont.Weight.DemiBold)
+        return font
+
+
+class _ContentList(QListWidget):
+    """The scrollable card list behind all four content pages.
+
+    ``objectName("resourceList")`` reuses the stylesheet the mods page already defines for a card
+    list: a transparent, borderless viewport whose cards paint themselves, plus a focus ring on the
+    view. ``setItemWidget`` gives every row its own card; the list remains the single focus stop, so
+    Up/Down move the selection and Space (in the mods list) toggles the current mod.
+
+    A list that is laid out before its final width hands older item widgets a stale width; the
+    viewport width is therefore re-applied on every resize. The empty-state label is an overlay over
+    the viewport, so "this list is empty" is centred where the rows would be.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("resourceList")
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setUniformItemSizes(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        apply_no_focus_outline(self)
+        self._rows: list[_ContentRow] = []
+        self._empty_overlay: QLabel | None = None
+        self._space_handler = None
+        self.jar_drop_handler = None
+        self.setAcceptDrops(True)
+        self.currentRowChanged.connect(self._sync_selection)
+
+    # ---------- rows ----------
+
+    def rows(self) -> list[_ContentRow]:
+        return list(self._rows)
+
+    def add_row(self, row: _ContentRow) -> None:
+        index = len(self._rows)
+        self._rows.append(row)
+        item = QListWidgetItem("")
+        item.setData(Qt.ItemDataRole.AccessibleTextRole, row.accessible_text())
+        item.setData(Qt.ItemDataRole.UserRole, row.key)
+        item.setSizeHint(QSize(0, CONTENT_ROW_SLOT))
+        self.addItem(item)
+        self.setItemWidget(item, row)
+        row.item = item
+        row.set_select_handler(lambda _row, index=index: self.setCurrentRow(index))
+
+    def clear_rows(self) -> None:
+        # Drop the Python references before clear(): clear() destroys the item widgets, and a
+        # currentRowChanged(-1) handler must not walk a list of already-deleted widgets.
+        self._rows = []
+        self.blockSignals(True)
+        try:
+            self.clear()
+        finally:
+            self.blockSignals(False)
+
+    def set_space_handler(self, handler) -> None:
+        self._space_handler = handler
+
+    def set_jars_dropped_handler(self, handler) -> None:
+        self.jar_drop_handler = handler
+
+    def _sync_selection(self, current: int) -> None:
+        for index, row in enumerate(self._rows):
+            row.set_selected(index == current)
+
+    # ---------- keyboard / drag and drop ----------
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Space,) and self._space_handler is not None and self.count():
+            self._space_handler()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    @staticmethod
+    def _jar_urls(event) -> bool:
+        data = event.mimeData()
+        if not data.hasUrls():
+            return False
+        return any(
+            url.isLocalFile() and url.toLocalFile().lower().endswith(".jar")
+            for url in data.urls()
+        )
+
+    def dragEnterEvent(self, event) -> None:
+        if self.jar_drop_handler is not None and self._jar_urls(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if self.jar_drop_handler is not None and self._jar_urls(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        jars = [
+            Path(url.toLocalFile())
+            for url in event.mimeData().urls()
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(".jar")
+        ]
+        if jars and self.jar_drop_handler is not None:
+            self.jar_drop_handler(jars)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    # ---------- empty state / widths ----------
+
+    def attach_empty_overlay(self, label: QLabel) -> None:
+        self._empty_overlay = label
+        label.setParent(self.viewport())
+        label.setGeometry(self.viewport().rect())
+        label.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.sync_item_widths()
+        if self._empty_overlay is not None:
+            self._empty_overlay.setGeometry(self.viewport().rect())
+
+    def sync_item_widths(self) -> None:
+        width = self.viewport().width()
+        for index in range(self.count()):
+            widget = self.itemWidget(self.item(index))
+            if widget is not None and widget.width() != width:
+                widget.resize(width, widget.height())
+
+
+class _ContentTabs(QWidget):
+    """The two tabs above a content list: ``全部 (N)`` and ``可更新 (M)``.
+
+    Two checkable buttons in an exclusive group, the same ``categoryTab`` pill the versions page
+    uses, so no stylesheet rule had to be added for them. ``M`` is always shown, including zero: the
+    number is the answer to "is anything outdated?", and hiding the tab would hide the answer.
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.all_button = QPushButton()
+        self.update_button = QPushButton()
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        for button in (self.all_button, self.update_button):
+            button.setObjectName("categoryTab")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.group.addButton(button)
+        self.all_button.setChecked(True)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(self.all_button)
+        row.addWidget(self.update_button)
+        row.addStretch(1)
+        self.all_button.toggled.connect(self._on_toggled)
+        self.update_button.toggled.connect(self._on_toggled)
+        self.set_counts(0, 0)
+
+    def _on_toggled(self, checked: bool) -> None:
+        if checked:
+            self.changed.emit()
+
+    def mode(self) -> str:
+        return "updates" if self.update_button.isChecked() else "all"
+
+    def set_mode(self, mode: str) -> None:
+        button = self.update_button if mode == "updates" else self.all_button
+        if not button.isChecked():
+            button.setChecked(True)
+
+    def set_counts(self, total: int, updates: int) -> None:
+        self.all_button.setText(tr("instances.detail.tab.all", total))
+        self.update_button.setText(tr("instances.detail.tab.updatable", updates))
+        self.all_button.setAccessibleName(tr("instances.detail.tab.all", total))
+        self.update_button.setAccessibleName(tr("instances.detail.tab.updatable", updates))
 
 
 def save_custom_icon(source: Path, folder: Path) -> str:
@@ -473,60 +1080,6 @@ class _IconChooserDialog(inwindow_dialog.InWindowDialog):
             target = next(iter(self.rule_buttons.values()), None)
         if target is not None:
             target.setFocus(Qt.FocusReason.TabFocusReason)
-
-
-class _ModsTable(QTableWidget):
-    """Mods table: supports drag-and-drop of .jar files to install."""
-
-    def __init__(self, detail: InstanceDetail) -> None:
-        super().__init__(0, 6)
-        self._detail = detail
-        self.setAcceptDrops(True)
-        self.setSelectionBehavior(QTableWidget.SelectRows)
-        self.setSelectionMode(QTableWidget.ExtendedSelection)
-        self.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.horizontalHeader().setStretchLastSection(True)
-        # The header is text only. Qt draws a sort indicator - a small chevron in a section's corner
-        # that reads as a dropdown - as soon as sorting is on, and it lands in 启用 because that is
-        # the first column. There is nothing to sort by here: scan_mods() already returns the rows in
-        # display-name order, and sorting would re-order the list on every refill by the checkbox
-        # column (every disabled mod first). The enabled/disabled *filter* is the toolbar combo
-        # (全部 / 已启用 / 已禁用), which is where a filter belongs.
-        self.setSortingEnabled(False)
-        self.horizontalHeader().setSortIndicatorShown(False)
-
-    def _jar_urls(self, event) -> bool:
-        data = event.mimeData()
-        if not data.hasUrls():
-            return False
-        return any(
-            u.isLocalFile() and u.toLocalFile().lower().endswith(".jar")
-            for u in data.urls()
-        )
-
-    def dragEnterEvent(self, event) -> None:
-        if self._jar_urls(event):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event) -> None:
-        if self._jar_urls(event):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event) -> None:
-        jars = [
-            Path(u.toLocalFile())
-            for u in event.mimeData().urls()
-            if u.isLocalFile() and u.toLocalFile().lower().endswith(".jar")
-        ]
-        if jars:
-            self._detail.install_dropped(jars)
-            event.acceptProposedAction()
-        else:
-            event.ignore()
 
 
 #: The switch pickers: one 56px card per installed version, the same shape the versions page gives a
@@ -776,6 +1329,9 @@ class InstanceDetail(QWidget):
 
     changed = Signal()  # metadata shown in the list changed (name / note / isolation / icon)
     deleted = Signal(str)  # the instance folder is gone
+    #: One lookup arrived: (row key, launcher.mods.identity.Identity | None). A signal, not a direct
+    #: callback, because the worker runs on its own thread and a widget may only be painted here.
+    identity_ready = Signal(str, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -791,7 +1347,6 @@ class InstanceDetail(QWidget):
         # Working state
         self._mods: list = []
         self._filling = False  # a widget fill is running: ignore the change signals it fires
-        self._filling_mods = False
         self._isolation_warned = False
         self._loaded_tabs: set[int] = set()
         self._content_items: dict[str, list] = {sub: [] for sub in _CONTENT_SUBDIRS}
@@ -808,6 +1363,22 @@ class InstanceDetail(QWidget):
         self._export_stop: threading.Event | None = None
         self._export_rate: RateTracker | None = None
         self._export_dest: Path | None = None
+
+        # The four card lists, keyed like the pages that own them.
+        self.content_lists: dict[str, _ContentList] = {}
+        self.content_rows: dict[str, list[_ContentRow]] = {}
+        self.content_empty: dict[str, EmptyState] = {}
+        self.content_tabs: dict[str, _ContentTabs] = {}
+        #: One lookup per row key: the answered ones (a cached None included) so a refill paints what
+        #: is known without touching the network again, and the ones still queued in the worker.
+        self._identity_cache: dict[str, identity.Identity | None] = {}
+        self._identity_pending: set[str] = set()
+        self._identity_queue = identity.LookupQueue()
+        #: Project icons by URL, for this page only: the disk cache is the persistent store, this map
+        #: only saves decoding the same image again when a list is refilled.
+        self._icon_pixmaps: dict[str, QPixmap] = {}
+        self._icon_pending: set[str] = set()
+        self.identity_ready.connect(self._on_identity_ready)
 
         self.tab_group = QButtonGroup(self)
         self.tab_group.setExclusive(True)
@@ -1149,24 +1720,19 @@ class InstanceDetail(QWidget):
         self.mods_banner = banner
         layout.addWidget(banner)
 
-        self.mods_table = _ModsTable(self)
-        apply_no_focus_outline(self.mods_table)
-        name_table_for_screen_readers(self.mods_table, tr("a11y.instance_mods"))
-        self.mods_table.setHorizontalHeaderLabels(
-            [
-                tr("instances.mods.col.enabled"),
-                tr("instances.mods.col.name"),
-                tr("instances.mods.col.id"),
-                tr("instances.mods.col.version"),
-                tr("instances.mods.col.loader"),
-                tr("instances.mods.col.file"),
-            ]
-        )
-        self.mods_table.setColumnWidth(0, 56)
-        self.mods_table.setColumnWidth(1, 150)
-        self.mods_table.setColumnWidth(2, 110)
-        self.mods_table.setColumnWidth(3, 72)
-        self.mods_table.setColumnWidth(4, 80)
+        self.mods_tabs = _ContentTabs()
+        self.mods_list = _ContentList()
+        # WCAG 4.1.2: the list is a focus stop of its own and has no text; the name says what it is.
+        self.mods_list.setAccessibleName(tr("a11y.instance_mods"))
+        self.mods_list.set_jars_dropped_handler(self.install_dropped)
+        self.mods_list.set_space_handler(self._toggle_current_mod)
+        self.mods_empty = EmptyState(tr("instances.mods.search.none"))
+        self.mods_list.attach_empty_overlay(self.mods_empty)
+        # A compatibility alias: gui/pages/instances_page.py re-exports the old table under this name
+        # for callers that predate the card list. New code reads mods_list.
+        self.mods_table = self.mods_list
+        self.mods_rows: list[_ContentRow] = []
+
         self.mods_search = QLineEdit()
         add_search_icon(self.mods_search)
         self.mods_search.setPlaceholderText(tr("instances.mods.search.placeholder"))
@@ -1184,7 +1750,7 @@ class InstanceDetail(QWidget):
         self.mods_folder_button.setObjectName("secondaryButton")
         self.mods_delete_button = QPushButton(tr("instances.mods.delete"))
         self.mods_delete_button.setObjectName("dangerButton")
-        # Dragging jars onto the table is a pointer gesture with no keyboard equivalent, which fails
+        # Dragging jars onto the list is a pointer gesture with no keyboard equivalent, which fails
         # WCAG 2.5.1 and 2.5.7. This button is that equivalent: it opens a file picker and feeds the
         # very same install path the drop handler uses, so both routes behave identically.
         self.mods_install_button = QPushButton(tr("instances.mods.install"))
@@ -1205,16 +1771,16 @@ class InstanceDetail(QWidget):
         install_row.addWidget(self.mods_install_button)
         install_row.addStretch(1)
         layout.addLayout(install_row)
-        layout.addWidget(self.mods_table, 1)
-        remember_column_widths(self.mods_table, "instance_mods")
+        layout.addWidget(self.mods_tabs)
+        layout.addWidget(self.mods_list, 1)
 
-        self.mods_table.itemChanged.connect(self._on_mod_toggled)
         # Debounce: refill only after 200ms of typing inactivity
         self._mods_search_timer = QTimer(self)
         self._mods_search_timer.setSingleShot(True)
         self._mods_search_timer.timeout.connect(self._refill_mods)
         self.mods_search.textChanged.connect(lambda _t: self._mods_search_timer.start(200))
         self.mods_filter.currentIndexChanged.connect(lambda _i: self._refill_mods())
+        self.mods_tabs.changed.connect(self._refill_mods)
         self.mods_refresh_button.clicked.connect(self._reload_mods)
         self.mods_folder_button.clicked.connect(self.open_mods_folder)
         self.mods_delete_button.clicked.connect(self.delete_selected_mods)
@@ -1222,8 +1788,6 @@ class InstanceDetail(QWidget):
         return page
 
     def _build_resourcepacks_page(self) -> QWidget:
-        self.content_tables: dict[str, QTableWidget] = {}
-        self.content_empty: dict[str, EmptyState] = {}
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1259,12 +1823,12 @@ class InstanceDetail(QWidget):
     def _build_content_section(
         self, subdir: str, title: str, empty_text: str, *, with_status: bool = False
     ) -> QWidget:
-        """One file list: title, [icon|name|size|enabled], empty state, open/delete.
+        """One file list: title, 全部/可更新 tabs, open/delete, and the two-line card list.
 
-        The icon is the pack's own ``pack.png`` when the file has one, and the same 32px neutral cube
-        when it does not, so every name starts at the same x. Resource packs carry the enabled state
-        the game recorded; shader packs do not have one in options.txt, so their table has no status
-        column instead of a fake "off".
+        The icon is the pack's own ``pack.png`` when the file has one, the project's cached online
+        icon when Modrinth recognized it, and the same 32px neutral cube otherwise. Resource packs
+        carry the enabled state the game recorded, shown as a status mark on the row; shader packs do
+        not have one in options.txt, so their rows carry no status instead of a fake "off".
         """
         box = QWidget()
         layout = QVBoxLayout(box)
@@ -1272,27 +1836,15 @@ class InstanceDetail(QWidget):
         layout.setSpacing(6)
         title_label = QLabel(title)
         title_label.setObjectName("title")
-        table = QTableWidget(0, 3 if with_status else 2)
-        name_table_for_screen_readers(table, title)
-        headers = [tr("instances.detail.col.name"), tr("instances.detail.col.size")]
-        if with_status:
-            headers.append(tr("instances.detail.col.status"))
-        table.setHorizontalHeaderLabels(headers)
-        apply_no_focus_outline(table)
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.setSelectionMode(QTableWidget.ExtendedSelection)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setIconSize(QSize(CONTENT_ICON_SIZE, CONTENT_ICON_SIZE))
-        table.horizontalHeader().setStretchLastSection(True)
-        # 280px held a 20px letter tile plus the name. The icon is 32px now, so 292 (+12) keeps the
-        # same width for the text instead of letting the larger picture eat into every name.
-        table.setColumnWidth(0, 292)
-        if with_status:
-            table.setColumnWidth(1, 90)
-        remember_column_widths(table, "instance_" + subdir)
+        tabs = _ContentTabs()
+        list_widget = _ContentList()
+        list_widget.setAccessibleName(title)
         empty = EmptyState(empty_text)
-        self.content_tables[subdir] = table
+        list_widget.attach_empty_overlay(empty)
+        self.content_lists[subdir] = list_widget
+        self.content_rows[subdir] = []
         self.content_empty[subdir] = empty
+        self.content_tabs[subdir] = tabs
         self._content_empty_text[subdir] = empty_text
         open_button = QPushButton(tr("instances.detail.open_folder"))
         open_button.setObjectName("secondaryButton")
@@ -1300,6 +1852,7 @@ class InstanceDetail(QWidget):
         delete_button.setObjectName("dangerButton")
         open_button.clicked.connect(partial(self.open_content_folder, subdir))
         delete_button.clicked.connect(partial(self.delete_selected_content, subdir))
+        tabs.changed.connect(partial(self._refill_content, subdir))
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(6)
@@ -1307,9 +1860,9 @@ class InstanceDetail(QWidget):
         buttons.addWidget(delete_button)
         buttons.addStretch(1)
         layout.addWidget(title_label)
+        layout.addWidget(tabs)
         layout.addLayout(buttons)
-        layout.addWidget(empty, 1)
-        layout.addWidget(table, 1)
+        layout.addWidget(list_widget, 1)
         return box
 
     def _build_saves(self) -> QWidget:
@@ -1317,26 +1870,14 @@ class InstanceDetail(QWidget):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        self.saves_table = QTableWidget(0, 3)
-        name_table_for_screen_readers(self.saves_table, tr("a11y.instance_saves"))
-        self.saves_table.setHorizontalHeaderLabels(
-            [
-                tr("instances.detail.col.name"),
-                tr("instances.detail.col.modified"),
-                tr("instances.detail.col.size"),
-            ]
-        )
-        apply_no_focus_outline(self.saves_table)
-        self.saves_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.saves_table.setSelectionMode(QTableWidget.ExtendedSelection)
-        self.saves_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.saves_table.horizontalHeader().setStretchLastSection(True)
-        self.saves_table.setColumnWidth(0, 260)
-        # "2026-11-06 18:40" does not fit the default column; an elided date is not a date.
-        self.saves_table.setColumnWidth(1, 150)
-        remember_column_widths(self.saves_table, "instance_saves")
         self.saves_empty = EmptyState(tr("instances.detail.saves.empty"))
         self.saves_empty_text = tr("instances.detail.saves.empty")
+        self.saves_list = _ContentList()
+        self.saves_list.setAccessibleName(tr("a11y.instance_saves"))
+        self.saves_list.attach_empty_overlay(self.saves_empty)
+        # Compatibility alias for the same reason as mods_table (instances_page re-exports it).
+        self.saves_table = self.saves_list
+        self.saves_rows: list[_ContentRow] = []
         self.saves_refresh_button = QPushButton(tr("instances.mods.refresh"))
         self.saves_refresh_button.setObjectName("secondaryButton")
         self.saves_folder_button = QPushButton(tr("instances.detail.saves.open_folder"))
@@ -1357,8 +1898,7 @@ class InstanceDetail(QWidget):
             buttons.addWidget(button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
-        layout.addWidget(self.saves_empty, 1)
-        layout.addWidget(self.saves_table, 1)
+        layout.addWidget(self.saves_list, 1)
         self.saves_refresh_button.clicked.connect(self.reload_saves)
         self.saves_folder_button.clicked.connect(self.open_saves_folder)
         self.saves_backup_button.clicked.connect(self.backup_selected_save)
@@ -1755,19 +2295,36 @@ class InstanceDetail(QWidget):
             self.instance = None
             self.resolved = None
             self._mods = []
-            self._filling_mods = True
-            try:
-                self.mods_table.setRowCount(0)
-            finally:
-                self._filling_mods = False
+            self.mods_list.clear_rows()
+            self.mods_rows = []
             for subdir in _CONTENT_SUBDIRS:
                 self._content_items[subdir] = []
+                list_widget = self.content_lists.get(subdir)
+                if list_widget is not None:
+                    list_widget.clear_rows()
+                self.content_rows[subdir] = []
             self._saves = []
+            self.saves_list.clear_rows()
+            self.saves_rows = []
             for key in _BADGED_SECTIONS:
                 self._set_badge_count(key, 0)
+            self._cancel_identity_work(clear_cache=True)
             self._clear_rows()
             return
         self.reload()
+
+    def _cancel_identity_work(self, *, clear_cache: bool = False) -> None:
+        """Stop the queued lookups and drop the in-memory answers (an instance switch invalidates them).
+
+        The disk cache is what makes a revisit instant; this only cancels the queue so a result for
+        the instance the user just left cannot paint a row of the instance now shown.
+        """
+        self._identity_queue.cancel_all()
+        self._identity_pending.clear()
+        if clear_cache:
+            self._identity_cache.clear()
+            self._icon_pixmaps.clear()
+            self._icon_pending.clear()
 
     def _set_badge_count(self, key: str, count: int) -> None:
         """Store a sidebar badge count; zero hides the badge (and its width)."""
@@ -1828,6 +2385,12 @@ class InstanceDetail(QWidget):
             self.resolved = None
             self._clear_rows()
             return
+        # The master switch is read on every reload, so a user who turned it off sees only local
+        # information on the next visit even if the settings page was never rebuilt.
+        identity.set_enabled(online_identity_enabled())
+        # A switch that was turned off must not keep showing answers this page already holds: the
+        # memory caches are dropped together with the queued work, so the next fill is local-only.
+        self._cancel_identity_work(clear_cache=not identity.is_enabled())
         self._fill_header()
         self._fill_overview()
         self._fill_settings()
@@ -1855,15 +2418,21 @@ class InstanceDetail(QWidget):
         self.log_view.clear()
         self.log_view.setVisible(False)
         self.log_empty.setVisible(True)
-        for subdir, table in self.content_tables.items():
-            table.setRowCount(0)
-            table.setVisible(False)
+        self.mods_list.clear_rows()
+        self.mods_rows = []
+        self.mods_list.setVisible(False)
+        self.mods_empty.update_for(0)
+        for subdir, list_widget in self.content_lists.items():
+            list_widget.clear_rows()
+            list_widget.setVisible(False)
+            self.content_rows[subdir] = []
             empty = self.content_empty.get(subdir)
             if empty is not None:
                 empty.setText(self._content_empty_text.get(subdir, ""))
                 empty.setVisible(True)
-        self.saves_table.setRowCount(0)
-        self.saves_table.setVisible(False)
+        self.saves_list.clear_rows()
+        self.saves_rows = []
+        self.saves_list.setVisible(False)
         self.saves_empty.setText(self.saves_empty_text)
         self.saves_empty.setVisible(True)
         for value in self.modify_values.values():
@@ -2602,23 +3171,175 @@ class InstanceDetail(QWidget):
         self.changed.emit()
         set_app_status(self, tr("instances.detail.settings.reset.done", instance_id))
 
-    def _selected_values(self, table: QTableWidget) -> list[str]:
-        """Real file names of the selected rows (column 0 holds the display name + UserRole name).
+    def _selected_row(self, list_widget: _ContentList, rows: list[_ContentRow]) -> _ContentRow | None:
+        """The card the keyboard or the mouse selected, or None when nothing is selected.
 
-        The cell text may have had Minecraft formatting codes removed for display, so it must never be
-        used for a delete/open decision: the untouched name stored next to it is the one on disk.
+        The list's current row is the selection: a card cannot hold the selection itself without
+        becoming a focus stop of its own (sixty mods would then be sixty Tab stops). The row's ``key``
+        is the untouched on-disk name, so a delete never resolves a name through display stripping.
         """
-        rows = sorted({index.row() for index in table.selectedItems()})
-        out = []
-        for row in rows:
-            item = table.item(row, 0)
-            if item is None:
+        index = list_widget.currentRow()
+        if 0 <= index < len(rows):
+            return rows[index]
+        return None
+
+    # ---------- online identity ----------
+
+    def _game_version(self) -> str:
+        """The Minecraft version the instance runs, or "" when the profile cannot be read."""
+        if self.resolved is None:
+            return ""
+        try:
+            return profile_identity(self.resolved.game_dir, self.effective_version_id()).minecraft
+        except Exception:  # noqa: BLE001 - recognition is optional; a broken profile just means ""
+            return ""
+
+    def _all_rows(self):
+        yield from self.mods_rows
+        for rows in self.content_rows.values():
+            yield from rows
+        yield from self.saves_rows
+
+    def _request_identity(
+        self, key: str, *, name: str, modid: str, kind: str, loader: str = ""
+    ) -> None:
+        """Queue one lookup unless it is already known or already queued (and the switch is on)."""
+        if not online_identity_enabled() or not identity.is_enabled() or self.resolved is None:
+            return
+        if key in self._identity_cache or key in self._identity_pending:
+            return
+        request = identity.LookupRequest(
+            key=key,
+            name=name,
+            modid=modid,
+            kind=kind,
+            game_version=self._game_version(),
+            loader=loader,
+        )
+        self._identity_pending.add(key)
+        if not self._identity_queue.submit(request, self._identity_arrived):
+            self._identity_pending.discard(key)
+
+    def _identity_arrived(self, request: identity.LookupRequest, result: object) -> None:
+        """Worker-thread callback: hop to the widget thread with a signal, never touch a widget here."""
+        self.identity_ready.emit(request.key, result)
+
+    def _on_identity_ready(self, key: str, result: object) -> None:
+        self._identity_pending.discard(key)
+        if self.resolved is None:
+            return
+        value = result if isinstance(result, identity.Identity) else None
+        self._identity_cache[key] = value
+        for row in self._all_rows():
+            if row.key == key:
+                self._apply_identity(row, value)
+        # The tab counts are a summary of these answers, so they have to move when one arrives -
+        # without rebuilding the list the user is reading.
+        self._refresh_tab_counts(key)
+
+    def _refresh_tab_counts(self, key: str) -> None:
+        """Update the 全部/可更新 numbers after a late identity; refill only when that is the tab shown."""
+        if key.startswith("mod:"):
+            if self._mods:
+                updates = sum(1 for mod in self._mods if self._mod_updatable(mod))
+                self.mods_tabs.set_counts(len(self._mods), updates)
+                if self.mods_tabs.mode() == "updates":
+                    self._refill_mods()
+            return
+        for subdir in _CONTENT_SUBDIRS:
+            kind = "resourcepack" if subdir == "resourcepacks" else "shader"
+            if not key.startswith(kind + ":"):
                 continue
-            stored = item.data(Qt.ItemDataRole.UserRole)
-            name = stored if isinstance(stored, str) and stored else item.text()
-            if name:
-                out.append(name)
-        return out
+            items = self._content_items.get(subdir, [])
+            if items:
+                updates = sum(1 for item in items if self._content_updatable(subdir, item))
+                tabs = self.content_tabs[subdir]
+                tabs.set_counts(len(items), updates)
+                if tabs.mode() == "updates":
+                    self._refill_content(subdir)
+            return
+
+    def _apply_identity(self, row: _ContentRow, value: identity.Identity | None) -> None:
+        """Paint one row's online half: title/tags/summary, the update marker and the project icon."""
+        row.icon_url = value.icon_url if value is not None else ""
+        if value is None:
+            row.apply(tags=(), description="", badge="", detail=tr("instances.detail.identity.unknown"))
+            return
+        title = row.title
+        chinese = zh_name(value.slug)
+        if chinese:
+            title = chinese
+        elif value.title:
+            title = value.title
+        updatable = bool(row.installed_version) and value.is_updatable(row.installed_version)
+        row.apply(
+            title=title,
+            tags=value.categories[:2],
+            description=value.description,
+            detail="",
+            badge=tr("instances.detail.badge.update") if updatable else "",
+        )
+        if value.icon_url:
+            self._apply_remote_icon(row, value.icon_url)
+
+    def _apply_remote_icon(self, row: _ContentRow, url: str) -> None:
+        """Show the project icon: page cache, then the disk cache (read only), then a download.
+
+        The disk cache is the store :mod:`launcher.net.http_cache` already owns for project icons, so
+        a recognized row usually paints its real picture in the same pass that builds it. Only a miss
+        starts a worker; the row keeps the neutral cube until the bytes arrive, and that arrival
+        repaints this row alone (see :meth:`_on_icon_ready`) so the scroll position and the selection
+        survive it.
+        """
+        if not url or row.artwork_is_local:
+            return
+        pixmap = self._icon_pixmaps.get(url)
+        if pixmap is None:
+            data = http_cache.cached_icon_bytes(url)
+            if data:
+                pixmap = pixmap_from_image_bytes(data)
+                if pixmap is None:
+                    # Not an image: drop the broken entry so the download can replace it.
+                    identity.forget_cached_icon(url)
+                else:
+                    self._icon_pixmaps[url] = pixmap
+        if pixmap is not None:
+            row.set_icon_pixmap(pixmap)
+            return
+        self._request_remote_icon(url)
+
+    def _request_remote_icon(self, url: str) -> None:
+        """Download one project icon in the background; identical URLs share one request."""
+        if url in self._icon_pending or not online_identity_enabled() or not identity.is_enabled():
+            return
+        self._icon_pending.add(url)
+        run_in_background(
+            lambda: http_cache.fetch_icon_bytes(url),
+            on_result=lambda data, url=url: self._on_icon_ready(url, data),
+            on_error=lambda _message, url=url: self._icon_pending.discard(url),
+            on_finished=lambda url=url: self._icon_pending.discard(url),
+        )
+
+    def _on_icon_ready(self, url: str, data: object) -> None:
+        """One download arrived: repaint the rows that asked for that URL, and only those rows."""
+        try:
+            self._icon_pending.discard(url)
+        except RuntimeError:  # the page was torn down while the worker ran
+            return
+        if not isinstance(data, (bytes, bytearray)):
+            return
+        pixmap = pixmap_from_image_bytes(bytes(data))
+        if pixmap is None:
+            identity.forget_cached_icon(url)
+            return
+        self._icon_pixmaps[url] = pixmap
+        for row in self._all_rows():
+            if row.icon_url != url or row.artwork_is_local:
+                continue
+            try:
+                row.set_icon_pixmap(pixmap)
+            except RuntimeError:  # the row went away with its list
+                continue
 
     # ---------- mods ----------
 
@@ -2628,95 +3349,134 @@ class InstanceDetail(QWidget):
         set_app_status(self, tr("instances.mods.loading"))
         run_in_background(
             partial(scan_mods, self.resolved.mods_dir),
-            on_result=self._fill_mods_table,
+            on_result=self._fill_mods,
             on_error=self._on_mods_failed,
         )
 
     def _on_mods_failed(self, message: str) -> None:
         set_app_status(self, tr("instances.mods.msg.load_fail", message), "error")
 
-    def _fill_mods_table(self, mods: list) -> None:
+    def _fill_mods(self, mods: list) -> None:
         self._mods = mods
         self._set_badge_count("mods", len(mods))
         self._sync_sidebar()
         self._refill_mods()
 
+    @staticmethod
+    def _mod_key(mod) -> str:
+        """Stable row key for a mod: the file name (with ``.disabled``) is what delete acts on."""
+        return "mod:" + mod.file
+
+    def _mod_updatable(self, mod) -> bool:
+        if not identity.is_enabled():
+            return False
+        value = self._identity_cache.get(self._mod_key(mod))
+        return bool(value is not None and value.is_updatable(mod.version))
+
     def _refill_mods(self) -> None:
         want = self.mods_filter.currentData()
         needle = self.mods_search.text().strip().lower()
+        show_updates = self.mods_tabs.mode() == "updates"
         shown = []
-        for m in self._mods:
-            if want == "enabled" and not m.enabled:
+        for mod in self._mods:
+            if want == "enabled" and not mod.enabled:
                 continue
-            if want == "disabled" and m.enabled:
+            if want == "disabled" and mod.enabled:
                 continue
-            if needle and needle not in (m.name + " " + m.mod_id + " " + m.file).lower():
+            if needle and needle not in (
+                mod.name + " " + mod.mod_id + " " + mod.file
+            ).lower():
                 continue
-            shown.append(m)
-        self._filling_mods = True
-        try:
-            self.mods_table.setRowCount(0)
-            self.mods_table.setRowCount(len(shown))
-            for row, m in enumerate(shown):
-                check = QTableWidgetItem()
-                check.setFlags(
-                    Qt.ItemFlag.ItemIsUserCheckable
-                    | Qt.ItemFlag.ItemIsEnabled
-                    | Qt.ItemFlag.ItemIsSelectable
-                )
-                check.setCheckState(
-                    Qt.CheckState.Checked if m.enabled else Qt.CheckState.Unchecked
-                )
-                check.setData(Qt.UserRole, m.file)
-                self.mods_table.setItem(row, 0, check)
-                for col, text in enumerate((m.name, m.mod_id, m.version, m.loader), start=1):
-                    self.mods_table.setItem(row, col, QTableWidgetItem(text))
-                # Same rule as the content pages: the file column is display text with the game's
-                # formatting codes removed, while UserRole keeps the name the delete uses and the
-                # tooltip shows the name as it is on disk.
-                file_item = QTableWidgetItem(display_file_name(m.file))
-                file_item.setData(Qt.ItemDataRole.UserRole, m.file)
-                file_item.setToolTip(m.file)
-                self.mods_table.setItem(row, 5, file_item)
-        finally:
-            self._filling_mods = False
+            if show_updates and not self._mod_updatable(mod):
+                continue
+            shown.append(mod)
+        self.mods_list.clear_rows()
+        self.mods_rows = []
+        for mod in shown:
+            row = self._make_mod_row(mod)
+            self.mods_rows.append(row)
+            self.mods_list.add_row(row)
+        updates = sum(1 for mod in self._mods if self._mod_updatable(mod))
+        self.mods_tabs.set_counts(len(self._mods), updates)
+        self.mods_list.setVisible(True)
+        if not shown:
+            if show_updates and self._mods:
+                self.mods_empty.setText(tr("instances.detail.tab.updatable.empty"))
+            elif needle or want != "all":
+                self.mods_empty.setText(tr("instances.mods.search.none"))
+            else:
+                self.mods_empty.setText(tr("instances.detail.mods.empty"))
+            self.mods_empty.update_for(0)
+        else:
+            self.mods_empty.setVisible(False)
         if not shown and self._mods:
             set_app_status(self, tr("instances.mods.search.none"))
         else:
             set_app_status(self, tr("instances.mods.count", len(self._mods)))
 
-    def _on_mod_toggled(self, item: QTableWidgetItem) -> None:
-        if self._filling_mods or item.column() != 0:
-            return
-        mod = next((m for m in self._mods if m.file == item.data(Qt.UserRole)), None)
-        if mod is None:
-            return
-        want = item.checkState() == Qt.CheckState.Checked
+    def _make_mod_row(self, mod) -> _ContentRow:
+        title = zh_name(mod.mod_id) or mod.name
+        meta = " · ".join(part for part in (mod.mod_id, mod.version) if part)
+        row = _ContentRow(title, key=self._mod_key(mod), meta=meta)
+        row.kind = "mod"
+        row.installed_version = mod.version
+        local_icon = pixmap_from_image_bytes(mod_icon_bytes(mod.path))
+        if local_icon is not None:
+            row.set_icon_pixmap(local_icon, local=True)
+        else:
+            row.set_icon_pixmap(None)
+        row.add_checkbox(
+            mod.enabled,
+            lambda checked, mod=mod, row=row: self._toggle_mod(mod, checked, row),
+        )
+        display = display_file_name(mod.file)
+        if display != mod.file:
+            row.raw_name = mod.file
+        if identity.is_enabled() and row.key in self._identity_cache:
+            self._apply_identity(row, self._identity_cache[row.key])
+        elif not identity.is_enabled():
+            row.apply(detail=tr("instances.detail.identity.off"))
+        else:
+            self._request_identity(
+                row.key,
+                name=display_file_name(mod.file),
+                modid=mod.mod_id,
+                kind="mod",
+                loader=mod.loader,
+            )
+        return row
+
+    def _toggle_mod(self, mod, want: bool, row: _ContentRow) -> None:
         if mod.enabled == want:
             return
         try:
             set_mod_enabled(mod, want)
         except OSError as exc:
             set_app_status(self, tr("instances.mods.msg.toggle_fail", exc), "error")
-            self._filling_mods = True
-            try:
-                item.setCheckState(
-                    Qt.CheckState.Checked if mod.enabled else Qt.CheckState.Unchecked
-                )
-            finally:
-                self._filling_mods = False
+            if row.check is not None:
+                row.check.blockSignals(True)
+                row.check.setChecked(mod.enabled)
+                row.check.blockSignals(False)
+
+    def _toggle_current_mod(self) -> None:
+        """Space on the mods list: flip the current row, the keyboard route to the checkbox."""
+        row = self._selected_row(self.mods_list, self.mods_rows)
+        if row is None:
+            return
+        mod = next((item for item in self._mods if self._mod_key(item) == row.key), None)
+        if mod is None or row.check is None:
+            return
+        row.check.setChecked(not mod.enabled)
 
     def delete_selected_mods(self) -> None:
-        rows = sorted({i.row() for i in self.mods_table.selectedItems()}, reverse=True)
-        if not rows:
+        row = self._selected_row(self.mods_list, self.mods_rows)
+        if row is None:
             set_app_status(self, tr("instances.mods.msg.need_select"), "warning")
             return
-        files = []
-        for row in rows:
-            item = self.mods_table.item(row, 5)
-            if item:
-                stored = item.data(Qt.ItemDataRole.UserRole)
-                files.append(stored if isinstance(stored, str) and stored else item.text())
+        mod = next((item for item in self._mods if self._mod_key(item) == row.key), None)
+        if mod is None:
+            return
+        files = [mod.file]
         if not inwindow_dialog.question(
             self,
             tr("instances.mods.delete"),
@@ -2724,15 +3484,11 @@ class InstanceDetail(QWidget):
         ):
             return
         deleted = 0
-        for name in files:
-            mod = next((m for m in self._mods if m.file == name), None)
-            if mod is None:
-                continue
-            try:
-                mod.path.unlink()
-                deleted += 1
-            except OSError:
-                continue
+        try:
+            mod.path.unlink()
+            deleted = 1
+        except OSError:
+            deleted = 0
         set_app_status(self, tr("instances.mods.msg.deleted", deleted))
         self._reload_mods()
 
@@ -2800,16 +3556,16 @@ class InstanceDetail(QWidget):
     def _on_content_failed(self, message: str) -> None:
         """Report an unreadable folder in the status line *and* where the list would be.
 
-        A failed read must not look like an empty instance: the table is hidden and the empty-state
-        slot carries the reason until the next successful read restores its normal text.
+        A failed read must not look like an empty instance: the list is hidden and the empty-state
+        overlay carries the reason until the next successful read restores its normal text.
         """
         text = tr("instances.detail.res.msg.load_fail", message)
         set_app_status(self, text, "error")
         for subdir in _CONTENT_SUBDIRS:
-            table = self.content_tables.get(subdir)
-            if table is not None:
-                table.setRowCount(0)
-                table.setVisible(False)
+            list_widget = self.content_lists.get(subdir)
+            if list_widget is not None:
+                list_widget.clear_rows()
+            self.content_rows[subdir] = []
             empty = self.content_empty.get(subdir)
             if empty is not None:
                 empty.setText(text)
@@ -2818,33 +3574,7 @@ class InstanceDetail(QWidget):
     def _fill_resources(self, payload: dict) -> None:
         for subdir, items in payload.items():
             self._content_items[subdir] = items
-            table = self.content_tables[subdir]
-            table.setRowCount(0)
-            table.setRowCount(len(items))
-            for row, item in enumerate(items):
-                # Formatting codes are display-only: the item keeps the real name in UserRole, which
-                # is what selection/deletion resolves, and the tooltip shows it verbatim.
-                name_item = QTableWidgetItem(display_file_name(item.name))
-                name_item.setData(Qt.ItemDataRole.UserRole, item.name)
-                name_item.setIcon(content_icon(item.path))
-                name_item.setToolTip(item.name)
-                table.setItem(row, 0, name_item)
-                table.setItem(
-                    row, 1, NumericTableItem(human_size(item.size), float(item.size))
-                )
-                if table.columnCount() > 2:
-                    state = (
-                        "unknown"
-                        if item.enabled is None
-                        else ("enabled" if item.enabled else "disabled")
-                    )
-                    table.setItem(
-                        row, 2, QTableWidgetItem(tr("instances.detail.res.status." + state))
-                    )
-            table.setVisible(bool(items))
-            empty = self.content_empty[subdir]
-            empty.setText(self._content_empty_text.get(subdir, empty.text()))
-            empty.update_for(len(items))
+            self._refill_content(subdir)
         # Both lists load in one pass (they live on two sibling pages), but the status line must not
         # mix them into one meaningless total: say each count, so either page reads correctly.
         set_app_status(
@@ -2856,13 +3586,68 @@ class InstanceDetail(QWidget):
             ),
         )
 
+    def _content_updatable(self, subdir: str, item) -> bool:
+        if not identity.is_enabled():
+            return False
+        kind = "resourcepack" if subdir == "resourcepacks" else "shader"
+        value = self._identity_cache.get(f"{kind}:{item.name}")
+        installed = identity.version_from_filename(item.name)
+        return bool(value is not None and value.is_updatable(installed))
+
+    def _refill_content(self, subdir: str) -> None:
+        items = self._content_items.get(subdir, [])
+        tabs = self.content_tabs[subdir]
+        show_updates = tabs.mode() == "updates"
+        shown = [
+            item for item in items if not show_updates or self._content_updatable(subdir, item)
+        ]
+        list_widget = self.content_lists[subdir]
+        list_widget.clear_rows()
+        rows: list[_ContentRow] = []
+        for item in shown:
+            row = self._make_content_row(subdir, item)
+            rows.append(row)
+            list_widget.add_row(row)
+        self.content_rows[subdir] = rows
+        updates = sum(1 for item in items if self._content_updatable(subdir, item))
+        tabs.set_counts(len(items), updates)
+        list_widget.setVisible(True)
+        empty = self.content_empty[subdir]
+        empty.setText(self._content_empty_text.get(subdir, empty.text()))
+        empty.update_for(len(shown))
+        if not shown and show_updates and items:
+            empty.setText(tr("instances.detail.tab.updatable.empty"))
+
+    def _make_content_row(self, subdir: str, item) -> _ContentRow:
+        kind = "resourcepack" if subdir == "resourcepacks" else "shader"
+        display = display_file_name(item.name)
+        row = _ContentRow(display, key=f"{kind}:{item.name}", meta=human_size(item.size))
+        row.kind = kind
+        row.installed_version = identity.version_from_filename(item.name)
+        if subdir == "resourcepacks" and item.enabled is not None:
+            state = "enabled" if item.enabled else "disabled"
+            row.apply(status=tr("instances.detail.res.status." + state))
+        local_icon = pixmap_from_image_bytes(pack_icon_bytes(item.path))
+        row.set_icon_pixmap(local_icon, local=local_icon is not None)
+        if display != item.name:
+            row.raw_name = item.name
+        if identity.is_enabled() and row.key in self._identity_cache:
+            self._apply_identity(row, self._identity_cache[row.key])
+        elif not identity.is_enabled():
+            row.apply(detail=tr("instances.detail.identity.off"))
+        else:
+            query = identity.pack_search_name(item.name)
+            self._request_identity(row.key, name=query, modid="", kind=kind)
+        return row
+
     def delete_selected_content(self, subdir: str) -> None:
         if self._require_instance() is None:
             return
-        names = self._selected_values(self.content_tables[subdir])
-        if not names:
+        row = self._selected_row(self.content_lists[subdir], self.content_rows[subdir])
+        if row is None:
             set_app_status(self, tr("instances.detail.res.msg.need_select"), "warning")
             return
+        names = [row.key.split(":", 1)[1]]
         # A destructive question: Enter must keep the safe answer, so the default is the cancel
         # button and only an explicit click on 删除所选 removes anything.
         outcome = inwindow_dialog.confirm(
@@ -2911,8 +3696,8 @@ class InstanceDetail(QWidget):
     def _on_saves_failed(self, message: str) -> None:
         text = tr("instances.detail.saves.msg.load_fail", message)
         set_app_status(self, text, "error")
-        self.saves_table.setRowCount(0)
-        self.saves_table.setVisible(False)
+        self.saves_list.clear_rows()
+        self.saves_rows = []
         self.saves_empty.setText(text)
         self.saves_empty.setVisible(True)
 
@@ -2920,28 +3705,41 @@ class InstanceDetail(QWidget):
         self._saves = saves
         self._set_badge_count("saves", len(saves))
         self._sync_sidebar()
-        table = self.saves_table
-        table.setRowCount(0)
-        table.setRowCount(len(saves))
-        for row, save in enumerate(saves):
-            name_item = QTableWidgetItem(save.world_name)
-            if save.world_name != save.folder:
-                # The folder is what delete/backup act on, so keep it discoverable when level.dat
-                # renamed the world away from it.
-                name_item.setToolTip(save.folder)
-            table.setItem(row, 0, name_item)
-            table.setItem(row, 1, QTableWidgetItem(format_modified(save.modified)))
-            table.setItem(row, 2, NumericTableItem(human_size(save.size), float(save.size)))
-        table.setVisible(bool(saves))
+        self.saves_list.clear_rows()
+        self.saves_rows = []
+        for save in saves:
+            row = self._make_save_row(save)
+            self.saves_rows.append(row)
+            self.saves_list.add_row(row)
+        self.saves_list.setVisible(True)
         self.saves_empty.setText(self.saves_empty_text)
         self.saves_empty.update_for(len(saves))
         set_app_status(self, tr("instances.detail.saves.count", len(saves)))
 
+    def _make_save_row(self, save) -> _ContentRow:
+        row = _ContentRow(save.world_name, key=save.folder, detail=self._save_detail(save))
+        row.kind = "save"
+        row.set_icon_pixmap(pixmap_from_image_bytes(save.icon), local=save.icon is not None)
+        if save.world_name != save.folder:
+            # The folder is what delete/backup act on, so keep it discoverable when level.dat
+            # renamed the world away from it.
+            row.setToolTip(row.toolTip() + "\n" + save.folder)
+        return row
+
+    @staticmethod
+    def _save_detail(save) -> str:
+        """The second line: when the world was created, when it was last written, and its size."""
+        created = format_day(save.created) if save.created else ""
+        modified = format_day(save.modified)
+        if created:
+            times = tr("instances.detail.saves.times", created, modified)
+        else:
+            times = tr("instances.detail.saves.modified", modified)
+        return times + " · " + human_size(save.size)
+
     def _selected_save_folders(self) -> list[str]:
-        rows = sorted({item.row() for item in self.saves_table.selectedItems()})
-        return [
-            self._saves[row].folder for row in rows if 0 <= row < len(self._saves)
-        ]
+        row = self._selected_row(self.saves_list, self.saves_rows)
+        return [row.key] if row is not None else []
 
     def delete_selected_saves(self) -> None:
         if self._require_instance() is None:

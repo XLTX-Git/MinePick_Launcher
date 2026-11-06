@@ -1454,12 +1454,10 @@ def test_instance_open_folder_button(app, monkeypatch, ws_tmp):
 
 
 def test_instances_mods_panel_loads(app, monkeypatch, ws_tmp):
-    """Instances page mod management panel: loads the mods directory after selecting an instance, and toggles the enabled state by checking."""
+    """Instances page mod panel: loads the mods folder after selecting an instance, and toggles the enabled state from the row's checkbox."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_mods"))
     import json
     import zipfile
-
-    from PySide6.QtCore import Qt
 
     from launcher import config as config_mod
     from launcher.instances import Instance
@@ -1490,26 +1488,22 @@ def test_instances_mods_panel_loads(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        assert page.mods_table.columnCount() == 6
+        assert page.mods_table is page.detail.mods_list, "the legacy alias must point at the list"
         assert page.select_instance("t")
         import time
 
         for _ in range(100):
             app.processEvents()
             time.sleep(0.02)
-            if page.mods_table.rowCount() >= 2:
+            if len(page.detail.mods_rows) >= 2:
                 break
-        assert page.mods_table.rowCount() == 2
-        row_of = {
-            page.mods_table.item(r, 5).text(): r
-            for r in range(page.mods_table.rowCount())
-        }
-        assert page.mods_table.item(row_of["demo.jar"], 1).text() == "Demo Mod"
-        assert page.mods_table.item(row_of["off.jar"], 0).checkState() == Qt.CheckState.Unchecked
-        assert page.mods_table.item(row_of["demo.jar"], 0).checkState() == Qt.CheckState.Checked
+        rows = {row.key: row for row in page.detail.mods_rows}
+        assert set(rows) == {"mod:demo.jar", "mod:off.jar"}
+        assert rows["mod:demo.jar"].meta == "demo · 1.0"
+        assert rows["mod:off.jar"].check.isChecked() is False
+        assert rows["mod:demo.jar"].check.isChecked() is True
         # uncheck demo.jar -> rename to .disabled
-        item = page.mods_table.item(row_of["demo.jar"], 0)
-        item.setCheckState(Qt.CheckState.Unchecked)
+        rows["mod:demo.jar"].check.setChecked(False)
         app.processEvents()
         assert (mods_dir / "demo.jar.disabled").exists()
         assert not (mods_dir / "demo.jar").exists()

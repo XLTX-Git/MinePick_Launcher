@@ -15,12 +15,14 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""The instance detail's resource-pack, shader-pack and save pages read the instance folder.
+"""The instance detail's mod, resource-pack, shader-pack and save lists read the instance folder.
 
 Every row in these tests comes from a real file written into a temporary game directory; the
-"enabled" column comes from a real ``options.txt``; a save's name comes from a real (gzipped NBT)
-``level.dat``. The pages are therefore checked against the disk, not against fixtures of the
-view model, and the failure tests prove an unreadable folder is reported instead of shown as empty.
+"enabled" mark comes from a real ``options.txt``; a save's name and creation time come from a real
+(gzipped NBT) ``level.dat``. The pages are therefore checked against the disk, not against fixtures
+of the view model, and the failure tests prove an unreadable folder is reported instead of shown as
+empty. The online half of a row is off for the entire file (the suite-wide switch), so a row here is
+exactly what the disk says.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from gui import i18n, inwindow_dialog, paint_utils, theme
 from gui.pages import instance_detail as detail_module
 from gui.pages.instance_detail import (
     CONTENT_ICON_SIZE,
+    CONTENT_ROW_HEIGHT,
     TAB_MODS,
     TAB_RESOURCEPACKS,
     TAB_SAVES,
@@ -49,7 +52,7 @@ from gui.pages.instance_detail import (
     InstanceDetail,
     human_size,
 )
-from gui.pages.instance_files import format_modified
+from gui.pages.instance_files import format_day
 from launcher import config as config_mod
 from launcher.instances import INSTANCE_META_FILENAME, Instance
 
@@ -65,11 +68,14 @@ def app():
 # ---------------------------------------------------------------- fixtures
 
 
-def _level_dat(level_name: str) -> bytes:
-    """A minimal gzip-compressed NBT file with ``Data.LevelName`` - the game's own shape."""
+def _level_dat(level_name: str, created_ms: int | None = None) -> bytes:
+    """A minimal gzip-compressed NBT file with ``Data.LevelName`` (and ``Data.Created``)."""
     text = level_name.encode("utf-8")
     string_tag = b"\x08\x00\x09LevelName" + struct.pack(">H", len(text)) + text
-    data_compound = b"\x0a\x00\x04Data" + string_tag + b"\x00"
+    long_tag = (
+        b"\x04\x00\x07Created" + struct.pack(">q", created_ms) if created_ms is not None else b""
+    )
+    data_compound = b"\x0a\x00\x04Data" + string_tag + long_tag + b"\x00"
     return gzip.compress(b"\x0a\x00\x00" + data_compound + b"\x00")
 
 
@@ -133,17 +139,8 @@ def _close(app: QApplication, detail: InstanceDetail) -> None:
     i18n.set_language("zh_cn")
 
 
-def _table_text(detail: InstanceDetail, subdir: str) -> list[list[str]]:
-    table = detail.content_tables[subdir]
-    rows = []
-    for row in range(table.rowCount()):
-        rows.append(
-            [
-                table.item(row, column).text() if table.item(row, column) else ""
-                for column in range(table.columnCount())
-            ]
-        )
-    return rows
+def _rows(detail: InstanceDetail, subdir: str):
+    return detail.content_rows[subdir]
 
 
 def _png_bytes(color: str, size: int = 8) -> bytes:
@@ -166,16 +163,20 @@ def _write_pack(path: Path, icon: bytes | None = None, *, extra: str | None = No
             archive.writestr(extra, b"not an icon")
 
 
-def _write_mod(path: Path, *, mod_id: str, name: str, version: str) -> None:
+def _write_mod(
+    path: Path, *, mod_id: str, name: str, version: str, icon: bytes | None = None
+) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
             "fabric.mod.json",
             json.dumps({"id": mod_id, "name": name, "version": version}),
         )
+        if icon is not None:
+            archive.writestr("icon.png", icon)
 
 
-def _icon_image(icon) -> QImage:
-    return icon.pixmap(CONTENT_ICON_SIZE, CONTENT_ICON_SIZE).toImage()
+def _painted_image(row) -> QImage:
+    return row.painted_icon_pixmap().toImage()
 
 
 def _painted_pixels(image: QImage) -> list[tuple[int, QColor]]:
@@ -209,32 +210,29 @@ def test_resourcepack_rows_show_the_real_files_size_and_enabled_state(app, monke
 
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        table = detail.content_tables["resourcepacks"]
-        assert table.horizontalHeaderItem(2).text() == i18n.tr("instances.detail.col.status")
-        assert [row[0] for row in _table_text(detail, "resourcepacks")] == [
-            "Faithful 32x.zip",
-            "Fresh Animations.zip",
-        ]
-        assert [row[1] for row in _table_text(detail, "resourcepacks")] == [
-            human_size(5004),
-            human_size(900_004),
-        ]
-        assert [row[2] for row in _table_text(detail, "resourcepacks")] == [
+        rows = _rows(detail, "resourcepacks")
+        assert [row.title for row in rows] == ["Faithful 32x.zip", "Fresh Animations.zip"]
+        assert [row.meta for row in rows] == [human_size(5004), human_size(900_004)]
+        assert [row.status for row in rows] == [
             i18n.tr("instances.detail.res.status.enabled"),
             i18n.tr("instances.detail.res.status.disabled"),
         ]
         # Every row owns one 32px icon slot: its pack.png when present, the neutral cube otherwise.
-        for row in range(table.rowCount()):
-            image = _icon_image(table.item(row, 0).icon())
+        for row in rows:
+            image = _painted_image(row)
             assert image.width() == CONTENT_ICON_SIZE
             assert _painted_pixels(image), "the neutral cube must actually draw something"
-        assert not table.isHidden()
+        # The tabs sit above the list and always name both counts.
+        tabs = detail.content_tabs["resourcepacks"]
+        assert tabs.all_button.text() == i18n.tr("instances.detail.tab.all", 2)
+        assert tabs.update_button.text() == i18n.tr("instances.detail.tab.updatable", 0)
+        assert not detail.content_lists["resourcepacks"].isHidden()
         assert detail.content_empty["resourcepacks"].isHidden()
     finally:
         _close(app, detail)
 
 
-def test_shaderpack_rows_show_the_real_files_without_a_fake_status_column(app, monkeypatch, ws_tmp):
+def test_shaderpack_rows_show_the_real_files_without_a_fake_status_mark(app, monkeypatch, ws_tmp):
     _game, folder = _prepare(monkeypatch, ws_tmp)
     shaders = folder / "shaderpacks"
     shaders.mkdir()
@@ -242,15 +240,16 @@ def test_shaderpack_rows_show_the_real_files_without_a_fake_status_column(app, m
 
     detail = _detail(app, tab=TAB_SHADERPACKS)
     try:
-        table = detail.content_tables["shaderpacks"]
-        # options.txt has no shader-pack switch, so the page shows no "enabled" column at all.
-        assert table.columnCount() == 2
-        assert _table_text(detail, "shaderpacks") == [
-            ["ComplementaryReimagined.zip", human_size(2052)]
+        rows = _rows(detail, "shaderpacks")
+        assert [(row.title, row.meta) for row in rows] == [
+            ("ComplementaryReimagined.zip", human_size(2052))
         ]
+        # options.txt has no shader-pack switch, so the row carries no status at all.
+        assert rows[0].status == ""
         # No shader pack ships a pack.png (measured: none of BSL / Complementary / Photon / SEUS),
         # so the row carries the neutral cube rather than a letter tile or an empty slot.
-        image = _icon_image(table.item(0, 0).icon())
+        assert rows[0].icon_pixmap() is None
+        image = _painted_image(rows[0])
         assert image.width() == CONTENT_ICON_SIZE
         assert _painted_pixels(image)
     finally:
@@ -272,21 +271,23 @@ def test_a_pack_png_is_the_row_icon_and_a_missing_one_is_the_neutral_cube(
 
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        table = detail.content_tables["resourcepacks"]
-        rows = {table.item(row, 0).text(): row for row in range(table.rowCount())}
-        real = _icon_image(table.item(rows["Painted.zip"], 0).icon())
-        assert real.width() == CONTENT_ICON_SIZE and real.height() == CONTENT_ICON_SIZE
+        rows = {row.title: row for row in _rows(detail, "resourcepacks")}
+        real = rows["Painted.zip"].icon_pixmap()
+        assert real is not None, "a real pack.png must be decoded into the icon slot"
+        real_image = real.toImage()
+        assert real_image.width() == CONTENT_ICON_SIZE and real_image.height() == CONTENT_ICON_SIZE
         # The 8x8 solid pack.png is scaled into the 32px slot, so its centre is exactly its colour.
-        assert real.pixelColor(CONTENT_ICON_SIZE // 2, CONTENT_ICON_SIZE // 2) == QColor("#ff00ff")
+        assert real_image.pixelColor(CONTENT_ICON_SIZE // 2, CONTENT_ICON_SIZE // 2) == QColor(
+            "#ff00ff"
+        )
 
         for label in ("No Art.zip", "Corrupt.zip"):
-            neutral = _icon_image(table.item(rows[label], 0).icon())
-            assert neutral.size() == real.size(), "the placeholder must use the same slot"
+            assert rows[label].icon_pixmap() is None, "no artwork must mean the neutral placeholder"
+            neutral = _painted_image(rows[label])
+            assert neutral.size() == real_image.size(), "the placeholder must use the same slot"
             # No background block and no filled faces: the corners of the 32px slot stay transparent.
             assert neutral.pixelColor(2, 2).alpha() == 0
             assert neutral.pixelColor(CONTENT_ICON_SIZE - 3, CONTENT_ICON_SIZE - 3).alpha() == 0
-            # A thin FG_HINT outline at ~65%: present, but not as loud as a real pack icon. Corners
-            # where two strokes meet read a little stronger, so look at the body of an edge.
             body = [
                 color
                 for alpha, color in _painted_pixels(neutral)
@@ -318,9 +319,9 @@ def test_content_rows_never_draw_a_letter_tile(app, monkeypatch, ws_tmp):
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
         for subdir in ("resourcepacks", "shaderpacks"):
-            table = detail.content_tables[subdir]
-            assert table.rowCount() == 1
-            image = _icon_image(table.item(0, 0).icon())
+            rows = _rows(detail, subdir)
+            assert len(rows) == 1
+            image = _painted_image(rows[0])
             assert image.width() == CONTENT_ICON_SIZE
             assert _painted_pixels(image)
     finally:
@@ -340,10 +341,10 @@ def test_a_zip_read_error_falls_back_to_the_cube_without_crashing(app, monkeypat
     monkeypatch.setattr(zipfile.ZipFile, "read", explode)
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        table = detail.content_tables["resourcepacks"]
-        assert table.rowCount() == 1
-        assert table.item(0, 0).text() == "BrokenRead.zip"
-        image = _icon_image(table.item(0, 0).icon())
+        rows = _rows(detail, "resourcepacks")
+        assert len(rows) == 1
+        assert rows[0].title == "BrokenRead.zip"
+        image = _painted_image(rows[0])
         assert image.width() == CONTENT_ICON_SIZE
         assert _painted_pixels(image), "a failed read must still leave a visible placeholder"
     finally:
@@ -371,7 +372,7 @@ def test_pack_icons_are_read_locally_without_the_network(app, monkeypatch, ws_tm
 
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        assert detail.content_tables["resourcepacks"].rowCount() == 1
+        assert len(_rows(detail, "resourcepacks")) == 1
         assert calls == [], "a pack icon must never trigger a network fetch"
     finally:
         _close(app, detail)
@@ -394,16 +395,16 @@ def test_coded_names_are_stripped_for_display_but_kept_on_disk_and_in_the_toolti
 
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        table = detail.content_tables["resourcepacks"]
-        shown = [table.item(row, 0).text() for row in range(table.rowCount())]
+        rows = _rows(detail, "resourcepacks")
+        shown = [row.title for row in rows]
         assert "CozyUI+ v1.10 no-fonts .zip" in shown
         assert "VanillaTweaks v1.2.zip" in shown
         assert "\u00a7c" in shown, "a name with nothing left after stripping keeps its raw form"
         assert all("\u00a7" not in text for text in shown if text != "\u00a7c")
 
-        row = shown.index("CozyUI+ v1.10 no-fonts .zip")
-        assert table.item(row, 0).toolTip() == coded
-        # The disk is untouched: only the cell text differs.
+        row = rows[shown.index("CozyUI+ v1.10 no-fonts .zip")]
+        assert coded in row.toolTip(), "the tooltip carries the name as it is on disk"
+        # The disk is untouched: only the row's display text differs.
         assert {path.name for path in packs.iterdir()} == {coded, hexed, "\u00a7c"}
     finally:
         _close(app, detail)
@@ -423,12 +424,9 @@ def test_deleting_a_coded_pack_uses_the_real_file_name(app, monkeypatch, ws_tmp)
 
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        rows = [
-            detail.content_tables["resourcepacks"].item(row, 0).text()
-            for row in range(detail.content_tables["resourcepacks"].rowCount())
-        ]
-        assert "Unused.zip" in rows
-        detail.content_tables["resourcepacks"].selectRow(rows.index("Unused.zip"))
+        rows = _rows(detail, "resourcepacks")
+        index = next(i for i, row in enumerate(rows) if row.title == "Unused.zip")
+        detail.content_lists["resourcepacks"].setCurrentRow(index)
         detail.delete_selected_content("resourcepacks")
         _settle(app)
         assert not victim.exists(), "the delete used the stripped display name"
@@ -437,7 +435,7 @@ def test_deleting_a_coded_pack_uses_the_real_file_name(app, monkeypatch, ws_tmp)
         _close(app, detail)
 
 
-def test_the_mods_file_column_strips_codes_and_delete_uses_the_real_name(
+def test_the_mods_row_strips_codes_and_delete_uses_the_real_name(
     app, monkeypatch, ws_tmp
 ):
     _game, folder = _prepare(monkeypatch, ws_tmp)
@@ -447,16 +445,15 @@ def test_the_mods_file_column_strips_codes_and_delete_uses_the_real_name(
 
     detail = _detail(app, tab=TAB_MODS)
     try:
-        table = detail.mods_table
-        rows = [row for row in range(table.rowCount()) if table.item(row, 1).text() == "Sodium"]
-        assert rows, "the coded mod was not listed"
-        row = rows[0]
-        assert table.item(row, 5).text() == "[sodium] sodium-fabric-0.6.5.jar"
-        assert table.item(row, 5).toolTip() == jar.name
-        assert table.item(row, 5).data(Qt.ItemDataRole.UserRole) == jar.name
+        rows = detail.mods_rows
+        index = next(i for i, row in enumerate(rows) if "sodium" in row.meta)
+        row = rows[index]
+        # The first line carries the display name and the local identity, not the file name.
+        assert row.meta == "sodium · 0.6.5"
+        assert jar.name in row.toolTip(), "the tooltip shows the name as it is on disk"
         assert jar.exists(), "display stripping must not rename the file"
 
-        table.selectRow(row)
+        detail.mods_list.setCurrentRow(index)
         detail.delete_selected_mods()
         _settle(app)
         assert not jar.exists(), "the delete used the stripped display name"
@@ -464,13 +461,14 @@ def test_the_mods_file_column_strips_codes_and_delete_uses_the_real_name(
         _close(app, detail)
 
 
-def test_saves_read_level_name_modified_time_and_size(app, monkeypatch, ws_tmp):
+def test_saves_read_level_name_created_time_modified_time_and_size(app, monkeypatch, ws_tmp):
     _game, folder = _prepare(monkeypatch, ws_tmp)
     saves = folder / "saves"
     saves.mkdir()
+    created = int(time.time() * 1000) - 86400 * 30 * 1000
     creative = saves / "world-folder"
     creative.mkdir()
-    level_bytes = _level_dat("Creative World")
+    level_bytes = _level_dat("Creative World", created)
     (creative / "level.dat").write_bytes(level_bytes)
     (creative / "region").mkdir()
     (creative / "region" / "r.0.0.mca").write_bytes(b"\0" * 4096)
@@ -483,18 +481,22 @@ def test_saves_read_level_name_modified_time_and_size(app, monkeypatch, ws_tmp):
 
     detail = _detail(app, tab=TAB_SAVES)
     try:
-        table = detail.saves_table
+        rows = detail.saves_rows
         # Newest first: the folder without a LevelName is the newer one.
-        assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
-            "survival_2025",
-            "Creative World",
-        ]
-        assert table.item(1, 0).toolTip() == "world-folder"
-        assert table.item(1, 1).text() == format_modified(now - 60)
-        assert table.item(1, 2).text() == human_size(4096 + len(level_bytes))
-        assert not table.isHidden()
+        assert [row.title for row in rows] == ["survival_2025", "Creative World"]
+        assert rows[0].meta == ""
+        plain_size = (plain / "level.dat").stat().st_size
+        assert human_size(plain_size) in rows[0].detail
+        assert rows[1].meta == ""
+        assert human_size(4096 + len(level_bytes)) in rows[1].detail
+        # The second line is the world's own dates, not the folder's ("created 30 days ago").
+        assert format_day(created / 1000.0) in rows[1].detail
+        assert format_day(now - 60) in rows[1].detail
+        assert "world-folder" in rows[1].toolTip()
+        assert not detail.saves_list.isHidden()
         assert detail.saves_empty.isHidden()
         assert detail.nav_badges["saves"].text() == "2"
+        assert detail.saves_rows[0].height() >= CONTENT_ROW_HEIGHT
     finally:
         _close(app, detail)
 
@@ -511,7 +513,7 @@ def test_empty_folders_show_their_own_empty_state_and_an_open_button(app, monkey
             detail.content_empty["resourcepacks"].text()
             == i18n.tr("instances.detail.resourcepacks.empty")
         )
-        assert detail.content_tables["resourcepacks"].isHidden()
+        assert detail.content_lists["resourcepacks"].count() == 0
         buttons = [
             button.text()
             for button in detail.stack.widget(TAB_RESOURCEPACKS).findChildren(QPushButton)
@@ -530,7 +532,7 @@ def test_empty_folders_show_their_own_empty_state_and_an_open_button(app, monkey
         _settle(app)
         assert not detail.saves_empty.isHidden()
         assert detail.saves_empty.text() == i18n.tr("instances.detail.saves.empty")
-        assert detail.saves_table.isHidden()
+        assert detail.saves_list.count() == 0
         assert detail.saves_folder_button.isVisibleTo(detail)
     finally:
         _close(app, detail)
@@ -558,7 +560,7 @@ def test_deleting_a_resourcepack_asks_first_with_cancel_as_the_default(
     monkeypatch.setattr(detail_module.inwindow_dialog, "confirm", refuse)
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        detail.content_tables["resourcepacks"].selectRow(0)
+        detail.content_lists["resourcepacks"].setCurrentRow(0)
         detail.delete_selected_content("resourcepacks")
         assert calls and calls[0]["default"] is inwindow_dialog.Outcome.REJECTED
         assert calls[0]["accept_text"] == i18n.tr("instances.mods.delete")
@@ -581,16 +583,14 @@ def test_deleting_a_resourcepack_after_confirmation_removes_it(app, monkeypatch,
     )
     detail = _detail(app, tab=TAB_RESOURCEPACKS)
     try:
-        rows = [
-            detail.content_tables["resourcepacks"].item(row, 0).text()
-            for row in range(detail.content_tables["resourcepacks"].rowCount())
-        ]
-        detail.content_tables["resourcepacks"].selectRow(rows.index("unused.zip"))
+        rows = _rows(detail, "resourcepacks")
+        index = next(i for i, row in enumerate(rows) if row.title == "unused.zip")
+        detail.content_lists["resourcepacks"].setCurrentRow(index)
         detail.delete_selected_content("resourcepacks")
         _settle(app)
         assert not victim.exists()
         assert keep.exists()
-        assert [row[0] for row in _table_text(detail, "resourcepacks")] == ["keep.zip"]
+        assert [row.title for row in _rows(detail, "resourcepacks")] == ["keep.zip"]
     finally:
         _close(app, detail)
 
@@ -612,7 +612,7 @@ def test_deleting_a_save_asks_first_with_cancel_as_the_default(app, monkeypatch,
     monkeypatch.setattr(detail_module.inwindow_dialog, "confirm", refuse)
     detail = _detail(app, tab=TAB_SAVES)
     try:
-        detail.saves_table.selectRow(0)
+        detail.saves_list.setCurrentRow(0)
         detail.delete_selected_saves()
         assert calls and calls[0]["default"] is inwindow_dialog.Outcome.REJECTED
         assert world.is_dir(), "a cancelled confirmation must not delete a world"
@@ -638,14 +638,14 @@ def test_deleting_a_save_after_confirmation_removes_the_world(app, monkeypatch, 
     )
     detail = _detail(app, tab=TAB_SAVES)
     try:
-        assert [detail.saves_table.item(row, 0).text() for row in range(2)] == ["Keep", "Doomed"]
-        detail.saves_table.selectRow(1)
+        assert [row.title for row in detail.saves_rows] == ["Keep", "Doomed"]
+        detail.saves_list.setCurrentRow(1)
         detail.delete_selected_saves()
         _settle(app)
         assert not doomed.exists()
         assert keep.is_dir()
-        assert detail.saves_table.rowCount() == 1
-        assert detail.saves_table.item(0, 0).text() == "Keep"
+        assert len(detail.saves_rows) == 1
+        assert detail.saves_rows[0].title == "Keep"
     finally:
         _close(app, detail)
 
@@ -672,7 +672,7 @@ def test_backing_up_a_save_writes_a_zip_with_the_world_folder(app, monkeypatch, 
     )
     detail = _detail(app, tab=TAB_SAVES)
     try:
-        detail.saves_table.selectRow(0)
+        detail.saves_list.setCurrentRow(0)
         detail.backup_selected_save()
         _settle(app)
         assert destination.is_file()
@@ -707,7 +707,7 @@ def test_an_unreadable_resourcepack_folder_is_reported_not_shown_as_empty(
         assert statuses, "a failed read must reach the status line"
         assert "读取资源文件失败" in statuses[-1][0]
         assert statuses[-1][1] == "error"
-        assert detail.content_tables["resourcepacks"].isHidden()
+        assert detail.content_lists["resourcepacks"].count() == 0
         assert not detail.content_empty["resourcepacks"].isHidden()
         assert "读取资源文件失败" in detail.content_empty["resourcepacks"].text()
     finally:
@@ -727,7 +727,7 @@ def test_an_unreadable_saves_folder_is_reported_not_shown_as_empty(app, monkeypa
         _settle(app)
         assert statuses and "读取存档失败" in statuses[-1][0]
         assert statuses[-1][1] == "error"
-        assert detail.saves_table.isHidden()
+        assert detail.saves_list.count() == 0
         assert not detail.saves_empty.isHidden()
         assert "读取存档失败" in detail.saves_empty.text()
     finally:
@@ -753,6 +753,8 @@ def test_the_new_controls_are_in_the_keyboard_focus_chain(app, monkeypatch, ws_t
         for button in controls:
             assert button.focusPolicy() & Qt.FocusPolicy.TabFocus
             assert button.isVisibleTo(detail)
+        # The list is the single keyboard stop of a card view (its rows are not Tab stops).
+        assert detail.saves_list.focusPolicy() & Qt.FocusPolicy.TabFocus
         # Walk the widget's focus chain: every one of them is a tab stop in the shown page.
         chain: list[object] = []
         node = detail
@@ -763,6 +765,7 @@ def test_the_new_controls_are_in_the_keyboard_focus_chain(app, monkeypatch, ws_t
                 break
         for button in controls:
             assert button in chain
+        assert detail.saves_list in chain
         for button in page.findChildren(QPushButton):
             assert button.focusPolicy() & Qt.FocusPolicy.TabFocus
     finally:

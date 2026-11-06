@@ -83,6 +83,25 @@ def _no_disk_http_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_online_identity(monkeypatch):
+    """Keep the suite off Modrinth and off the developer's recognition cache.
+
+    The instance detail recognizes its content files online; a GUI test that merely opens an instance
+    would otherwise queue real requests (and read the developer's real ``content-identity`` cache).
+    The page asks :func:`gui.pages.instance_detail.online_identity_enabled` before anything is
+    queued, so switching that one answer off is enough - and the recognition module keeps its own
+    tests, which do not go through the page.
+    """
+    try:
+        from gui.pages import instance_detail
+    except ImportError:  # no Qt in this environment: the page cannot be built either
+        yield
+        return
+    monkeypatch.setattr(instance_detail, "online_identity_enabled", lambda: False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_startup_update_check(monkeypatch):
     """Keep the tests off the network and off slow real IO.
 
