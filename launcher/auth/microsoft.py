@@ -46,7 +46,7 @@ from launcher.i18n import describe_network_error, tr_core
 # Microsoft has retired the old public client id (e.g. 00000000402b5328, which returns AADSTS700016).
 # The current default comes from the build config in the PrismLauncher open-source project (GPL) source, and supports the device-code flow;
 # override via config msa_client_id or the MSA_CLIENT_ID environment variable (e.g. after registering your own Azure app).
-DEFAULT_CLIENT_ID = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb"
+DEFAULT_CLIENT_ID = "0ee64dd5-2ca2-442c-8ec5-2160216e7120"
 ENV_CLIENT_ID = "MSA_CLIENT_ID"
 
 
