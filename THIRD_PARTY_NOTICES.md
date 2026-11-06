@@ -1,12 +1,20 @@
 # Third-party notices / 第三方许可声明
 
-MinePick Launcher 0.4.2 — <https://github.com/xltxdocs/MinePick_Launcher>
+MinePick Launcher 0.4.2 — <https://github.com/XLTX-Git/MinePick_Launcher>
 
 MinePick Launcher itself is released under **GPL-3.0-only** (see [LICENSE](LICENSE)). It uses the third-party components and services listed below; their own licences and terms apply to those parts. Versions are read from the installed distribution metadata.
 
 Qt for Python (PySide6) is licensed under **LGPL-3.0** and is shipped as a dynamically loaded library that the launcher does not modify. The single-file build unpacks those Qt libraries from the archive into a temporary directory when it starts; Qt's source code is available from <https://code.qt.io/> and from the Qt release archives at <https://download.qt.io/official_releases/qt/>. The About page inside the application shows the same list, translated into the interface language.
 
 MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）。下列第三方组件与服务各自适用其自身许可与条款；版本号取自实际安装的发行版元数据。Qt for Python（PySide6）以 **LGPL-3.0** 授权，以动态库形式提供且未作修改；单文件构建在启动时会把这些 Qt 库从压缩包解压到临时目录。Qt 源码可从 <https://code.qt.io/> 与 <https://download.qt.io/official_releases/qt/> 获取。应用内的「关于」页展示同一份清单（按界面语言翻译）。
+
+Minecraft block textures - used only as version icons - belong to Mojang. MinePick Launcher does **not distribute** these images. The icon source order is: the user's own ``assets`` / ``client.jar`` → the user's local cache → fetched at runtime from mcmod.cn's image host and cached in the user's configuration directory. Neither the source tree nor the installer contains a Minecraft image.
+
+原版方块材质（仅用作版本图标）归 Mojang 所有；本项目不分发这些图片。图标的来源顺序为：用户本机的 ``assets`` / ``client.jar`` → 用户本机缓存 → 运行时从 mcmod.cn 的图床获取并缓存到用户配置目录。源码与安装包都不包含任何 Minecraft 图片。
+
+The names and logos of the mod loaders (Fabric, Forge, NeoForge, Quilt) belong to their respective projects. MinePick Launcher does **not distribute** these logos: neither the source tree nor the installer contains one. They are fetched at runtime from their official websites and cached in the user's local configuration directory (NeoForge's mark comes from the official NeoForged art repository on GitHub); when a logo cannot be fetched, the interface shows its own drawn substitute icon.
+
+各模组加载器的名称与标志归其各自项目所有；本项目不在分发包内包含这些标志，仅在运行时从其官方网站获取并缓存到用户本地配置目录，取不到时显示自绘的替代图标。NeoForge 的标志取自 NeoForged 官方美术仓库。
 
 ## Dependencies / 依赖项
 
@@ -52,6 +60,10 @@ MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）�
   - using the operating system's certificate store
   - 使用系统证书存储
   - <https://github.com/sethmlarson/truststore>
+- **Lucide** — `ISC`
+  - sidebar navigation icons
+  - 侧栏导航图标
+  - <https://lucide.dev/>
 - **anyio 4.14.2, certifi 2026.7.22, httpcore 1.0.9, h11 0.16.0, idna 3.18**
   - pulled in by httpx; no separate notice applies, their licences are listed per package in the distribution metadata
   - 由 httpx 引入；各自的许可条款见对应发行版的元数据
@@ -76,6 +88,10 @@ MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）�
   - mod search
   - 模组检索
   - <https://www.curseforge.com/minecraft>
+- **BMCLAPI**
+  - Minecraft resource mirror service (mainland-China acceleration)
+  - Minecraft 资源镜像服务（国内加速）
+  - <https://github.com/bangbang93/BMCLAPI>
 - **Fabric**
   - the Fabric loader and its metadata
   - Fabric 加载器与其元数据
@@ -110,7 +126,7 @@ MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）�
 - **MinePick Launcher Classic**
   - the predecessor of this launcher, archived.
   - 本启动器的前身，已归档。
-  - <https://github.com/xltxdocs/MinePick_Launcher_Classic>
+  - <https://github.com/XLTX-Git/MinePick_Launcher_Classic>
 - **TheDarkLord234**
   - community member and author of MinePick Launcher Revision — thanks for exploring this space together.
   - 社区伙伴，《MinePick Launcher Revision》的作者，感谢在生态探索上的并肩前行。

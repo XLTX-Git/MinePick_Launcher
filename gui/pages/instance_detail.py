@@ -15,10 +15,10 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Instance detail panel: header plus the 概览 / 模组 / 资源 / 存档 / 设置 tabs.
+"""Instance detail page: a 200px, eight-entry sidebar next to the instance content.
 
 The panel owns everything that acts on one instance (launching, mods, resource
-packs, saves, per-instance settings). It never touches widgets from a worker
+packs, shaders, saves, settings, diagnosis). It never touches widgets from a worker
 thread: every background job reports through @gui.workers.run_in_background with
 bound-method callbacks, so a result that arrives after the page was torn down is
 dropped by the owner guard instead of dereferencing a freed C++ object.
@@ -27,25 +27,28 @@ dropped by the owner guard instead of dereferencing a freed C++ object.
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
-    QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -53,14 +56,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n
+from gui import block_icons, i18n, inwindow_dialog, nav_icons, paint_utils, theme
 from gui.accessibility_launch import (
     prepare_launch_accessibility,
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
+from gui.pages.instance_files import (
+    backup_save,
+    format_modified,
+    read_enabled_resource_packs,
+    scan_content_files,
+    scan_saves,
+)
 from gui.view_state import remember_column_widths
 from gui.widgets import (
+    PAGE_HEADER_GAP,
     ElidedLabel,
     EmptyState,
     NoWheelDoubleSpinBox,
@@ -71,6 +82,7 @@ from gui.widgets import (
     name_table_for_screen_readers,
     set_app_status,
     style_form,
+    style_page_layout,
 )
 from gui.workers import ProgressBridge, run_in_background
 from launcher import config, paths
@@ -90,6 +102,7 @@ from launcher.instances import (
     rename_instance,
     reset_instance_settings,
     resolve_instance,
+    set_instance_icon,
     set_instance_settings,
     update_instance,
     update_instance_note,
@@ -100,19 +113,73 @@ from launcher.launch import (
     resolve_launch_account,
     run_process,
 )
+from launcher.meta import block_textures
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
-from launcher.mods.modrinth import (
-    delete_installed_content,
-    list_installed_content,
-    resolve_content_dir,
-)
+from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
 
 tr = i18n.tr
 
-# Stacked-page order of the horizontal tab row
-TAB_OVERVIEW, TAB_MODS, TAB_RESOURCES, TAB_SAVES, TAB_SETTINGS, TAB_DIAGNOSIS = range(6)
-_TAB_KEYS = ("overview", "mods", "resources", "saves", "settings", "diagnosis")
+# Stacked-page order. The sidebar owns the visual order; the stack is a sequence of pages only.
+TAB_OVERVIEW = 0
+TAB_MODS = 1
+TAB_RESOURCEPACKS = 2
+TAB_SHADERPACKS = 3
+TAB_SAVES = 4
+TAB_MODIFY = 5
+TAB_EXPORT = 6
+TAB_DIAGNOSIS = 7
+# Compatibility aliases for callers that predate the split of resources and the merge of settings
+# into the overview. New code should use the explicit constants above.
+TAB_RESOURCES = TAB_RESOURCEPACKS
+TAB_SETTINGS = TAB_OVERVIEW
+
+_RESOURCE_TABS = (TAB_RESOURCEPACKS, TAB_SHADERPACKS)
 _CONTENT_SUBDIRS = ("resourcepacks", "shaderpacks")
+
+#: Sidebar metrics are product constants, not layout accidents: the width gate in
+#: tests/test_instance_navigation.py measures every translated label against them.
+SIDEBAR_WIDTH = 200
+SIDEBAR_ITEM_HEIGHT = 36
+SIDEBAR_GROUP_HEIGHT = 20
+SIDEBAR_PADDING_X = 12
+SIDEBAR_ICON_SIZE = 18
+SIDEBAR_ICON_GAP = 8
+SIDEBAR_ACCENT_BAR = 3
+
+# One entry per stacked page. (key, stack index, icon name, translation key)
+_SECTIONS = (
+    ("overview", TAB_OVERVIEW, "overview", "instances.detail.nav.overview"),
+    ("mods", TAB_MODS, "mods", "instances.detail.nav.mods"),
+    ("resourcepacks", TAB_RESOURCEPACKS, "resourcepacks", "instances.detail.nav.resourcepacks"),
+    ("shaderpacks", TAB_SHADERPACKS, "shaderpacks", "instances.detail.nav.shaderpacks"),
+    ("saves", TAB_SAVES, "saves", "instances.detail.nav.saves"),
+    ("modify", TAB_MODIFY, "modify", "instances.detail.nav.modify"),
+    ("export", TAB_EXPORT, "export", "instances.detail.nav.export"),
+    ("diagnosis", TAB_DIAGNOSIS, "diagnosis", "instances.detail.nav.diagnosis"),
+)
+#: Group headers in the sidebar: (translation key, item key that starts the group).
+_GROUPS = (
+    ("instances.detail.nav.group.resources", "mods"),
+    ("instances.detail.nav.group.actions", "modify"),
+)
+_SEPARATOR_BEFORE = "diagnosis"
+_BADGED_SECTIONS = ("mods", "saves")
+_LOG_TAIL_CHARS = 64 * 1024
+
+#: The overview's icon control: a 40px tile inside a 50px icon button (the stylesheet's 4px padding
+#: plus its 1px border leave exactly the 40px the cards use, so the two surfaces show the same size).
+DETAIL_ICON_SIZE = 40
+DETAIL_ICON_BUTTON_SIZE = 50
+
+#: The picker's rule tiles: 48px icons in 64px buttons, four per row (two rows of four in the card).
+ICON_PICKER_ICON = 48
+ICON_PICKER_TILE = 64
+ICON_PICKER_COLUMNS = 4
+
+#: The letter tile each resource/shader row carries inside its name cell. 20px keeps the 30px table
+#: row compact; the tile is drawn with the same painter as the resource list's placeholder icons.
+CONTENT_ICON_SIZE = 20
+CONTENT_ICON_RADIUS = 6
 
 
 def human_size(size: int) -> str:
@@ -126,16 +193,56 @@ def human_size(size: int) -> str:
     return f"{size} " + tr("unit.bytes")
 
 
-def directory_size(path: Path) -> int:
-    """Total size of the regular files below a directory (0 when it is unreadable)."""
-    total = 0
+def save_custom_icon(source: Path, folder: Path) -> str:
+    """Copy a picture into the instance folder as ``icon.<ext>``, scaled to at most 512px.
+
+    The launcher owns this copy: the picture is re-encoded instead of being referenced in place, so
+    moving or deleting the original does not break the icon. A picture larger than
+    :data:`gui.block_icons.CUSTOM_ICON_MAX_EDGE` is scaled down proportionally first, so a camera
+    JPEG cannot put megabytes into the instance folder. The write goes through a ``.tmp`` file and
+    ``Path.replace``, so an interrupted save cannot leave a truncated picture behind.
+
+    Returns the stored value (``custom:icon.png``). Raises ``ValueError`` with a user-facing reason
+    when the file is not a readable PNG/JPEG/WebP; the caller shows it in the launcher's own dialog.
+    """
+    source = Path(source)
+    suffix = source.suffix.lower()
+    if suffix not in block_icons.CUSTOM_ICON_SUFFIXES:
+        raise ValueError(tr("instances.icon.error.format"))
+    image = QImage(str(source))
+    if image.isNull():
+        raise ValueError(tr("instances.icon.error.corrupt"))
+    if max(image.width(), image.height()) > block_icons.CUSTOM_ICON_MAX_EDGE:
+        image = image.scaled(
+            block_icons.CUSTOM_ICON_MAX_EDGE,
+            block_icons.CUSTOM_ICON_MAX_EDGE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    target_suffix = ".jpg" if suffix in (".jpg", ".jpeg") else suffix
+    fmt = target_suffix[1:].upper()  # png -> PNG, jpg -> JPG, webp -> WEBP
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / ("icon" + target_suffix)
+    tmp = folder / (target.name + ".tmp")
     try:
-        for entry in path.rglob("*"):
-            if entry.is_file():
-                total += entry.stat().st_size
-    except OSError:
-        return total
-    return total
+        saved = image.save(str(tmp), fmt, 90 if fmt == "JPG" else -1)
+        if not saved and fmt == "WEBP":
+            # A Qt build without the WebP writer: store PNG pixels instead of failing the whole
+            # upload (the value follows the file name, so the choice keeps working).
+            fmt, target = "PNG", folder / "icon.png"
+            tmp = folder / (target.name + ".tmp")
+            saved = image.save(str(tmp), fmt)
+        if not saved:
+            raise ValueError(tr("instances.icon.error.write"))
+        tmp.replace(target)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    return block_icons.CUSTOM_ICON_PREFIX + target.name
 
 
 def _delete_content_file(resolved, subdir: str, name: str) -> int:
@@ -150,6 +257,154 @@ def _delete_content_file(resolved, subdir: str, name: str) -> int:
     return 1
 
 
+class _IconChooserDialog(inwindow_dialog.InWindowDialog):
+    """The instance-icon picker: eight rule tiles, then 恢复自动 and 从文件选择….
+
+    A tile applies its rule on the click (the callback writes the metadata), so the preview in the
+    card and the card behind the backdrop change immediately; Esc closes and keeps what was applied.
+    "Restore automatic" applies the empty value and closes. "Choose from file…" closes the card and
+    returns ``wants_file``: the page then opens the native ``QFileDialog``, so a native window is
+    never stacked inside this blocking in-window card.
+
+    Keyboard: every tile and both bottom buttons are ordinary tab stops, and Tab stays trapped
+    inside the card by :class:`InWindowDialog`. Focus starts on the tile currently in force.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        *,
+        current: str,
+        previews: dict[str, QPixmap],
+        auto_pixmap: QPixmap,
+        current_pixmap: QPixmap,
+        on_pick,
+    ) -> None:
+        super().__init__(parent, title=tr("instances.icon.title"), severity="question")
+        self.current = str(current or "")
+        self.wants_file = False
+        self._previews = dict(previews)
+        self._auto_pixmap = auto_pixmap
+        self._current_pixmap = current_pixmap
+        self._on_pick = on_pick
+        self.add_body(tr("instances.icon.hint"))
+
+        preview_row = QHBoxLayout()
+        preview_row.setContentsMargins(0, 0, 0, 0)
+        preview_row.setSpacing(12)
+        self.preview = QLabel()
+        self.preview.setFixedSize(ICON_PICKER_ICON, ICON_PICKER_ICON)
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setAccessibleName(tr("instances.icon.title"))
+        self.preview_caption = QLabel("")
+        self.preview_caption.setObjectName("overlayBody")
+        self.preview_caption.setWordWrap(True)
+        preview_row.addWidget(self.preview)
+        preview_row.addWidget(self.preview_caption, 1)
+        self.card_layout.addLayout(preview_row)
+
+        self.rule_buttons: dict[str, QPushButton] = {}
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(8)
+        for index, rule in enumerate(block_icons.RULE_ICON_NAMES):
+            button = QPushButton()
+            button.setObjectName("iconButton")
+            button.setCheckable(True)
+            # Inside a QDialog every QPushButton is autoDefault by default, which would make Enter
+            # activate an arbitrary tile with an invisible default ring. Enter closes the card; Space
+            # activates the focused tile.
+            button.setAutoDefault(False)
+            button.setDefault(False)
+            button.setFixedSize(ICON_PICKER_TILE, ICON_PICKER_TILE)
+            button.setIconSize(QSize(ICON_PICKER_ICON, ICON_PICKER_ICON))
+            button.setIcon(QIcon(previews[rule]))
+            label = tr("instances.icon.rule." + rule)
+            button.setAccessibleName(label)
+            button.setToolTip(label)
+            button.clicked.connect(partial(self._pick_rule, rule))
+            self._group.addButton(button)
+            self.rule_buttons[rule] = button
+            grid.addWidget(
+                button,
+                index // ICON_PICKER_COLUMNS,
+                index % ICON_PICKER_COLUMNS,
+                Qt.AlignmentFlag.AlignCenter,
+            )
+        self.card_layout.addLayout(grid)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addStretch(1)
+        self.auto_button = QPushButton(tr("instances.icon.auto"))
+        self.auto_button.setObjectName("secondaryButton")
+        self.auto_button.setAutoDefault(False)
+        self.auto_button.setDefault(False)
+        self.auto_button.clicked.connect(self._choose_auto)
+        self.file_button = QPushButton(tr("instances.icon.file"))
+        self.file_button.setObjectName("primaryButton")
+        self.file_button.setAutoDefault(False)
+        self.file_button.setDefault(False)
+        self.file_button.clicked.connect(self._choose_file)
+        row.addWidget(self.auto_button)
+        row.addWidget(self.file_button)
+        self.card_layout.addLayout(row)
+        self._sync_preview()
+
+    # ---------- behaviour ----------
+
+    def _pick_rule(self, rule: str) -> None:
+        """Apply a rule now; the preview only follows when the write really happened."""
+        if self._on_pick(rule):
+            self.current = rule
+            self._sync_preview()
+
+    def _choose_auto(self) -> None:
+        if self._on_pick(""):
+            self.current = ""
+            self._sync_preview()
+            self.accept()
+
+    def _choose_file(self) -> None:
+        self.wants_file = True
+        self.accept()
+
+    def _sync_preview(self) -> None:
+        """Mark the tile in force and show what it looks like, plus its name."""
+        self._group.setExclusive(False)
+        for rule, button in self.rule_buttons.items():
+            button.setChecked(rule == self.current)
+        self._group.setExclusive(True)
+        if not self.current:
+            caption = tr("instances.icon.auto.name")
+            pixmap = self._auto_pixmap
+        elif self.current in self._previews:
+            caption = tr("instances.icon.rule." + self.current)
+            pixmap = self._previews[self.current]
+        elif self.current.startswith(block_icons.CUSTOM_ICON_PREFIX):
+            caption = tr("instances.icon.custom")
+            pixmap = self._current_pixmap
+        else:
+            # A rule name this build does not know: the reader shows the automatic rule, so the
+            # preview says "automatic" rather than silently pretending it is a custom picture.
+            caption = tr("instances.icon.auto.name")
+            pixmap = self._auto_pixmap
+        self.preview.setPixmap(pixmap)
+        text = tr("instances.icon.current", caption)
+        self.preview_caption.setText(text)
+        self.preview.setAccessibleName(text)
+
+    def _focus_initial(self) -> None:
+        """Start on the rule currently in force, not on a button the user has to hunt for."""
+        target = self.rule_buttons.get(self.current)
+        if target is None:
+            target = next(iter(self.rule_buttons.values()), None)
+        if target is not None:
+            target.setFocus(Qt.FocusReason.TabFocusReason)
+
+
 class _ModsTable(QTableWidget):
     """Mods table: supports drag-and-drop of .jar files to install."""
 
@@ -161,6 +416,14 @@ class _ModsTable(QTableWidget):
         self.setSelectionMode(QTableWidget.ExtendedSelection)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         self.horizontalHeader().setStretchLastSection(True)
+        # The header is text only. Qt draws a sort indicator - a small chevron in a section's corner
+        # that reads as a dropdown - as soon as sorting is on, and it lands in 启用 because that is
+        # the first column. There is nothing to sort by here: scan_mods() already returns the rows in
+        # display-name order, and sorting would re-order the list on every refill by the checkbox
+        # column (every disabled mod first). The enabled/disabled *filter* is the toolbar combo
+        # (全部 / 已启用 / 已禁用), which is where a filter belongs.
+        self.setSortingEnabled(False)
+        self.horizontalHeader().setSortIndicatorShown(False)
 
     def _jar_urls(self, event) -> bool:
         data = event.mimeData()
@@ -199,11 +462,15 @@ class _ModsTable(QTableWidget):
 class InstanceDetail(QWidget):
     """Right-hand column of the instances page: everything about one instance."""
 
-    changed = Signal()  # metadata shown in the list changed (name / note / isolation)
+    changed = Signal()  # metadata shown in the list changed (name / note / isolation / icon)
     deleted = Signal(str)  # the instance folder is gone
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # Scopes the light sheet's paper-painted scroll viewport to this panel. The panel itself stays
+        # transparent on purpose: it is a tabbed inspector, not a card, so its tables keep being the
+        # white surfaces floating on the page paper.
+        self.setObjectName("instanceDetail")
         self.instance_id: str | None = None
         self.instance = None  # launcher.instances.Instance
         self.resolved = None  # launcher.instances.ResolvedInstance
@@ -216,30 +483,217 @@ class InstanceDetail(QWidget):
         self._isolation_warned = False
         self._loaded_tabs: set[int] = set()
         self._content_items: dict[str, list] = {sub: [] for sub in _CONTENT_SUBDIRS}
-        self._saves: list[tuple[str, float, int]] = []
+        #: The normal empty-state text per content page, restored after a failed read replaced it
+        #: with the error message (an unreadable folder must not keep looking like a load failure).
+        self._content_empty_text: dict[str, str] = {}
+        self._saves: list = []
+        self._badge_counts: dict[str, int] = {key: 0 for key in _BADGED_SECTIONS}
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        layout.addWidget(self._build_header())
-        layout.addLayout(self._build_tab_row())
-        layout.addWidget(self.stack, 1)
+        self.tab_group = QButtonGroup(self)
+        self.tab_group.setExclusive(True)
+        self.tabs: list[QPushButton] = []
+        self.nav_buttons: dict[str, QPushButton] = {}
+        self.nav_labels: dict[str, QLabel] = {}
+        self.nav_icon_labels: dict[str, QLabel] = {}
+        self.nav_badges: dict[str, QLabel] = {}
+        self.nav_group_labels: list[QLabel] = []
+
+        main = QHBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(16)
+        self.sidebar = self._build_sidebar()
+        main.addWidget(self.sidebar)
+
+        content = QWidget()
+        content.setObjectName("instanceContent")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        # Exactly PAGE_HEADER_GAP below the header, like every top-level page: this layout holds only
+        # the header and the section stack, so its spacing is that one distance.
+        content_layout.setSpacing(PAGE_HEADER_GAP)
+        content_layout.addWidget(self._build_header())
+
+        self.stack = QStackedWidget()
+        self.stack.setObjectName("instanceContentStack")
+        for builder in (
+            self._build_overview,
+            self._build_mods,
+            self._build_resourcepacks_page,
+            self._build_shaderpacks_page,
+            self._build_saves,
+            self._build_modify,
+            self._build_export,
+            self._build_diagnosis,
+        ):
+            self.stack.addWidget(builder())
+
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setObjectName("instanceContentScroll")
+        # WCAG 4.1.2: a QScrollArea is a keyboard stop of its own and must say what it scrolls.
+        self.content_scroll.setAccessibleName(tr("a11y.instance_content"))
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.content_scroll.setWidget(self.stack)
+        content_layout.addWidget(self.content_scroll, 1)
+        main.addWidget(content, 1)
 
         self.tab_group.idClicked.connect(self._on_tab_clicked)
         self.launch_button.clicked.connect(self._on_launch_clicked)
         self.crash_button.clicked.connect(self.open_crash_viewer)
+        self.tabs[TAB_OVERVIEW].setChecked(True)
+        self._sync_sidebar()
 
     # ---------- construction ----------
 
+    def _build_sidebar(self) -> QScrollArea:
+        """The eight-entry sidebar: 200px wide, 36px items, 20px group headings, scrollable.
+
+        Items are real checkable buttons (a screen reader announces the label and the badge, and the
+        keyboard can reach every section). Labels are QLabels rather than button text so the 12px
+        horizontal padding, 18px icon, 8px gap and badge can be measured against a fixed width; the
+        corresponding gate lives in tests/test_instance_navigation.py.
+        """
+        scroll = QScrollArea()
+        scroll.setObjectName("instanceNavScroll")
+        scroll.setAccessibleName(tr("a11y.instance_sidebar"))
+        scroll.setFixedWidth(SIDEBAR_WIDTH)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        body = QWidget()
+        body.setObjectName("instanceNavBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+
+        group_starts = {item_key: title_key for title_key, item_key in _GROUPS}
+        for section in _SECTIONS:
+            key, index, _icon, label_key = section
+            if key in group_starts:
+                group = QLabel(tr(group_starts[key]))
+                group.setObjectName("instanceNavGroup")
+                group.setFixedHeight(SIDEBAR_GROUP_HEIGHT)
+                group.setWordWrap(False)
+                body_layout.addSpacing(8)
+                body_layout.addWidget(group)
+                self.nav_group_labels.append(group)
+            if key == _SEPARATOR_BEFORE:
+                body_layout.addSpacing(8)
+                separator = QFrame()
+                separator.setObjectName("instanceNavSeparator")
+                separator.setFixedHeight(1)
+                body_layout.addWidget(separator)
+                body_layout.addSpacing(8)
+            body_layout.addWidget(self._build_nav_item(key, index, label_key))
+        body_layout.addStretch(1)
+        scroll.setWidget(body)
+        self.sidebar_body = body
+        return scroll
+
+    def _build_nav_item(self, key: str, index: int, label_key: str) -> QPushButton:
+        button = QPushButton()
+        button.setObjectName("instanceNavItem")
+        button.setCheckable(True)
+        button.setFixedHeight(SIDEBAR_ITEM_HEIGHT)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        button.setAccessibleName(tr(label_key))
+        button.setToolTip(tr(label_key))
+
+        row = QHBoxLayout(button)
+        row.setContentsMargins(SIDEBAR_PADDING_X, 0, SIDEBAR_PADDING_X, 0)
+        row.setSpacing(SIDEBAR_ICON_GAP)
+
+        icon = QLabel()
+        icon.setObjectName("instanceNavIcon")
+        icon.setFixedSize(SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE)
+        # The whole line belongs to the button: child labels must not swallow its click.
+        icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        label = QLabel(tr(label_key))
+        label.setObjectName("instanceNavLabel")
+        label.setWordWrap(False)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        badge = QLabel("")
+        badge.setObjectName("instanceNavBadge")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedHeight(18)
+        badge.setVisible(False)
+        badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        row.addWidget(icon)
+        row.addWidget(label, 1)
+        row.addWidget(badge)
+
+        self.tab_group.addButton(button, index)
+        self.tabs.append(button)
+        self.nav_buttons[key] = button
+        self.nav_labels[key] = label
+        self.nav_icon_labels[key] = icon
+        if key in _BADGED_SECTIONS:
+            self.nav_badges[key] = badge
+        else:
+            badge.deleteLater()
+        return button
+
+    def _nav_colors(self) -> tuple[str, str]:
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        return tokens["FG_HINT"], tokens["ACCENT"]
+
+    def _sync_sidebar(self) -> None:
+        """Update icon colours, selected-label properties and the keyboard focus cue."""
+        resting, selected = self._nav_colors()
+        for key, _index, icon_name, _label_key in _SECTIONS:
+            button = self.nav_buttons[key]
+            active = button.isChecked()
+            color = selected if active else resting
+            self.nav_icon_labels[key].setPixmap(
+                nav_icons.nav_icon(icon_name, color, SIDEBAR_ICON_SIZE).pixmap(
+                    SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE
+                )
+            )
+            label = self.nav_labels[key]
+            if bool(label.property("active")) != active:
+                label.setProperty("active", active)
+                label.style().unpolish(label)
+                label.style().polish(label)
+            badge = self.nav_badges.get(key)
+            if badge is not None and bool(badge.property("active")) != active:
+                badge.setProperty("active", active)
+                badge.style().unpolish(badge)
+                badge.style().polish(badge)
+
+    def _on_tab_clicked(self, index: int) -> None:
+        self._show_section(index)
+
+    def _show_section(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        self._sync_sidebar()
+        self._ensure_tab_data(index)
+
+    def set_tab(self, index: int) -> None:
+        """Activate a section programmatically (used by tests and cross-page jumps)."""
+        index = max(0, min(index, len(self.tabs) - 1))
+        self.tabs[index].setChecked(True)
+        self._show_section(index)
+
     def _build_header(self) -> QWidget:
+        """This page's header: the instance name over its id and directory.
+
+        The second level keeps the heading type: the name and the two hint lines are styled by the
+        same sheet rule as the launch version block (through their own object names). The header
+        paints no coloured block and no card. The back control lives above it in
+        :class:`InstanceDetailPage`; top-level pages no longer draw a header at all.
+        """
         box = QWidget()
         self.name_label = QLabel(tr("instances.detail.value.none"))
-        self.name_label.setObjectName("title")
+        self.name_label.setObjectName("instanceDetailTitle")
         self.id_label = QLabel("")
-        self.id_label.setObjectName("hint")
+        self.id_label.setObjectName("instanceDetailHint")
         # Paths read better elided on the left: the tail (folder name) is the informative part
         self.dir_label = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideLeft)
-        self.dir_label.setObjectName("hint")
+        self.dir_label.setObjectName("instanceDetailHint")
         self.launch_button = QPushButton(tr("instances.launch"))
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
@@ -250,50 +704,55 @@ class InstanceDetail(QWidget):
         row.addWidget(self.launch_button)
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
         layout.addLayout(row)
         layout.addWidget(self.dir_label)
         return box
 
-    def _build_tab_row(self) -> QHBoxLayout:
-        """Horizontal tab row: checkable buttons driving a QStackedWidget.
+    def _make_card(self) -> tuple[QWidget, QVBoxLayout]:
+        """One white detail card, with the shared 16px inset and 12px inner rhythm."""
+        card = QWidget()
+        card.setObjectName("instanceCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        return card, layout
 
-        The theme styles `QPushButton#categoryTab` (the versions page uses the same
-        chip row) but has no QTabWidget appearance, so the tabs are plain buttons.
-        """
-        self.tab_group = QButtonGroup(self)
-        self.tab_group.setExclusive(True)
-        self.tabs: list[QPushButton] = []
-        self.stack = QStackedWidget()
-        builders = (
-            self._build_overview,
-            self._build_mods,
-            self._build_resources,
-            self._build_saves,
-            self._build_settings,
-            self._build_diagnosis,
-        )
-        for index, (key, builder) in enumerate(zip(_TAB_KEYS, builders, strict=True)):
-            button = QPushButton(tr("instances.detail.tab." + key))
-            button.setCheckable(True)
-            button.setObjectName("categoryTab")
-            self.tab_group.addButton(button, index)
-            self.tabs.append(button)
-            self.stack.addWidget(builder())
-        self.tabs[TAB_OVERVIEW].setChecked(True)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
-        for button in self.tabs:
-            row.addWidget(button)
-        row.addStretch(1)
-        return row
+    def _card_heading(self, key: str) -> QLabel:
+        label = QLabel(tr(key))
+        label.setObjectName("instanceCardTitle")
+        label.setWordWrap(False)
+        return label
 
     def _build_overview(self) -> QWidget:
+        """Overview and instance settings, merged into one page with two cards."""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
+
+        card, card_layout = self._make_card()
+        self.overview_card = card
+        # The icon is the card's one picture and its change control: a 40px tile in a real button
+        # (keyboard reachable, named for screen readers), with the card title beside it.
+        self.icon_button = QPushButton()
+        self.icon_button.setObjectName("iconButton")
+        self.icon_button.setFixedSize(DETAIL_ICON_BUTTON_SIZE, DETAIL_ICON_BUTTON_SIZE)
+        self.icon_button.setIconSize(QSize(DETAIL_ICON_SIZE, DETAIL_ICON_SIZE))
+        self.icon_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.icon_button.setAccessibleName(tr("instances.icon.change"))
+        self.icon_button.setToolTip(tr("instances.icon.change"))
+        self.icon_button.setEnabled(False)
+        self.icon_button.clicked.connect(self.choose_icon)
+        heading_row = QHBoxLayout()
+        heading_row.setContentsMargins(0, 0, 0, 0)
+        heading_row.setSpacing(12)
+        heading_row.addWidget(self.icon_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        heading_row.addWidget(
+            self._card_heading("instances.detail.card.overview"), 1, Qt.AlignmentFlag.AlignVCenter
+        )
+        card_layout.addLayout(heading_row)
         form = QFormLayout()
         style_form(form)
         self.overview_values: dict[str, QLabel] = {}
@@ -317,13 +776,13 @@ class InstanceDetail(QWidget):
             )
             self.overview_values[key] = value
             form.addRow(title, value)
-        layout.addLayout(form)
+        card_layout.addLayout(form)
 
         self.legacy_label = QLabel("")
         self.legacy_label.setObjectName("hint")
         self.legacy_label.setWordWrap(True)
         self.legacy_label.setVisible(False)
-        layout.addWidget(self.legacy_label)
+        card_layout.addWidget(self.legacy_label)
 
         self.open_folder_button = QPushButton(tr("instances.open_folder"))
         self.open_folder_button.setObjectName("secondaryButton")
@@ -333,8 +792,6 @@ class InstanceDetail(QWidget):
         self.crash_button.setObjectName("secondaryButton")
         self.rename_button = QPushButton(tr("instances.rename"))
         self.rename_button.setObjectName("secondaryButton")
-        self.export_button = QPushButton(tr("instances.export"))
-        self.export_button.setObjectName("secondaryButton")
         self.delete_button = QPushButton(tr("instances.delete"))
         self.delete_button.setObjectName("dangerButton")
         files_row = QHBoxLayout()
@@ -346,17 +803,20 @@ class InstanceDetail(QWidget):
         manage_row = QHBoxLayout()
         manage_row.setContentsMargins(0, 0, 0, 0)
         manage_row.setSpacing(6)
-        for button in (self.rename_button, self.export_button, self.delete_button):
+        for button in (self.rename_button, self.delete_button):
             manage_row.addWidget(button)
         manage_row.addStretch(1)
-        layout.addLayout(files_row)
-        layout.addLayout(manage_row)
+        card_layout.addLayout(files_row)
+        card_layout.addLayout(manage_row)
+        layout.addWidget(card)
+
+        # The former 设置 tab is now the second card of 概览: one destination, no duplicate navigation.
+        layout.addWidget(self._build_settings())
         layout.addStretch(1)
 
         self.open_folder_button.clicked.connect(self.open_instance_folder)
         self.open_logs_button.clicked.connect(self.open_logs_folder)
         self.rename_button.clicked.connect(self.rename)
-        self.export_button.clicked.connect(self.export)
         self.delete_button.clicked.connect(self.delete)
         return page
 
@@ -441,58 +901,77 @@ class InstanceDetail(QWidget):
         self.mods_install_button.clicked.connect(self.choose_mod_files)
         return page
 
-    def _build_resources(self) -> QWidget:
+    def _build_resourcepacks_page(self) -> QWidget:
+        self.content_tables: dict[str, QTableWidget] = {}
+        self.content_empty: dict[str, EmptyState] = {}
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(12)
         banner, self.res_banner_label = self._build_share_banner()
         self.res_banner = banner
         layout.addWidget(banner)
-
-        inner = QWidget()
-        inner_layout = QVBoxLayout(inner)
-        inner_layout.setContentsMargins(0, 0, 0, 0)
-        inner_layout.setSpacing(12)
-        self.content_tables: dict[str, QTableWidget] = {}
-        self.content_empty: dict[str, EmptyState] = {}
-        for subdir, title_key in (
-            ("resourcepacks", "mods.tab.resourcepacks"),
-            ("shaderpacks", "mods.tab.shaderpacks"),
-        ):
-            box, table, empty = self._build_content_section(subdir, tr(title_key))
-            self.content_tables[subdir] = table
-            self.content_empty[subdir] = empty
-            inner_layout.addWidget(box, 1)
-        scroll = QScrollArea()
-        # WCAG 4.1.2: the tab is a keyboard stop of its own and had no name. It is named after what it
-        # scrolls, so it tells a screen-reader user which tab the focus just entered.
-        scroll.setAccessibleName(tr("instances.detail.tab.resources"))
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(inner)
-        layout.addWidget(scroll, 1)
+        box = self._build_content_section(
+            "resourcepacks",
+            tr("instances.detail.nav.resourcepacks"),
+            tr("instances.detail.resourcepacks.empty"),
+            with_status=True,
+        )
+        layout.addWidget(box, 1)
         return page
 
-    def _build_content_section(self, subdir: str, title: str):
+    def _build_shaderpacks_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        banner, self.shader_banner_label = self._build_share_banner()
+        self.shader_banner = banner
+        layout.addWidget(banner)
+        box = self._build_content_section(
+            "shaderpacks",
+            tr("instances.detail.nav.shaderpacks"),
+            tr("instances.detail.shaderpacks.empty"),
+        )
+        layout.addWidget(box, 1)
+        return page
+
+    def _build_content_section(
+        self, subdir: str, title: str, empty_text: str, *, with_status: bool = False
+    ) -> QWidget:
+        """One file list: title, [icon|name|size|enabled], empty state, open/delete.
+
+        The icon is drawn into the name cell with the same letter-tile painter the resource list
+        uses, so a row is one line of text with a picture rather than a second column of blank
+        squares. Resource packs carry the enabled state the game recorded; shader packs do not have
+        one in options.txt, so their table has no status column instead of a fake "off".
+        """
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         title_label = QLabel(title)
         title_label.setObjectName("title")
-        table = QTableWidget(0, 2)
+        table = QTableWidget(0, 3 if with_status else 2)
         name_table_for_screen_readers(table, title)
-        table.setHorizontalHeaderLabels(
-            [tr("instances.detail.col.name"), tr("instances.detail.col.size")]
-        )
+        headers = [tr("instances.detail.col.name"), tr("instances.detail.col.size")]
+        if with_status:
+            headers.append(tr("instances.detail.col.status"))
+        table.setHorizontalHeaderLabels(headers)
         apply_no_focus_outline(table)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setSelectionMode(QTableWidget.ExtendedSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setIconSize(QSize(CONTENT_ICON_SIZE, CONTENT_ICON_SIZE))
         table.horizontalHeader().setStretchLastSection(True)
         table.setColumnWidth(0, 280)
+        if with_status:
+            table.setColumnWidth(1, 90)
         remember_column_widths(table, "instance_" + subdir)
-        empty = EmptyState(tr("mods.installed.empty"))
+        empty = EmptyState(empty_text)
+        self.content_tables[subdir] = table
+        self.content_empty[subdir] = empty
+        self._content_empty_text[subdir] = empty_text
         open_button = QPushButton(tr("instances.detail.open_folder"))
         open_button.setObjectName("secondaryButton")
         delete_button = QPushButton(tr("instances.mods.delete"))
@@ -506,10 +985,10 @@ class InstanceDetail(QWidget):
         buttons.addWidget(delete_button)
         buttons.addStretch(1)
         layout.addWidget(title_label)
-        layout.addWidget(table, 1)
-        layout.addWidget(empty)
         layout.addLayout(buttons)
-        return box, table, empty
+        layout.addWidget(empty, 1)
+        layout.addWidget(table, 1)
+        return box
 
     def _build_saves(self) -> QWidget:
         page = QWidget()
@@ -527,37 +1006,54 @@ class InstanceDetail(QWidget):
         )
         apply_no_focus_outline(self.saves_table)
         self.saves_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.saves_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.saves_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.saves_table.horizontalHeader().setStretchLastSection(True)
         self.saves_table.setColumnWidth(0, 260)
+        # "2026-11-06 18:40" does not fit the default column; an elided date is not a date.
+        self.saves_table.setColumnWidth(1, 150)
         remember_column_widths(self.saves_table, "instance_saves")
         self.saves_empty = EmptyState(tr("instances.detail.saves.empty"))
+        self.saves_empty_text = tr("instances.detail.saves.empty")
         self.saves_refresh_button = QPushButton(tr("instances.mods.refresh"))
         self.saves_refresh_button.setObjectName("secondaryButton")
         self.saves_folder_button = QPushButton(tr("instances.detail.saves.open_folder"))
         self.saves_folder_button.setObjectName("secondaryButton")
+        self.saves_backup_button = QPushButton(tr("instances.detail.saves.backup"))
+        self.saves_backup_button.setObjectName("secondaryButton")
+        self.saves_delete_button = QPushButton(tr("instances.mods.delete"))
+        self.saves_delete_button.setObjectName("dangerButton")
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(6)
-        buttons.addWidget(self.saves_refresh_button)
-        buttons.addWidget(self.saves_folder_button)
+        for button in (
+            self.saves_refresh_button,
+            self.saves_folder_button,
+            self.saves_backup_button,
+            self.saves_delete_button,
+        ):
+            buttons.addWidget(button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
+        layout.addWidget(self.saves_empty, 1)
         layout.addWidget(self.saves_table, 1)
-        layout.addWidget(self.saves_empty)
         self.saves_refresh_button.clicked.connect(self.reload_saves)
         self.saves_folder_button.clicked.connect(self.open_saves_folder)
+        self.saves_backup_button.clicked.connect(self.backup_selected_save)
+        self.saves_delete_button.clicked.connect(self.delete_selected_saves)
         return page
 
     def _build_diagnosis(self) -> QWidget:
-        """Diagnostics tab: the last recorded diagnosis plus the crash reports on disk."""
-        box = QWidget()
-        layout = QVBoxLayout(box)
+        """Diagnosis and the live latest.log, merged into one page (two cards)."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
 
+        card, card_layout = self._make_card()
+        card_layout.addWidget(self._card_heading("instances.detail.tab.diagnosis"))
         self.diagnosis_empty = EmptyState(tr("instances.detail.diagnosis.none"))
-        layout.addWidget(self.diagnosis_empty)
+        card_layout.addWidget(self.diagnosis_empty)
 
         self.diagnosis_code = QLabel("")
         self.diagnosis_code.setObjectName("title")
@@ -573,8 +1069,7 @@ class InstanceDetail(QWidget):
         self.diagnosis_body.setAlignment(Qt.AlignmentFlag.AlignTop)
         for widget in (self.diagnosis_code, self.diagnosis_time, self.diagnosis_body):
             widget.setVisible(False)
-            layout.addWidget(widget)
-        layout.addStretch(1)
+            card_layout.addWidget(widget)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -586,10 +1081,80 @@ class InstanceDetail(QWidget):
         row.addWidget(self.diagnosis_copy_button)
         row.addWidget(self.diagnosis_reports_label)
         row.addStretch(1)
-        layout.addLayout(row)
+        card_layout.addLayout(row)
+        layout.addWidget(card)
+
+        log_card, log_layout = self._make_card()
+        log_layout.addWidget(self._card_heading("instances.detail.log.title"))
+        self.log_path_label = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideLeft)
+        self.log_path_label.setObjectName("hint")
+        self.log_empty = QLabel(tr("instances.detail.log.empty"))
+        self.log_empty.setObjectName("emptyState")
+        self.log_empty.setWordWrap(True)
+        self.log_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setObjectName("instanceLogView")
+        self.log_view.setReadOnly(True)
+        self.log_view.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.log_view.setAccessibleName(tr("instances.detail.log.title"))
+        self.log_view.setMinimumHeight(240)
+        self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_view.setVisible(False)
+        log_layout.addWidget(self.log_path_label)
+        log_layout.addWidget(self.log_empty)
+        log_layout.addWidget(self.log_view, 1)
+        layout.addWidget(log_card)
+        layout.addStretch(1)
+
         self._diagnosis_lines: list[str] = []
         self.diagnosis_copy_button.setEnabled(False)
-        return box
+        return page
+
+    def _build_modify(self) -> QWidget:
+        return self._build_not_implemented("modify")
+
+    def _build_export(self) -> QWidget:
+        return self._build_not_implemented("export")
+
+    def _build_not_implemented(self, key: str) -> QWidget:
+        """An honest placeholder page: the capability is absent, so no control pretends to offer it."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        card, card_layout = self._make_card()
+        heading = self._card_heading("instances.detail.not_implemented.title")
+        body = QLabel(tr("instances.detail.not_implemented." + key))
+        body.setObjectName("hint")
+        body.setWordWrap(True)
+        card_layout.addWidget(heading)
+        card_layout.addWidget(body)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _refresh_log(self) -> None:
+        """Show the tail of this instance's latest.log directly in the diagnosis page."""
+        if self.resolved is None:
+            self.log_path_label.setText("")
+            self.log_view.clear()
+            self.log_view.setVisible(False)
+            self.log_empty.setVisible(True)
+            return
+        log_path = self.resolved.launch_dir / "logs" / "latest.log"
+        self.log_path_label.setText(str(log_path))
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if len(text) > _LOG_TAIL_CHARS:
+            text = text[-_LOG_TAIL_CHARS:]
+        self.log_view.setPlainText(text)
+        self.log_view.setVisible(bool(text))
+        self.log_empty.setVisible(not text)
 
     def refresh_diagnosis(self) -> None:
         """Show the diagnosis recorded for this instance, plus its crash report count."""
@@ -626,6 +1191,7 @@ class InstanceDetail(QWidget):
         except OSError:
             count = 0
         self.diagnosis_reports_label.setText(tr("instances.detail.diagnosis.reports", count))
+        self._refresh_log()
 
     def effective_dir(self) -> Path:
         """The directory the game actually uses for this instance (its own folder when isolated)."""
@@ -641,10 +1207,9 @@ class InstanceDetail(QWidget):
         set_app_status(self, tr("instances.detail.diagnosis.copied"))
 
     def _build_settings(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        card, layout = self._make_card()
+        self.settings_card = card
+        layout.addWidget(self._card_heading("instances.detail.card.settings"))
         form = QFormLayout()
         style_form(form)
 
@@ -691,8 +1256,10 @@ class InstanceDetail(QWidget):
         self.memory_spin = NoWheelDoubleSpinBox()
         self.memory_spin.setRange(1.0, 64.0)
         self.memory_spin.setSingleStep(0.5)
-        self.memory_spin.setSuffix(" " + tr("unit.gb"))
-        self.memory_spin.setAccessibleName(tr("instances.detail.row.memory"))
+        # The number is the value; the row label carries the unit, so no suffix here.
+        self.memory_spin.setAccessibleName(
+            tr("instances.detail.row.memory") + tr("unit.gb.label")
+        )
         memory_box = QWidget()
         memory_layout = QVBoxLayout(memory_box)
         memory_layout.setContentsMargins(0, 0, 0, 0)
@@ -706,21 +1273,43 @@ class InstanceDetail(QWidget):
         self.game_args_edit = QLineEdit()
         self.game_args_edit.setPlaceholderText(tr("instances.detail.settings.game_args"))
         self.game_args_edit.setAccessibleName(tr("instances.detail.settings.game_args"))
+        # Direct connect is the only way to hand the game a --server, and it is per instance: the launch
+        # page no longer shows a field (it read as an advanced duplicate of a normal launch), so the value
+        # lives here with the other per-instance settings and the launch page reads it when it launches.
+        self.server_edit = QLineEdit()
+        self.server_edit.setPlaceholderText(tr("launch.server.placeholder"))
+        self.server_edit.setAccessibleName(tr("launch.server"))
 
         form.addRow(tr("instances.detail.row.isolation"), self.isolation_combo)
         form.addRow(tr("instances.detail.row.java"), java_box)
-        form.addRow(tr("instances.detail.row.memory"), memory_box)
-        # Form row labels are plain labels, so these two elide with a tooltip: theirs are the longest
-        # strings in the form ("JVM arguments (empty = follow global)") and they set a hard floor on
-        # the detail panel's minimum width.
         form.addRow(
-            ElidedLabel(tr("instances.detail.settings.jvm_args")),
-            self.jvm_args_edit,
+            tr("instances.detail.row.memory") + tr("unit.gb.label"), memory_box
         )
-        form.addRow(
-            ElidedLabel(tr("instances.detail.settings.game_args")),
-            self.game_args_edit,
+        # Direct connect: the row label is a plain label, not an ElidedLabel. The form measures its label
+        # column before the stylesheet's 13px font reaches the widget (the fallback font measures this
+        # string ~40% narrower), so an eliding label either collapsed to nothing or, with a minimum width,
+        # overlapped its own field. _fill_settings re-measures this one in the painted font and lets the
+        # form re-run its column sizing, which keeps the label beside the field instead of under it.
+        self.server_label = QLabel(tr("launch.server"))
+        form.addRow(self.server_label, self.server_edit)
+        self.settings_form = form
+        # These two used to be ElidedLabels. Their horizontal size policy is Ignored so a value can
+        # shrink, but QFormLayout then measured the label column before the stylesheet font arrived and
+        # reserved zero width for both, which made "JVM 参数" and "游戏参数" disappear entirely. A plain
+        # wrapping label is the correct control here: the full sentence stays readable even in the long
+        # languages, and it never asks the form for a minimum width that would compete with the fields.
+        self.jvm_args_label = QLabel(tr("instances.detail.settings.jvm_args"))
+        self.jvm_args_label.setWordWrap(True)
+        self.jvm_args_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
+        self.game_args_label = QLabel(tr("instances.detail.settings.game_args"))
+        self.game_args_label.setWordWrap(True)
+        self.game_args_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        form.addRow(self.jvm_args_label, self.jvm_args_edit)
+        form.addRow(self.game_args_label, self.game_args_edit)
         layout.addLayout(form)
 
         self.settings_save_button = QPushButton(tr("instances.detail.settings.save"))
@@ -733,7 +1322,6 @@ class InstanceDetail(QWidget):
         buttons.addWidget(self.settings_reset_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
-        layout.addStretch(1)
 
         self.java_follow_check.toggled.connect(self._on_java_follow_toggled)
         self.memory_follow_check.toggled.connect(self._on_memory_follow_toggled)
@@ -743,7 +1331,7 @@ class InstanceDetail(QWidget):
         self.settings_reset_button.clicked.connect(self._reset_settings)
         self._on_java_follow_toggled(True)
         self._on_memory_follow_toggled(True)
-        return page
+        return card
 
     def _build_share_banner(self) -> tuple[QWidget, QLabel]:
         """Warning strip shown on the mods/resources tabs of a non-isolated instance."""
@@ -781,9 +1369,53 @@ class InstanceDetail(QWidget):
             for subdir in _CONTENT_SUBDIRS:
                 self._content_items[subdir] = []
             self._saves = []
+            for key in _BADGED_SECTIONS:
+                self._set_badge_count(key, 0)
             self._clear_rows()
             return
         self.reload()
+
+    def _set_badge_count(self, key: str, count: int) -> None:
+        """Store a sidebar badge count; zero hides the badge (and its width)."""
+        self._badge_counts[key] = max(0, int(count))
+        badge = self.nav_badges[key]
+        badge.setText(str(self._badge_counts[key]))
+        badge.setVisible(self._badge_counts[key] > 0)
+        label_key = next(
+            label_key for section_key, _i, _icon, label_key in _SECTIONS if section_key == key
+        )
+        name = tr(label_key)
+        if self._badge_counts[key]:
+            name += f" ({self._badge_counts[key]})"
+        self.nav_buttons[key].setAccessibleName(name)
+
+    def _refresh_badge_counts(self) -> None:
+        """Cheap directory counts before the async table scans publish their exact values."""
+        if self.resolved is None:
+            for key in _BADGED_SECTIONS:
+                self._set_badge_count(key, 0)
+            return
+        mods = 0
+        try:
+            if self.resolved.mods_dir.is_dir():
+                mods = sum(
+                    1
+                    for entry in self.resolved.mods_dir.iterdir()
+                    if entry.is_file()
+                    and entry.name.lower().endswith((".jar", ".jar.disabled"))
+                )
+        except OSError:
+            mods = 0
+        saves = 0
+        saves_dir = self.resolved.launch_dir / "saves"
+        try:
+            if saves_dir.is_dir():
+                saves = sum(1 for entry in saves_dir.iterdir() if entry.is_dir())
+        except OSError:
+            saves = 0
+        self._set_badge_count("mods", mods)
+        self._set_badge_count("saves", saves)
+        self._sync_sidebar()
 
     def reload(self) -> None:
         """Re-read the instance, resolve it and refresh every part of the panel."""
@@ -806,20 +1438,41 @@ class InstanceDetail(QWidget):
         self._fill_overview()
         self._fill_settings()
         self._fill_banners()
+        self._refresh_badge_counts()
         self._loaded_tabs = set()
         self._reload_mods()
-        if self.stack.currentIndex() in (TAB_RESOURCES, TAB_SAVES):
+        if self.stack.currentIndex() in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS):
             self._ensure_tab_data(self.stack.currentIndex(), force=True)
 
     def _clear_rows(self) -> None:
         self.name_label.setText(tr("instances.detail.value.none"))
         self.id_label.setText("")
         self.dir_label.setText("")
+        self.icon_button.setIcon(QIcon())
+        self.icon_button.setEnabled(False)
         for value in self.overview_values.values():
             value.setText(tr("instances.detail.value.none"))
         self.legacy_label.setVisible(False)
         self.mods_banner.setVisible(False)
         self.res_banner.setVisible(False)
+        self.shader_banner.setVisible(False)
+        self.log_path_label.setText("")
+        self.log_view.clear()
+        self.log_view.setVisible(False)
+        self.log_empty.setVisible(True)
+        for subdir, table in self.content_tables.items():
+            table.setRowCount(0)
+            table.setVisible(False)
+            empty = self.content_empty.get(subdir)
+            if empty is not None:
+                empty.setText(self._content_empty_text.get(subdir, ""))
+                empty.setVisible(True)
+        self.saves_table.setRowCount(0)
+        self.saves_table.setVisible(False)
+        self.saves_empty.setText(self.saves_empty_text)
+        self.saves_empty.setVisible(True)
+        for key in _BADGED_SECTIONS:
+            self._set_badge_count(key, 0)
 
     def _fill_header(self) -> None:
         inst = self.instance
@@ -853,6 +1506,7 @@ class InstanceDetail(QWidget):
         else:
             values["last_played"].setText(tr("instances.detail.value.never"))
         values["note"].setText(inst.note or tr("instances.detail.value.no_note"))
+        self._fill_icon()
         legacy = legacy_instances_dir(self.game_dir)
         if legacy is not None:
             self.legacy_label.setText(tr("instances.detail.legacy.notice", str(legacy)))
@@ -890,6 +1544,7 @@ class InstanceDetail(QWidget):
         for banner, label in (
             (self.mods_banner, self.mods_banner_label),
             (self.res_banner, self.res_banner_label),
+            (self.shader_banner, self.shader_banner_label),
         ):
             if isolated:
                 banner.setVisible(False)
@@ -913,10 +1568,28 @@ class InstanceDetail(QWidget):
             self.memory_spin.setValue(min(max(float(memory or 1.0), 1.0), 64.0))
             self.jvm_args_edit.setText(settings.jvm_args)
             self.game_args_edit.setText(settings.game_args)
+            self.server_edit.setText(settings.server)
         finally:
             self._filling = False
         self._on_java_follow_toggled(self.java_follow_check.isChecked())
         self._on_memory_follow_toggled(self.memory_follow_check.isChecked())
+        self._sync_server_label_width()
+
+    def _sync_server_label_width(self) -> None:
+        """Size the direct-connect label in the font that is actually painted.
+
+        ``_build_settings`` explains why: QFormLayout measured this label before the stylesheet's 13px UI
+        font reached the widget, and the fallback font measures the string about 40% narrower, so the
+        column it reserved clipped the text. ``ensurePolished`` puts that font in force before measuring
+        (it is also what makes this work when the page is filled before it is first shown), and
+        invalidating the form once makes the reserved column and the painted text agree. Idempotent: the
+        width is only written when it changes, so a reload does not churn the layout.
+        """
+        self.server_label.ensurePolished()
+        width = self.server_label.fontMetrics().horizontalAdvance(self.server_label.text()) + 2
+        if self.server_label.minimumWidth() != width:
+            self.server_label.setMinimumWidth(width)
+            self.settings_form.invalidate()
 
     def _on_java_follow_toggled(self, follow: bool) -> None:
         self.java_edit.setEnabled(not follow)
@@ -925,22 +1598,13 @@ class InstanceDetail(QWidget):
     def _on_memory_follow_toggled(self, follow: bool) -> None:
         self.memory_spin.setEnabled(not follow)
 
-    def _on_tab_clicked(self, index: int) -> None:
-        self.stack.setCurrentIndex(index)
-        self._ensure_tab_data(index)
-
-    def set_tab(self, index: int) -> None:
-        """Activate a tab programmatically (used by tests and cross-page jumps)."""
-        self.tabs[index].setChecked(True)
-        self._on_tab_clicked(index)
-
     def _ensure_tab_data(self, index: int, force: bool = False) -> None:
-        if index not in (TAB_RESOURCES, TAB_SAVES, TAB_DIAGNOSIS):
+        if index not in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS):
             return
         if not force and index in self._loaded_tabs:
             return
         self._loaded_tabs.add(index)
-        if index == TAB_RESOURCES:
+        if index in _RESOURCE_TABS:
             self.reload_resources()
         elif index == TAB_SAVES:
             self.reload_saves()
@@ -954,6 +1618,105 @@ class InstanceDetail(QWidget):
             set_app_status(self, tr("instances.msg.need_select"), "warning")
             return None
         return self.instance_id
+
+    def _fill_icon(self) -> None:
+        """Show the effective icon: the chosen rule / picture, else the automatic rule."""
+        if self.instance is None:
+            self.icon_button.setIcon(QIcon())
+            self.icon_button.setEnabled(False)
+            return
+        pixmap = block_icons.instance_icon_pixmap(
+            self.instance,
+            instance_dir(self.game_dir, self.instance.id),
+            DETAIL_ICON_SIZE,
+            game_dir=self.game_dir,
+            cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
+        )
+        self.icon_button.setIcon(QIcon(pixmap))
+        self.icon_button.setEnabled(True)
+
+    def choose_icon(self) -> None:
+        """Open the in-window icon picker: eight rules, 恢复自动 and 从文件选择…."""
+        if self._require_instance() is None or self.instance is None:
+            return
+        cache_root = block_textures.texture_cache_root(paths.launcher_dir())
+        folder = instance_dir(self.game_dir, self.instance.id)
+        dialog = _IconChooserDialog(
+            self,
+            current=self.instance.icon,
+            # The eight tiles are rendered once for the whole card instead of on every repaint.
+            previews={
+                rule: block_icons.rule_icon_pixmap(
+                    rule, ICON_PICKER_ICON, game_dir=self.game_dir, cache_root=cache_root
+                )
+                for rule in block_icons.RULE_ICON_NAMES
+            },
+            auto_pixmap=block_icons.automatic_icon_pixmap(
+                self.instance.id, ICON_PICKER_ICON, game_dir=self.game_dir, cache_root=cache_root
+            ),
+            current_pixmap=block_icons.instance_icon_pixmap(
+                self.instance,
+                folder,
+                ICON_PICKER_ICON,
+                game_dir=self.game_dir,
+                cache_root=cache_root,
+            ),
+            on_pick=self._apply_icon,
+        )
+        dialog.ask()
+        wants_file = dialog.wants_file
+        dialog.deleteLater()
+        if wants_file:
+            # The native picker opens after the in-window card has closed: two modal surfaces must
+            # never be stacked, and the card's job here is only to ask what comes next.
+            self._choose_icon_file()
+
+    def _apply_icon(self, value: str) -> bool:
+        """Store one icon choice and refresh the page; False when it could not be saved."""
+        if self.instance_id is None:
+            return False
+        try:
+            inst = set_instance_icon(self.instance_id, value, self.game_dir)
+        except InstancesError as exc:
+            set_app_status(self, tr("instances.icon.msg.fail", str(exc)), "error")
+            return False
+        # Only the icon changed: repaint the one control and let the list rebuild itself. A full
+        # reload here would re-scan the mods folder on every tile click, and the list's own refresh
+        # (triggered by the signal below) already re-reads the instance.
+        self.instance = inst
+        self._fill_icon()
+        self.changed.emit()  # the card list shows the new icon immediately
+        if not value:
+            set_app_status(self, tr("instances.icon.msg.auto", inst.name))
+        elif value.startswith(block_icons.CUSTOM_ICON_PREFIX):
+            set_app_status(self, tr("instances.icon.msg.saved", tr("instances.icon.custom")))
+        else:
+            set_app_status(
+                self, tr("instances.icon.msg.saved", tr("instances.icon.rule." + value))
+            )
+        return True
+
+    def _choose_icon_file(self) -> None:
+        """Pick a picture with the native dialog, then store a copy inside the instance folder."""
+        if self.instance_id is None:
+            return
+        chosen, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            tr("instances.icon.file"),
+            "",
+            tr("instances.icon.file_filter"),
+        )
+        if not chosen:
+            return
+        folder = instance_dir(self.game_dir, self.instance_id)
+        try:
+            value = save_custom_icon(Path(chosen), folder)
+        except (ValueError, OSError) as exc:
+            inwindow_dialog.warning(
+                self, tr("instances.icon.title"), tr("instances.icon.error.invalid", str(exc))
+            )
+            return
+        self._apply_icon(value)
 
     @staticmethod
     def _open_path(target: Path) -> None:
@@ -1011,11 +1774,11 @@ class InstanceDetail(QWidget):
         if self._require_instance() is None:
             return
         old_id = self.instance_id
-        new_id, ok = QInputDialog.getText(
+        new_id, ok = inwindow_dialog.get_text(
             self,
             tr("instances.rename.dialog"),
             tr("instances.rename.prompt"),
-            text=old_id,
+            value=old_id,
         )
         new_id = new_id.strip()
         if not ok or not new_id or new_id == old_id:
@@ -1033,11 +1796,14 @@ class InstanceDetail(QWidget):
     def edit_note(self) -> None:
         if self._require_instance() is None:
             return
-        text, ok = QInputDialog.getMultiLineText(
+        # multiline: a note is free text. The old getMultiLineText() returned "" for an emptied box
+        # with ok=True, which clears the note - get_text() keeps that.
+        text, ok = inwindow_dialog.get_text(
             self,
             tr("instances.note"),
             tr("instances.note.prompt"),
-            self.instance.note if self.instance else "",
+            value=self.instance.note if self.instance else "",
+            multiline=True,
         )
         if not ok:
             return
@@ -1087,14 +1853,13 @@ class InstanceDetail(QWidget):
             dependents = []
         if dependents:
             message += "\n\n" + tr("instances.detail.delete.dependents", ", ".join(dependents))
-        answer = QMessageBox.question(
+        # No default_yes: delete_instance() cannot be undone, so the safe answer stays the default
+        # one, exactly as the old box's "No" default button did.
+        if not inwindow_dialog.question(
             self,
             tr("instances.delete.dialog"),
             message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             delete_instance(instance_id, self.game_dir)
@@ -1113,14 +1878,11 @@ class InstanceDetail(QWidget):
             return
         if self.isolation_combo.currentData() == self.instance.isolated:
             return
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("instances.detail.settings.isolation.title"),
             tr("instances.detail.settings.isolation.msg"),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        ):
             self._isolation_warned = True
             return
         self._filling = True
@@ -1171,6 +1933,7 @@ class InstanceDetail(QWidget):
                 ),
                 jvm_args=self.jvm_args_edit.text().strip(),
                 game_args=self.game_args_edit.text().strip(),
+                server=self.server_edit.text().strip(),
             )
             if self.instance is not None and isolated != self.instance.isolated:
                 update_instance(instance_id, game_dir=self.game_dir, isolated=isolated)
@@ -1185,14 +1948,11 @@ class InstanceDetail(QWidget):
         if self._require_instance() is None:
             return
         instance_id = self.instance_id
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("instances.detail.settings.reset.title"),
             tr("instances.detail.settings.reset.msg", instance_id),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             reset_instance_settings(instance_id, self.game_dir)
@@ -1231,6 +1991,8 @@ class InstanceDetail(QWidget):
 
     def _fill_mods_table(self, mods: list) -> None:
         self._mods = mods
+        self._set_badge_count("mods", len(mods))
+        self._sync_sidebar()
         self._refill_mods()
 
     def _refill_mods(self) -> None:
@@ -1247,7 +2009,6 @@ class InstanceDetail(QWidget):
             shown.append(m)
         self._filling_mods = True
         try:
-            self.mods_table.setSortingEnabled(False)
             self.mods_table.setRowCount(0)
             self.mods_table.setRowCount(len(shown))
             for row, m in enumerate(shown):
@@ -1266,7 +2027,6 @@ class InstanceDetail(QWidget):
                     (m.name, m.mod_id, m.version, m.loader, m.file), start=1
                 ):
                     self.mods_table.setItem(row, col, QTableWidgetItem(text))
-            self.mods_table.setSortingEnabled(True)
         finally:
             self._filling_mods = False
         if not shown and self._mods:
@@ -1305,14 +2065,11 @@ class InstanceDetail(QWidget):
             item = self.mods_table.item(row, 5)
             if item:
                 files.append(item.text())
-        answer = QMessageBox.question(
+        if not inwindow_dialog.question(
             self,
             tr("instances.mods.delete"),
             tr("instances.mods.delete.confirm", len(files)),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         deleted = 0
         for name in files:
@@ -1370,36 +2127,87 @@ class InstanceDetail(QWidget):
         set_app_status(self, tr("instances.detail.res.loading"))
 
         def work() -> dict:
+            # The game records the enabled packs in the options file of the directory it runs in;
+            # for an isolated instance that is the instance folder, otherwise the shared game root.
+            enabled = read_enabled_resource_packs(resolved.launch_dir / "options.txt")
             return {
-                sub: list_installed_content(
-                    resolved.game_dir,
-                    sub,
-                    version_id=resolved.id,
-                    isolated=resolved.isolated,
+                subdir: scan_content_files(
+                    resolve_content_dir(
+                        resolved.game_dir,
+                        subdir,
+                        version_id=resolved.id,
+                        isolated=resolved.isolated,
+                    ),
+                    enabled=enabled if subdir == "resourcepacks" else None,
                 )
-                for sub in _CONTENT_SUBDIRS
+                for subdir in _CONTENT_SUBDIRS
             }
 
         run_in_background(work, on_result=self._fill_resources, on_error=self._on_content_failed)
 
     def _on_content_failed(self, message: str) -> None:
-        set_app_status(self, tr("instances.detail.res.msg.load_fail", message), "error")
+        """Report an unreadable folder in the status line *and* where the list would be.
+
+        A failed read must not look like an empty instance: the table is hidden and the empty-state
+        slot carries the reason until the next successful read restores its normal text.
+        """
+        text = tr("instances.detail.res.msg.load_fail", message)
+        set_app_status(self, text, "error")
+        for subdir in _CONTENT_SUBDIRS:
+            table = self.content_tables.get(subdir)
+            if table is not None:
+                table.setRowCount(0)
+                table.setVisible(False)
+            empty = self.content_empty.get(subdir)
+            if empty is not None:
+                empty.setText(text)
+                empty.setVisible(True)
 
     def _fill_resources(self, payload: dict) -> None:
-        total = 0
         for subdir, items in payload.items():
             self._content_items[subdir] = items
-            total += len(items)
             table = self.content_tables[subdir]
             table.setRowCount(0)
             table.setRowCount(len(items))
             for row, item in enumerate(items):
-                table.setItem(row, 0, QTableWidgetItem(item.name))
+                name_item = QTableWidgetItem(item.name)
+                # The same letter tile the resource list uses for a project without an icon: a
+                # column of packages reads better than a column of names with no picture at all.
+                name_item.setIcon(
+                    QIcon(
+                        paint_utils.letter_tile_pixmap(
+                            item.name, CONTENT_ICON_SIZE, CONTENT_ICON_RADIUS
+                        )
+                    )
+                )
+                name_item.setToolTip(item.name)
+                table.setItem(row, 0, name_item)
                 table.setItem(
                     row, 1, NumericTableItem(human_size(item.size), float(item.size))
                 )
-            self.content_empty[subdir].update_for(len(items))
-        set_app_status(self, tr("instances.detail.res.count", total))
+                if table.columnCount() > 2:
+                    state = (
+                        "unknown"
+                        if item.enabled is None
+                        else ("enabled" if item.enabled else "disabled")
+                    )
+                    table.setItem(
+                        row, 2, QTableWidgetItem(tr("instances.detail.res.status." + state))
+                    )
+            table.setVisible(bool(items))
+            empty = self.content_empty[subdir]
+            empty.setText(self._content_empty_text.get(subdir, empty.text()))
+            empty.update_for(len(items))
+        # Both lists load in one pass (they live on two sibling pages), but the status line must not
+        # mix them into one meaningless total: say each count, so either page reads correctly.
+        set_app_status(
+            self,
+            tr(
+                "instances.detail.res.counts",
+                len(payload.get("resourcepacks", [])),
+                len(payload.get("shaderpacks", [])),
+            ),
+        )
 
     def delete_selected_content(self, subdir: str) -> None:
         if self._require_instance() is None:
@@ -1408,14 +2216,18 @@ class InstanceDetail(QWidget):
         if not names:
             set_app_status(self, tr("instances.detail.res.msg.need_select"), "warning")
             return
-        answer = QMessageBox.question(
+        # A destructive question: Enter must keep the safe answer, so the default is the cancel
+        # button and only an explicit click on 删除所选 removes anything.
+        outcome = inwindow_dialog.confirm(
             self,
             tr("instances.mods.delete"),
             tr("instances.detail.res.delete.confirm", len(names)),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            accept_text=tr("instances.mods.delete"),
+            reject_text=tr("dialog.cancel"),
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="critical",
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
             return
         resolved = self.resolved
 
@@ -1429,8 +2241,8 @@ class InstanceDetail(QWidget):
         )
 
     def _on_content_deleted(self, deleted: int) -> None:
-        set_app_status(self, tr("instances.detail.res.msg.deleted", deleted))
         self.reload_resources()
+        set_app_status(self, tr("instances.detail.res.msg.deleted", deleted))
 
     def _on_content_delete_failed(self, message: str) -> None:
         set_app_status(self, tr("instances.detail.res.msg.delete_fail", message), "error")
@@ -1443,38 +2255,126 @@ class InstanceDetail(QWidget):
         target = self.resolved.launch_dir / "saves"
         set_app_status(self, tr("instances.detail.saves.loading"))
 
-        def work() -> list:
-            found = []
-            if target.is_dir():
-                for entry in sorted(target.iterdir()):
-                    try:
-                        if not entry.is_dir():
-                            continue
-                        found.append(
-                            (entry.name, entry.stat().st_mtime, directory_size(entry))
-                        )
-                    except OSError:
-                        continue
-            return found
-
-        run_in_background(work, on_result=self._fill_saves, on_error=self._on_saves_failed)
+        run_in_background(
+            partial(scan_saves, target),
+            on_result=self._fill_saves,
+            on_error=self._on_saves_failed,
+        )
 
     def _on_saves_failed(self, message: str) -> None:
-        set_app_status(self, tr("instances.detail.saves.msg.load_fail", message), "error")
+        text = tr("instances.detail.saves.msg.load_fail", message)
+        set_app_status(self, text, "error")
+        self.saves_table.setRowCount(0)
+        self.saves_table.setVisible(False)
+        self.saves_empty.setText(text)
+        self.saves_empty.setVisible(True)
 
     def _fill_saves(self, saves: list) -> None:
         self._saves = saves
+        self._set_badge_count("saves", len(saves))
+        self._sync_sidebar()
         table = self.saves_table
         table.setRowCount(0)
         table.setRowCount(len(saves))
-        for row, (name, modified, size) in enumerate(saves):
-            table.setItem(row, 0, QTableWidgetItem(name))
-            table.setItem(
-                row, 1, QTableWidgetItem(time.strftime("%Y-%m-%d %H:%M", time.localtime(modified)))
-            )
-            table.setItem(row, 2, NumericTableItem(human_size(size), float(size)))
+        for row, save in enumerate(saves):
+            name_item = QTableWidgetItem(save.world_name)
+            if save.world_name != save.folder:
+                # The folder is what delete/backup act on, so keep it discoverable when level.dat
+                # renamed the world away from it.
+                name_item.setToolTip(save.folder)
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, QTableWidgetItem(format_modified(save.modified)))
+            table.setItem(row, 2, NumericTableItem(human_size(save.size), float(save.size)))
+        table.setVisible(bool(saves))
+        self.saves_empty.setText(self.saves_empty_text)
         self.saves_empty.update_for(len(saves))
         set_app_status(self, tr("instances.detail.saves.count", len(saves)))
+
+    def _selected_save_folders(self) -> list[str]:
+        rows = sorted({item.row() for item in self.saves_table.selectedItems()})
+        return [
+            self._saves[row].folder for row in rows if 0 <= row < len(self._saves)
+        ]
+
+    def delete_selected_saves(self) -> None:
+        if self._require_instance() is None:
+            return
+        folders = self._selected_save_folders()
+        if not folders:
+            set_app_status(self, tr("instances.detail.saves.msg.need_select"), "warning")
+            return
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("instances.detail.saves.delete.title"),
+            tr("instances.detail.saves.delete.confirm", len(folders)),
+            accept_text=tr("instances.mods.delete"),
+            reject_text=tr("dialog.cancel"),
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="critical",
+        )
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
+            return
+        base = self.resolved.launch_dir / "saves"
+
+        def work() -> tuple[int, str]:
+            deleted = 0
+            errors: list[str] = []
+            for folder in folders:
+                try:
+                    shutil.rmtree(base / folder)
+                    deleted += 1
+                except OSError as exc:
+                    errors.append(f"{folder}: {exc}")
+            return deleted, "; ".join(errors)
+
+        run_in_background(
+            work,
+            on_result=self._on_saves_deleted,
+            on_error=self._on_saves_delete_failed,
+        )
+
+    def _on_saves_deleted(self, result: tuple[int, str]) -> None:
+        deleted, errors = result
+        self.reload_saves()
+        if errors:
+            set_app_status(self, tr("instances.detail.saves.msg.delete_fail", errors), "error")
+        else:
+            set_app_status(self, tr("instances.detail.saves.msg.deleted", deleted))
+
+    def _on_saves_delete_failed(self, message: str) -> None:
+        set_app_status(self, tr("instances.detail.saves.msg.delete_fail", message), "error")
+
+    def backup_selected_save(self) -> None:
+        """Zip one selected world, after asking where the archive should go."""
+        if self._require_instance() is None:
+            return
+        folders = self._selected_save_folders()
+        if len(folders) != 1:
+            set_app_status(self, tr("instances.detail.saves.backup.need_one"), "warning")
+            return
+        folder = folders[0]
+        saved_dir = self.resolved.launch_dir / "saves"
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        destination, _filter = QFileDialog.getSaveFileName(
+            self,
+            tr("instances.detail.saves.backup.title"),
+            str(saved_dir / f"{folder}-{stamp}.zip"),
+            "Zip (*.zip)",
+        )
+        if not destination:
+            return
+        set_app_status(self, tr("instances.detail.saves.msg.backing_up", folder))
+        run_in_background(
+            partial(backup_save, saved_dir / folder, Path(destination)),
+            on_result=self._on_save_backed_up,
+            on_error=self._on_save_backup_failed,
+        )
+
+    def _on_save_backed_up(self, path) -> None:
+        set_app_status(self, tr("instances.detail.saves.msg.backed_up", str(path)))
+
+    def _on_save_backup_failed(self, message: str) -> None:
+        set_app_status(self, tr("instances.detail.saves.msg.backup_fail", message), "error")
 
     # ---------- launch ----------
 
@@ -1641,3 +2541,52 @@ class InstanceDetail(QWidget):
         # Exit: hide first so no stale window remains while the app quits.
         self.window().hide()
         QTimer.singleShot(600, QApplication.instance().quit)
+
+
+class InstanceDetailPage(QWidget):
+    """Full-page host for :class:`InstanceDetail`, with the exit back to the instance grid.
+
+    The instances page owns both this page and the card grid in one internal QStackedWidget. Keeping the
+    back control here means the detail page can be reached from anywhere (the card grid, the launch page
+    or the versions page) without making the main sidebar grow a ninth entry.
+    """
+
+    back_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("instanceDetailPage")
+        layout = QVBoxLayout(self)
+        style_page_layout(layout)
+        layout.setSpacing(8)
+
+        self.back_button = QPushButton("← " + tr("instances.detail.back"))
+        self.back_button.setObjectName("backButton")
+        self.back_button.setAccessibleName(tr("instances.detail.back"))
+        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.back_button.clicked.connect(lambda: self.back_requested.emit())
+
+        self.detail = InstanceDetail()
+        self.no_selection = QLabel(tr("instances.select.hint"))
+        self.no_selection.setObjectName("emptyState")
+        self.no_selection.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.no_selection.setWordWrap(True)
+        self.detail_stack = QStackedWidget()
+        self.detail_stack.addWidget(self.detail)
+        self.detail_stack.addWidget(self.no_selection)
+
+        layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.detail_stack, 1)
+
+    def set_instance(self, instance_id: str | None) -> None:
+        """Load one instance, or show the empty hint when there is none."""
+        if instance_id is None:
+            self.detail_stack.setCurrentWidget(self.no_selection)
+            self.detail.set_instance(None)
+            return
+        self.detail_stack.setCurrentWidget(self.detail)
+        self.detail.set_instance(instance_id)
+
+    def focus_back_button(self) -> None:
+        """Keyboard users land on the way back, not on a card that is now hidden."""
+        self.back_button.setFocus(Qt.FocusReason.OtherFocusReason)

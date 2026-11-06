@@ -19,7 +19,23 @@
 # eye-checking layout work. Reads a project tree read-only; all preview config/data live
 # inside the preview folder.
 
-"""Offscreen page renderer for the launcher UI."""
+"""Offscreen page renderer for the launcher UI.
+
+``--warm-cache`` fills the project-icon disk cache before the window is built, so the resource rows
+paint real icons instead of letter tiles; ``--expect-icons`` refuses to save any page whose rows are
+still showing a tile. They can be combined in one run: warm first, then render and verify.
+
+Pictures are rendered with :func:`render_page_image`, not ``QWidget.grab()``: the grab pixmap's
+unpainted pixels belong to the platform style, not to the page. Qt fills them with the palette window
+background (measured #efefef with no stylesheet, BG_WINDOW under the theme), and a translucent widget
+leaves them black - none of those is the ``BG_PAGE`` paper the stylesheet defines. Rendering into an
+opaque QImage that starts as the current theme's ``BG_PAGE`` decides every such pixel here, on every
+platform, and keeps the PNG opaque.
+
+The white corners that prompted this were a separate bug: the demo iris icon was an opaque 400x400
+white PNG (see ``FAKE_MOD_ICONS``). The prefill is the belt for the next unpainted pixel, not the
+repair for that one.
+"""
 
 from __future__ import annotations
 
@@ -48,6 +64,52 @@ FAKE_MODS = [
     ("appleskin", "AppleSkin", "Food-related HUD information: hunger, saturation and exhaustion", 57_330_000),
     ("journeymap", "JourneyMap", "Real-time mapping in game or in a web browser", 69_150_000),
 ]
+
+#: Real project icons for the demo rows, keyed by slug. The resource page is the only rendered page
+#: whose rows carry an image, and a letter tile is not a usable README screenshot. Kept out of
+#: ``FAKE_MODS`` so the four-tuple stays the shared contract for the other render/measure tools.
+FAKE_MOD_ICONS = {
+    "sodium": "https://cdn.modrinth.com/data/AANobbMI/icon.png",
+    # Not ``icon.png``: that file is an opaque 400x400 PNG with a white background (colour type 2,
+    # no alpha), so its square stays white on the card. The URL the search API actually hands the
+    # launcher is this transparent _96.webp; it is what a real screenshot shows, and its transparent
+    # corners are what make the card colour visible.
+    "iris": (
+        "https://cdn.modrinth.com/data/YL57xq9U/"
+        "18d0e7f076d3d6ed5bedd472b853909aac5da202_96.webp"
+    ),
+    "lithium": "https://cdn.modrinth.com/data/gvQqBUqZ/icon.png",
+    "fabric-api": "https://cdn.modrinth.com/data/P7dR8mSH/icon.png",
+    "jei": (
+        "https://cdn.modrinth.com/data/u6dRKJwZ/"
+        "4a3f18ac0d096c9f8e9176984c44be4e58f94c89_96.webp"
+    ),
+    "modmenu": (
+        "https://cdn.modrinth.com/data/mOgUt4GM/"
+        "5a20ed1450a0e1e79a1fe04e61bb4e5878bf1d20.png"
+    ),
+    "cloth-config": "https://cdn.modrinth.com/data/9s6osm5g/icon.png",
+    "roughly-enough-items": "https://cdn.modrinth.com/data/nfn13YXA/icon.png",
+    "create": (
+        "https://cdn.modrinth.com/data/LNytGWDc/"
+        "61d716699bcf1ec42ed4926a9e1c7311be6087e2_96.webp"
+    ),
+    "xaeros-minimap": (
+        "https://cdn.modrinth.com/data/1bokaNcj/"
+        "354080f65407e49f486fcf9c4580e82c45ae63b8_96.webp"
+    ),
+    "appleskin": "https://cdn.modrinth.com/data/EsAfCjCV/icon.png",
+    "journeymap": (
+        "https://cdn.modrinth.com/data/lfHFW1mp/"
+        "a1c571a21a88f6fa59eab67829f216f65ab393ee_96.webp"
+    ),
+}
+
+#: The icon prefetch is network-bound; eight at a time keeps a cold run short without opening a
+#: connection per row at once. Each URL is retried because this project's CDN is occasionally slow.
+ICON_WARM_CONCURRENCY = 8
+ICON_WARM_ATTEMPTS = 3
+
 
 FAKE_VERSIONS = [
     ("1.21.11", "release", "2025-12-09"),
@@ -232,6 +294,102 @@ def wait_for_workers(app, pool, seconds: float = 20.0) -> None:
         time.sleep(0.05)
 
 
+def wait_until(pred, timeout_ms: int = 8000) -> bool:
+    """Pump the Qt event loop until ``pred()`` is true, or return False on the deadline.
+
+    Rendering cannot use ``QThreadPool.waitForDone`` alone for this: a worker's result reaches the
+    GUI through a queued signal, so the last hop only happens while the event loop is pumped. This
+    helper is the small, testable loop around that - it returns the predicate's final value instead
+    of raising, so a caller can decide whether a timeout is fatal (``--expect-icons``) or not.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000.0
+    while True:
+        if pred():
+            return True
+        if time.monotonic() >= deadline:
+            return bool(pred())
+        if app is not None:
+            app.processEvents()
+        time.sleep(0.02)
+
+
+def resource_rows(page) -> list:
+    """Every ``_ResourceRow`` the page currently holds (only the resource pages have any)."""
+    from gui.pages.mods_page import _ResourceRow
+
+    return list(page.findChildren(_ResourceRow))
+
+
+def missing_icons(page) -> list:
+    """Rows whose project icon never arrived; these are exactly the rows still painting a letter tile."""
+    return [row for row in resource_rows(page) if row._icon is None]
+
+
+def icons_ready(page) -> bool:
+    """True when every resource row on the page has a real project icon."""
+    return not missing_icons(page)
+
+
+def assert_icons_loaded(page, where: str) -> None:
+    """Refuse to save a picture whose rows still show letter tiles."""
+    rows = resource_rows(page)
+    missing = [row for row in rows if row._icon is None]
+    if not missing:
+        return
+    titles = ", ".join(str(getattr(row, "title", "?")) for row in missing[:8])
+    raise SystemExit(
+        f"refusing to save {where}: {len(missing)} of {len(rows)} resource icon(s) did not load "
+        f"({titles}); use --warm-cache or fix the icon URL"
+    )
+
+
+def warm_icon_cache(urls, *, workers: int = ICON_WARM_CONCURRENCY) -> None:
+    """Download every URL into the project-icon disk cache before the window is built.
+
+    ``launcher.net.http_cache.fetch_icon_bytes`` is the same store the resource rows read, so once
+    this returns the rows paint real icons synchronously (``_ContentTab._load_icon`` peeks at the
+    cache first). Work is bounded: at most ``workers`` requests run at a time, and a URL that fails
+    is retried a few times. A URL that still fails is fatal - rendering it would produce the letter
+    tile this option exists to avoid.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from launcher.net.http_cache import fetch_icon_bytes
+
+    unique = list(dict.fromkeys(str(url) for url in urls if url))
+    if not unique:
+        return
+
+    def fetch(url: str):
+        last: Exception | None = None
+        for attempt in range(ICON_WARM_ATTEMPTS):
+            try:
+                fetch_icon_bytes(url, timeout=8.0)
+                return url, None
+            except Exception as exc:  # noqa: BLE001 - report what the network said, then retry
+                last = exc
+                time.sleep(0.5 * (attempt + 1))
+        return url, last
+
+    failures: list[tuple[str, Exception | None]] = []
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(unique)))) as pool:
+        for url, error in pool.map(fetch, unique):
+            if error is None:
+                print(f"warm-cache: {url}")
+            else:
+                failures.append((url, error))
+                print(f"warm-cache: FAILED {url}: {error}")
+    if failures:
+        raise SystemExit(
+            f"warm-cache: {len(failures)} of {len(unique)} icon(s) could not be cached; "
+            "refusing to render a page that would show letter tiles"
+        )
+    print(f"warm-cache: {len(unique)} icon(s) ready")
+
+
 def _scroll_page_to_bottom(page) -> None:
     """Scroll a page's QScrollArea to the end (settings page) so the lower rows are visible."""
     from PySide6.QtWidgets import QScrollArea
@@ -354,9 +512,44 @@ def assert_no_focus_mark(*roots) -> None:
     names = ", ".join(sorted({describe_widget(w) for w in marked}))
     raise SystemExit(
         f"refusing to save: {len(marked)} widget(s) still carry {FOCUS_MARK}=true "
-        f"({names}); the grab would carry a keyboard focus ring. "
-        "Call defocus_for_shot() before grabbing, and find who set the mark."
+        f"({names}); the picture would carry a keyboard focus ring. "
+        "Call defocus_for_shot() before rendering, and find who set the mark."
     )
+
+
+def page_paper_color():
+    """The page background of the theme currently in force (the ``BG_PAGE`` token).
+
+    Never a hard-coded white: the token is the same value the stylesheet paints every page with, so a
+    light render gets the light paper and a dark render the dark one.
+    """
+    from PySide6.QtGui import QColor
+
+    from gui import theme
+
+    return QColor(theme.current_tokens().get("BG_PAGE", "#0a1622"))
+
+
+def render_page_image(widget):
+    """Render ``widget`` into an opaque QImage pre-filled with the page paper colour.
+
+    ``QWidget.grab()`` hands back a pixmap that Qt first fills with the palette window background, so
+    a pixel the widget tree never paints keeps a platform/style colour instead of a colour this
+    screenshot's own stylesheet defines - black, for a widget that sets ``WA_TranslucentBackground``.
+    Rendering into an image that starts as the current ``BG_PAGE`` makes those pixels the paper:
+    every widget that does paint (the card fill under an icon included) still overwrites it, and the
+    image is opaque, so the saved PNG cannot be re-composited against white by a later viewer.
+    """
+    from PySide6.QtGui import QImage
+
+    ratio = float(widget.devicePixelRatioF()) or 1.0
+    width = max(1, round(widget.width() * ratio))
+    height = max(1, round(widget.height() * ratio))
+    image = QImage(width, height, QImage.Format.Format_RGB32)
+    image.setDevicePixelRatio(ratio)
+    image.fill(page_paper_color())
+    widget.render(image)
+    return image
 
 
 def main() -> int:
@@ -379,7 +572,7 @@ def main() -> int:
     parser.add_argument("--font", default="", help="custom UI font family")
     parser.add_argument("--radius", default="", help="corner radius preset: compact / default / round")
     parser.add_argument(
-        "--scroll-bottom", action="store_true", help="scroll the page to the bottom before grabbing"
+        "--scroll-bottom", action="store_true", help="scroll the page to the bottom before rendering"
     )
     parser.add_argument("--pages", default="", help="comma separated page subset, e.g. launch,settings")
     parser.add_argument(
@@ -391,6 +584,21 @@ def main() -> int:
         "--dialog-shot",
         action="store_true",
         help="also render the crash diagnosis dialog over the instances page",
+    )
+    parser.add_argument(
+        "--detail-shot",
+        action="store_true",
+        help="also render the instance detail page (index 8) for the selected demo instance",
+    )
+    parser.add_argument(
+        "--warm-cache",
+        action="store_true",
+        help="download every result icon into the disk cache before building the window",
+    )
+    parser.add_argument(
+        "--expect-icons",
+        action="store_true",
+        help="refuse to save a page while any of its result icons is still a letter tile",
     )
     parser.add_argument(
         "--preview",
@@ -458,9 +666,20 @@ def main() -> int:
         ],
     )
     hits = [
-        ModSearchHit(slug=slug, title=title, description=desc, downloads=dl)
+        ModSearchHit(
+            slug=slug,
+            title=title,
+            description=desc,
+            downloads=dl,
+            icon_url=FAKE_MOD_ICONS.get(slug, ""),
+        )
         for slug, title, desc, dl in FAKE_MODS
     ]
+
+    # The rows read this store synchronously when it is warm (see _ContentTab._load_icon), so warming
+    # before the window exists is what keeps the images from being letter tiles at grab time.
+    if args.warm_cache:
+        warm_icon_cache(hit.icon_url for hit in hits)
 
     # offline stubs so rendering never waits on the network
     versions_page.fetch_manifest = lambda cache_path=None: manifest  # type: ignore[assignment]
@@ -548,8 +767,8 @@ def main() -> int:
             # An instance page without a selection only shows the hint: select a demo instance
             # (prefer the second row, which is the modded one) so the detail panel is visible.
             page = window.pages["instances"]
-            if page.list.count():
-                page.list.setCurrentRow(1 if page.list.count() > 1 else 0)
+            if len(page.card_ids()):
+                page.select_instance(page.card_ids()[1 if len(page.card_ids()) > 1 else 0])
             for _ in range(6):
                 app.processEvents()
                 time.sleep(0.05)
@@ -558,20 +777,74 @@ def main() -> int:
             for _ in range(4):
                 app.processEvents()
                 time.sleep(0.05)
+        target = out_dir / f"{prefix}{index}_{name}.png"
+        if args.expect_icons:
+            page = window.pages[name]
+            if name == "mods" and not resource_rows(page):
+                target.unlink(missing_ok=True)  # never leave a stale picture behind a failed check
+                raise SystemExit(
+                    "refusing to save page 'mods': it rendered no resource rows, "
+                    "so --expect-icons cannot prove a single icon"
+                )
+            if not wait_until(lambda page=page: icons_ready(page), timeout_ms=8000):
+                target.unlink(missing_ok=True)
+                assert_icons_loaded(page, f"page '{name}'")
         # No focus ring can reach a published picture: defocus first, then refuse to save if any
         # keyboardFocus mark survived (see defocus_for_shot/assert_no_focus_mark).
         defocus_for_shot(window, window.pages[name])
         assert_no_focus_mark(window, window.pages[name])
-        pixmap = window.grab()
-        target = out_dir / f"{prefix}{index}_{name}.png"
-        pixmap.save(str(target))
-        print(f"saved {target} ({pixmap.width()}x{pixmap.height()})")
+        image = render_page_image(window)
+        image.save(str(target))
+        print(f"saved {target} ({image.width()}x{image.height()})")
 
     if args.dialog_shot:
         _render_dialog_shot(app, window, Path(game_dir), out_dir, prefix)
+    if args.detail_shot:
+        _render_detail_shot(app, window, out_dir, prefix)
 
     window.close()
     return 0
+
+
+def _render_detail_shot(app, window, out_dir: Path, prefix: str) -> None:
+    """Render the instance detail page, the card grid's drill-down target.
+
+    The published set is eight nav pages plus this one: the detail view has no nav-rail entry of its
+    own, so the page loop above can never reach it. Opening it also drops the main rail (the detail
+    page has an eight-entry sidebar of its own), which is part of the picture and the reason this
+    pass renders the whole window rather than the page widget.
+
+    Runs last on purpose: the rail is hidden while the detail page is up, so a later page pass would
+    have to restore the grid first.
+    """
+    from PySide6.QtCore import QThreadPool
+
+    from gui.main_window import NAV_KEYS
+
+    window.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
+    for _ in range(8):
+        app.processEvents()
+        time.sleep(0.05)
+    page = window.pages["instances"]
+    ids = page.card_ids()
+    if not ids:
+        raise SystemExit(
+            "refusing to save page 'instance_detail': the preview tree has no demo instance"
+        )
+    # The second demo instance is the modded one (ensure_preview creates it that way), so it has the
+    # fullest detail page. One instance is still enough for the picture.
+    if not page.open_instance(ids[1] if len(ids) > 1 else ids[0]):
+        raise SystemExit("refusing to save page 'instance_detail': the instance could not be opened")
+    wait_for_workers(app, QThreadPool.globalInstance(), 8.0)
+    for _ in range(10):
+        app.processEvents()
+        time.sleep(0.05)
+    defocus_for_shot(window, page)
+    assert_no_focus_mark(window, page)
+    image = render_page_image(window)
+    target = out_dir / f"{prefix}8_instance_detail.png"
+    image.save(str(target))
+    print(f"saved {target} ({image.width()}x{image.height()})")
 
 
 def _render_dialog_shot(app, window, game_dir: Path, out_dir: Path, prefix: str) -> None:
@@ -591,8 +864,8 @@ def _render_dialog_shot(app, window, game_dir: Path, out_dir: Path, prefix: str)
 
     window.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
     page = window.pages["instances"]
-    if page.list.count():
-        page.list.setCurrentRow(1 if page.list.count() > 1 else 0)
+    if len(page.card_ids()):
+        page.select_instance(page.card_ids()[1 if len(page.card_ids()) > 1 else 0])
     for _ in range(8):
         app.processEvents()
         time.sleep(0.05)
@@ -608,13 +881,13 @@ def _render_dialog_shot(app, window, game_dir: Path, out_dir: Path, prefix: str)
         app.processEvents()
         time.sleep(0.05)
     # The dialog is part of the picture too: its own default button is marked from the FocusIn a
-    # dialog sends when it opens, so the same rule applies before this grab.
+    # dialog sends when it opens, so the same rule applies before this render.
     defocus_for_shot(window, dialog)
     assert_no_focus_mark(window, dialog)
-    pixmap = window.grab()
+    image = render_page_image(window)
     target = out_dir / f"{prefix}9_dialog.png"  # index 9 keeps the driver's name pattern intact
-    pixmap.save(str(target))
-    print(f"saved {target} ({pixmap.width()}x{pixmap.height()})")
+    image.save(str(target))
+    print(f"saved {target} ({image.width()}x{image.height()})")
     dialog.close()
 
 

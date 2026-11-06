@@ -141,17 +141,17 @@ def test_the_offline_hsv_matches_qt():
 # ---------------------------------------------------------------------------------------------------
 
 # Every widget the account row (and the rest of the page under it) lays out: a transparent avatar slot must
-# not move any of them, so their coordinates are compared between the two states.
+# not move any of them, so their coordinates are compared between the two states. The list's own switch /
+# logout buttons moved onto the account rows, so they are no longer page widgets.
 PAGE_WIDGETS = (
     "avatar_label",
     "account_label",
     "accounts_list",
-    "switch_button",
+    "add_button",
     "device_code",
     "ms_button",
     "offline_edit",
     "offline_button",
-    "logout_button",
 )
 
 

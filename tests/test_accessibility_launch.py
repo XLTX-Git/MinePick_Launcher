@@ -85,9 +85,13 @@ def env(monkeypatch, ws_tmp):
         selected_account="account-1",
         memory_auto=False,
         memory_gb=4.0,
+        selected_instance="",
     )
     config_path = ws_tmp / "config.json"
     monkeypatch.setattr(flow.config, "load", lambda: (cfg, config_path))
+    # The launch page remembers the picked instance by saving the config; the stub above is not a
+    # real LauncherConfig, so keep the write out of this test (it asserts UI state, not persistence).
+    monkeypatch.setattr(flow.config, "save", lambda *a, **k: config_path)
     monkeypatch.setattr(dialog_mod, "tr", lambda key, *args: key.format(*args) if args else key)
     return SimpleNamespace(game=game, state=ws_tmp / "accessibility.json", cfg=cfg)
 
@@ -222,7 +226,7 @@ def test_mouse_state_reaches_the_gate_as_mouse(app, monkeypatch, env):
     monkeypatch.setattr(app, "_focus_tracker", _Tracker(), raising=False)
     page = LaunchPage()
     try:
-        page.version_combo.setEditText("1.20.1")
+        page.set_version_id("1.20.1")
         page._on_launch_clicked()
         assert seen["trigger_source"] is TriggerSource.MOUSE
     finally:
@@ -249,7 +253,7 @@ def test_space_reaches_the_gate_as_keyboard(app, monkeypatch, env):
     monkeypatch.setattr(app, "_focus_tracker", _Tracker(), raising=False)
     page = LaunchPage()
     try:
-        page.version_combo.setEditText("1.20.1")
+        page.set_version_id("1.20.1")
         page._on_launch_clicked()
         assert seen["trigger_source"] is TriggerSource.KEYBOARD
     finally:

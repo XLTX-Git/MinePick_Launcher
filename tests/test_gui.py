@@ -22,7 +22,15 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication, QLabel, QStackedWidget, QWidget
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFrame,
+    QLabel,
+    QStackedWidget,
+    QWidget,
+)
 
 from launcher import config as config_mod
 
@@ -68,12 +76,12 @@ def test_settings_isolation_toggle_saves(app, monkeypatch, ws_tmp):
 
     window = MainWindow()
     page = window.pages["settings"]
-    assert page.isolation_check.isChecked() is True  # checked by default
-    page.isolation_check.setChecked(False)
+    assert page.isolation_combo.currentData() is True  # isolated by default
+    page.isolation_combo.setCurrentIndex(page.isolation_combo.findData(False))
     page.save()
     cfg, _ = config_mod.load()
     assert cfg.default_isolation is False
-    page.isolation_check.setChecked(True)
+    page.isolation_combo.setCurrentIndex(page.isolation_combo.findData(True))
     page.save()
     cfg, _ = config_mod.load()
     assert cfg.default_isolation is True
@@ -90,7 +98,11 @@ def test_settings_download_segments_control(app, monkeypatch, ws_tmp):
     # the default keeps the historical behaviour (one stream per file)
     assert page.download_segments_spin.value() == 1
     assert page.download_segments_spin.minimum() == 1
-    assert page.download_segments_spin.specialValueText()  # "1" reads as "single stream", not a bare 1
+    # a numeric field shows the number; the wording lives in a 12px hint under the row
+    assert page.download_segments_spin.specialValueText() == ""
+    assert page.download_segments_spin.text() == "1"
+    assert page.download_segments_hint.text().startswith("1")
+    assert page.download_segments_hint.objectName() == "hint"
     page.download_segments_spin.setValue(4)
     cfg, _ = config_mod.load()
     assert cfg.download_segments == 4
@@ -98,6 +110,68 @@ def test_settings_download_segments_control(app, monkeypatch, ws_tmp):
     page.load()
     assert page.download_segments_spin.value() == 4
     window.close()
+
+
+def test_settings_numeric_fields_show_numbers_not_words(app, monkeypatch, ws_tmp):
+    """A numeric field renders only its number: 1 is "1", 0 is "0"; wording and units move to labels."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_numbers"))
+    from gui.main_window import MainWindow
+
+    window = MainWindow()
+    page = window.pages["settings"]
+    page.concurrency_spin.setValue(4)
+    page.download_segments_spin.setValue(1)
+    page.speed_limit_spin.setValue(0)
+    assert page.concurrency_spin.text() == "4"
+    assert page.download_segments_spin.text() == "1"
+    # The speed limit's unit is in the row label ("KB/s, 0=unlimited"), not in the control.
+    assert page.speed_limit_spin.text() == "0"
+    assert page.speed_limit_spin.suffix() == ""
+    labels = [label.text() for label in page.findChildren(QLabel, "settingsFieldLabel")]
+    assert any("KB/s" in text for text in labels)
+    # The memory row's label carries the unit the read-out no longer repeats.
+    from gui import i18n
+
+    assert any(i18n.tr("unit.gb.label") in text for text in labels)
+    # no special-value wording may replace either number
+    assert page.download_segments_spin.specialValueText() == ""
+    assert page.speed_limit_spin.specialValueText() == ""
+    assert page.download_segments_hint.text()
+    assert page.download_segments_hint.objectName() == "hint"
+    window.close()
+
+
+def test_settings_rows_are_compact_and_labels_have_room(app, monkeypatch, ws_tmp):
+    """Density round: 32px fields, a 6px row gap, 16px card padding and a 216px label column.
+
+    The column is wider than the 176px it replaced so the longest German/French labels keep
+    two lines inside the 32px row instead of growing it; the row pitch stays 38px (32 + 6).
+    """
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_density"))
+    from PySide6.QtWidgets import QFormLayout
+
+    from gui.main_window import MainWindow
+    from gui.pages import settings_page as settings_module
+
+    window = MainWindow()
+    try:
+        page = window.pages["settings"]
+        assert settings_module.FIELD_HEIGHT == 32
+        # 32px is comfortably above the 24px minimum clickable area
+        assert settings_module.FIELD_HEIGHT >= 24
+        assert settings_module.FIELD_LABEL_WIDTH == 216
+        assert settings_module.ROW_SPACING == 6
+        labels = page.findChildren(QLabel, "settingsFieldLabel")
+        assert labels
+        assert all(label.width() == 216 for label in labels)
+        form = page.findChild(QFormLayout)
+        assert form.verticalSpacing() == 6
+        card = page.findChild(QWidget, "settingsCard")
+        margins = card.layout().contentsMargins()
+        assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (16, 16, 16, 16)
+        assert card.layout().spacing() == 12
+    finally:
+        window.close()
 
 
 def test_settings_autosave_without_save_button(app, monkeypatch, ws_tmp):
@@ -109,8 +183,8 @@ def test_settings_autosave_without_save_button(app, monkeypatch, ws_tmp):
     page = window.pages["settings"]
     assert not hasattr(page, "save_button")
 
-    # a checkbox writes straight through
-    page.isolation_check.setChecked(False)
+    # a dropdown writes straight through
+    page.isolation_combo.setCurrentIndex(page.isolation_combo.findData(False))
     cfg, _ = config_mod.load()
     assert cfg.default_isolation is False
 
@@ -144,9 +218,12 @@ def test_settings_accessibility_preference_is_three_radios_that_autosave(app, mo
     assert len(radios) == 3
     assert group.value() == "auto"  # the default, and the fallback
     assert page.accessibility_hint.wordWrap()  # the "only the launcher's question" sentence
-    # The group sits with the behaviour options, before the checkboxes.
+    # The group sits with the behaviour options, before the isolation dropdown and the checkboxes.
     layout = page.accessibility_box.parentWidget().layout()
-    assert layout.indexOf(page.accessibility_box) < layout.indexOf(page.isolation_check)
+    assert layout.indexOf(page.accessibility_box) < layout.indexOf(page.isolation_row)
+    assert page.isolation_combo.count() == 2
+    assert [page.isolation_combo.itemData(i) for i in range(2)] == [True, False]
+    assert page.isolation_combo.accessibleName().strip()
 
     radios[2].setChecked(True)  # "never", as a user click would
     cfg, _ = config_mod.load()
@@ -199,17 +276,37 @@ def test_versions_page_auto_jre_default(app, monkeypatch, ws_tmp):
     window.close()
 
 
-def test_every_page_has_a_header(app, monkeypatch, ws_tmp):
-    """Each page starts with the shared header: a big title plus a one-line description."""
+def test_no_top_level_page_draws_a_page_header_and_all_keep_16px(app, monkeypatch, ws_tmp):
+    """The name/description header is gone; the page's first block starts 16px below its top edge.
+
+    The launch page is edge-to-edge by design, so its own panel margin supplies the top air. The
+    instance grid keeps its inner browser layout inside a zero-margin page, so the 16px lives there.
+    """
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_header"))
     from gui.main_window import MainWindow
 
     window = MainWindow()
     for key, page in window.pages.items():
-        title = page.findChild(QLabel, "pageTitle")
-        subtitle = page.findChild(QLabel, "pageSubtitle")
-        assert title is not None and title.text(), f"{key}: no page title"
-        assert subtitle is not None and subtitle.text(), f"{key}: no page description"
+        assert page.findChild(QLabel, "pageTitle") is None, f"{key}: still draws a page title"
+        assert page.findChild(QLabel, "pageSubtitle") is None, f"{key}: still draws a page description"
+        assert page.findChild(QWidget, "pageHeader") is None, f"{key}: still builds the header widget"
+        if key == "launch":
+            continue  # edge-to-edge panel, not a themed page inset
+        if key == "instances":
+            browser = page.findChild(QWidget, "instanceBrowser")
+            assert browser is not None, "instances: no browser panel"
+            margins = browser.layout().contentsMargins()
+        else:
+            margins = page.layout().contentsMargins()
+        assert margins.top() == 16, f"{key}: top inset is {margins.top()}px, expected 16px"
+        if key == "about":
+            # The scroll content has its own 14/6 side margins; its top must not add a second
+            # inset on top of the page's 16px (the card border starts one pixel in). The section
+            # titles now live inside these cards, so the first card is the page's first landmark.
+            first_card = page.findChildren(QFrame, "pageCard")[0]
+            assert first_card.mapTo(page, QPoint(0, 0)).y() <= 18, (
+                f"about: first card starts {first_card.mapTo(page, QPoint(0, 0)).y()}px below the page top"
+            )
     window.close()
 
 
@@ -300,7 +397,7 @@ def test_resources_page_widgets(app, monkeypatch, ws_tmp):
     window = MainWindow()
     page = window.pages["mods"]
     header = page.findChild(QLabel, "pageTitle")
-    assert header is not None and header.text() == "资源"
+    assert header is None, "the resources page keeps its content but no page-name header"
     assert page.tabs.count() == 4  # mods/modpacks/resource packs/shaders
     tab = page.mods_tab
     # search bar exists
@@ -335,14 +432,34 @@ def test_batch1_widgets_exist(app, monkeypatch, ws_tmp):
     # versions page: the uninstall button became a jump to the instance page
     versions = window.pages["versions"]
     assert versions.open_instance_button.text() == "打开实例"
-    assert versions.model.columnCount() == 4
+    # the manifest is a dense card list now: one row widget per version, no table and no model
+    assert versions.list.objectName() == "versionList"
+    assert not hasattr(versions, "table")
+    assert versions.list.count() == 0  # nothing was fetched offline
+    # java page: both runtime tables became white cards with dense rows
+    java = window.pages["java"]
+    assert not hasattr(java, "managed_table") and not hasattr(java, "detected_table")
+    assert java.managed_list.objectName() == "javaManagedList"
+    assert java.detected_list.objectName() == "javaDetectedList"
+    assert java.managed_list.count() == len(java._managed)
     # launch page: the main page keeps only what a normal launch needs
     launch = window.pages["launch"]
-    assert launch.version_combo is not None
-    assert launch.account_button is not None  # icon-only button that jumps to the account page
+    # The version number is a QLabel hero, not a dropdown: the launch page owns no QComboBox at all.
+    assert launch.version_label is not None
+    assert not hasattr(launch, "version_combo")
+    assert launch.findChildren(QComboBox) == []
+    assert launch.account_button is not None  # inline icon-only button that jumps to the account page
     assert not hasattr(launch, "account_combo")  # accounts are switched on the account page now
-    assert launch.memory_spin is not None
-    assert launch.server_edit is not None
+    # Memory moved to the settings page and the per-instance settings; the launch page no longer
+    # keeps a third copy of the value (it reads cfg.memory_gb when it launches).
+    assert not hasattr(launch, "memory_spin")
+    # Direct connect moved to the per-instance settings too: the old "Advanced" disclosure and its
+    # field are gone from the launch page (the instance buttons above already lead there), while the
+    # launch path still reads the instance's address (tests/test_e2e.py drives that).
+    assert not hasattr(launch, "server_edit")
+    assert not hasattr(launch, "advanced_button")
+    assert not hasattr(launch, "advanced_panel")
+    assert not hasattr(launch, "version_hint")  # the "switch instances" line under the subtitle
     # trimmed in 0.3.0: duplicated settings or details with a sane default
     assert not hasattr(launch, "jvm_args_edit")
     assert not hasattr(launch, "language_combo")
@@ -364,7 +481,7 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
 
     window = MainWindow()
     launch = window.pages["launch"]
-    assert launch.server_edit is not None
+    assert not hasattr(launch, "server_edit")  # direct connect lives in the instance settings now
     assert not hasattr(launch, "server_port_spin")  # the port defaults to 25565 now
     assert not hasattr(launch, "auto_close_check")  # moved to the settings page
     versions = window.pages["versions"]
@@ -386,10 +503,14 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
     assert settings.after_launch_combo.count() == 3
     assert settings.trim_memory_check is not None
     assert not hasattr(settings, "blur_check")  # the backdrop blur is unconditional now, not a setting
-    # Spin boxes ignore the mouse wheel to avoid accidental value changes
-    from gui.widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
+    # Spin boxes ignore the mouse wheel to avoid accidental value changes. Memory is a slider now:
+    # the number beside it is a read-out, so there is no third spin box to keep in step.
+    from PySide6.QtWidgets import QSlider
 
-    assert isinstance(settings.memory_spin, NoWheelDoubleSpinBox)
+    from gui.widgets import NoWheelSpinBox
+
+    assert isinstance(settings.memory_slider, QSlider)
+    assert not hasattr(settings, "memory_spin")
     assert isinstance(settings.concurrency_spin, NoWheelSpinBox)
     # The three-state description label must stay visible next to the combo
     labels = [lbl.text() for lbl in settings.findChildren(QLabel)]
@@ -397,6 +518,117 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
     account = window.pages["account"]
     assert account.avatar_label is not None
     window.close()
+
+
+def test_settings_memory_slider_keeps_an_above_range_value(app, monkeypatch, ws_tmp):
+    """The thumb clamps to the device range; the stored GB value is never rewritten on load."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "memory_slider"))
+    monkeypatch.setattr("launcher.memory.system_memory_gb", lambda: (16.0, 12.0))
+    monkeypatch.setattr("launcher.java.locate.selected_java_bits", lambda *a, **k: 64)
+
+    from gui.pages.settings_page import SettingsPage
+    from launcher import config
+
+    cfg, cfg_path = config.load()
+    cfg.memory_gb = 32.0
+    cfg.memory_auto = False
+    config.save(cfg, cfg_path)
+
+    page = SettingsPage()
+    try:
+        assert page.memory_slider.maximum() == 14  # 1.0 .. 8.0 in 0.5 GB steps
+        assert page.memory_slider.value() == 14  # thumb parked at max, not at 32 GB
+        assert page.memory_value_label.text() == "32.0"  # the number; GB is in the row label
+        assert page.memory_warning_label.text()
+        page.save()
+        stored, _ = config.load()
+        assert stored.memory_gb == 32.0  # opening/saving the page did not clamp the file
+    finally:
+        page.close()
+        page.deleteLater()
+        QApplication.processEvents()
+
+
+def test_settings_memory_slider_caps_32bit_java(app, monkeypatch, ws_tmp):
+    """A 32-bit JVM lowers the slider ceiling to 1.5 GB and says why."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "memory_slider_32"))
+    monkeypatch.setattr("launcher.memory.system_memory_gb", lambda: (16.0, 12.0))
+    monkeypatch.setattr("launcher.java.locate.selected_java_bits", lambda *a, **k: 32)
+
+    from gui.pages.settings_page import SettingsPage
+    from launcher import config
+
+    cfg, cfg_path = config.load()
+    cfg.memory_gb = 8.0
+    cfg.memory_auto = False
+    config.save(cfg, cfg_path)
+
+    page = SettingsPage()
+    try:
+        assert page.memory_slider.maximum() == 1  # 1.0 .. 1.5 in 0.5 GB steps
+        assert page.memory_slider.value() == 1
+        assert "1.5" in page.memory_recommend_label.text()
+        assert "32" in page.memory_warning_label.text()
+    finally:
+        page.close()
+        page.deleteLater()
+        QApplication.processEvents()
+
+
+def test_spin_boxes_keep_keyboard_steps_without_up_down_buttons(app):
+    """The sheet hides the up/down sub-controls; the widget's own key handling must survive."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QSpinBox
+
+    from gui import theme
+
+    theme.apply_theme("light", None, None, "default")
+    spin = QSpinBox()
+    spin.setRange(1, 64)
+    spin.setValue(4)
+    spin.show()
+    QApplication.processEvents()
+    spin.setFocus()
+    QApplication.processEvents()
+    try:
+        QTest.keyClick(spin, Qt.Key.Key_Up)
+        assert spin.value() == 5, "Up no longer steps the value once the buttons are hidden"
+        QTest.keyClick(spin, Qt.Key.Key_Down)
+        assert spin.value() == 4, "Down no longer steps the value once the buttons are hidden"
+        assert spin.prefix() == "" and spin.text() == "4"
+    finally:
+        spin.close()
+        QApplication.processEvents()
+
+
+def test_combo_chevron_state_follows_hover_and_disabled(app):
+    """The chevron's hover/disabled state comes from ComboArrowState (QSS cannot select it)."""
+    from PySide6.QtCore import QEvent
+
+    from gui.widgets import ComboArrowState
+
+    tracker = ComboArrowState(app)
+    app.installEventFilter(tracker)
+    combo = QComboBox()
+    combo.show()
+    QApplication.processEvents()
+    try:
+        assert not combo.property("comboDisabled")
+        combo.setEnabled(False)
+        QApplication.processEvents()
+        assert combo.property("comboDisabled") is True
+        combo.setEnabled(True)
+        QApplication.processEvents()
+        assert combo.property("comboDisabled") is False
+        QApplication.sendEvent(combo, QEvent(QEvent.Type.Enter))
+        assert combo.property("comboHover") is True
+        QApplication.sendEvent(combo, QEvent(QEvent.Type.Leave))
+        assert combo.property("comboHover") is False
+    finally:
+        app.removeEventFilter(tracker)
+        combo.close()
+        QApplication.processEvents()
 
 
 def test_instance_name_via_userrole(app, monkeypatch, ws_tmp):
@@ -422,8 +654,8 @@ def test_instance_name_via_userrole(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        assert page.list.count() == 1
-        page.list.setCurrentRow(0)
+        assert page.card_ids() == ["tricky"]
+        assert page.select_instance("tricky")
         assert page._current_name() == "tricky"  # not misparsed because the note contains "   ["
     finally:
         if window is not None:
@@ -438,10 +670,18 @@ def test_first_run_wizard_applies(app, monkeypatch, ws_tmp):
 
     cfg, cfg_path = config_mod.load()
     assert cfg.wizard_done is False
-    wizard = FirstRunWizard()
+    # State the machine: the range is device-dependent now, so 6 GB has to be legal on it.
+    wizard = FirstRunWizard(total_gb=16.0, available_gb=12.0, java_32bit=False)
     wizard.language_combo.setCurrentIndex(wizard.language_combo.findData("en_us"))
     wizard.game_dir_edit.setText(str(ws_tmp / "mc"))
     wizard.memory_spin.setValue(6.0)
+    # The spin shows the number; the unit sits in its form label.
+    from gui import i18n
+
+    assert wizard.memory_spin.suffix() == ""
+    assert any(
+        i18n.tr("unit.gb.label") in label.text() for label in wizard.findChildren(QLabel)
+    )
     wizard.apply(cfg, cfg_path)
     cfg2, _ = config_mod.load()
     assert cfg2.wizard_done is True
@@ -462,7 +702,7 @@ def test_wizard_has_accessibility_step_and_skip_writes_nothing(app, monkeypatch,
     steps = overlay._steps
 
     assert [step.title for step in steps[-2:]] == [
-        i18n.tr("wizard.memory"),
+        i18n.tr("wizard.memory") + i18n.tr("unit.gb.label"),
         i18n.tr("settings.accessibility"),
     ]
     assert steps[-1].widget is window._wz_accessibility  # its own widget, not the settings page's
@@ -784,6 +1024,7 @@ def test_about_page_modes_and_credits(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data19"))
     from PySide6.QtWidgets import QLabel
 
+    import gui.pages.about_page as about
     from gui.pages.about_page import MODE_KEYS
     from gui.theme import apply_theme
     from launcher import config as config_mod
@@ -806,6 +1047,15 @@ def test_about_page_modes_and_credits(app, monkeypatch, ws_tmp):
         for entry in notices.all_entries():
             assert any(entry.name in text for text in labels), f"credit not rendered: {entry.name}"
         assert any("TheDarkLord234" in text for text in labels)
+        # The source link is printed under its button and wraps instead of widening the card: a long
+        # URL must never be clipped by the card it sits in.
+        assert page.source_url.text() == about.SOURCE_URL
+        assert page.source_url.wordWrap()
+        wrapped = page.source_url.heightForWidth(220)
+        assert wrapped > page.source_url.fontMetrics().height(), (
+            f"a long URL does not wrap: {wrapped}px at 220px wide, one line is "
+            f"{page.source_url.fontMetrics().height()}px"
+        )
     finally:
         if window is not None:
             window.close()
@@ -905,20 +1155,7 @@ def test_about_check_download_and_install_refusal(app, monkeypatch, ws_tmp):
         apply_theme("dark")
 
 
-def test_loader_prompt_dialog(app, monkeypatch, ws_tmp):
-    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data14"))
-    from gui.pages.versions_page import _LoaderPromptDialog
-
-    dialog = _LoaderPromptDialog()
-    assert dialog.combo.count() == 4
-    assert dialog.selected_loader() is None  # vanilla by default
-    dialog.combo.setCurrentIndex(dialog.combo.findData("fabric"))
-    assert dialog.selected_loader() == "fabric"
-    dialog.combo.setCurrentIndex(dialog.combo.findData("forge"))
-    assert dialog.selected_loader() == "forge"
-    dialog.close()
-
-def test_launch_version_combo_installed_only(app, monkeypatch, ws_tmp):
+def test_launch_version_choices_installed_only(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data18"))
     from launcher import config as config_mod
 
@@ -937,8 +1174,51 @@ def test_launch_version_combo_installed_only(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["launch"]
         page._populate_versions()
-        items = [page.version_combo.itemText(i) for i in range(page.version_combo.count())]
-        assert items == ["1.20.1", "1.8.9"]  # only installed versions, not the full manifest
+        # The label-only hero still offers exactly the installed versions, not the full manifest.
+        assert page.installed_versions == ["1.20.1", "1.8.9"]
+        assert [label for label, _id in page.version_choices] == ["1.20.1", "1.8.9"]
+        page.set_version_id("1.8.9")
+        assert page.version_label.text() == "1.8.9"
+        assert page._current_version_id() == "1.8.9"
+    finally:
+        if window is not None:
+            window.close()
+            app.processEvents()
+
+
+def test_launch_stats_hide_a_zero_line(app, monkeypatch, ws_tmp):
+    """The bottom counts are honest: no fake zeros, and an all-zero line hides itself."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_stats"))
+    from gui import i18n
+    from launcher import config as config_mod
+
+    i18n.set_language("zh_cn")
+    game = ws_tmp / "mc_stats"
+    version_dir = game / "versions" / "1.20.1"
+    version_dir.mkdir(parents=True)
+    (version_dir / "1.20.1.json").write_text("{}", encoding="utf-8")
+    _cfg, _p = config_mod.load()
+    _cfg.game_dir = game
+    config_mod.save(_cfg, _p)
+
+    from gui.main_window import MainWindow
+
+    window = None
+    try:
+        window = MainWindow()
+        page = window.pages["launch"]
+        page._populate_versions()
+        page.set_version_id("1.20.1")
+        assert page.stats_label.isHidden(), "a profile with no mods and no worlds showed a zero line"
+
+        (version_dir / "mods").mkdir()
+        (version_dir / "mods" / "demo.jar").write_bytes(b"PK")
+        world = version_dir / "saves" / "world"
+        world.mkdir(parents=True)
+        (world / "level.dat").write_bytes(b"level")
+        page._refresh_stats()
+        assert not page.stats_label.isHidden()
+        assert page.stats_label.text() == "Mod 1 · 世界 1"
     finally:
         if window is not None:
             window.close()
@@ -1034,6 +1314,11 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
     window = None
     try:
         window = MainWindow()
+        # The rows are laid out only once the page has a real width; the card's own geometry is what
+        # the "20 characters fit" check below measures.
+        window.resize(1000, 600)
+        window.show()
+        app.processEvents()
         page = window.pages["versions"]
         versions = [
             ManifestVersion(
@@ -1054,20 +1339,23 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
             SimpleNamespace(versions=versions, latest={"release": "release-0", "snapshot": "25w14a"})
         )
         # all listed, no 500-row cap
-        assert page.model.rowCount() == 553
+        assert page.list.count() == 553
         # latest version cards
         assert page.latest_labels["release"].text() == "release-0"
         assert page.latest_labels["snapshot"].text() == "25w14a"
         assert page.latest_buttons["release"].isEnabled()
         assert page.latest_buttons["snapshot"].isEnabled()
-        # the version name column can fit 20 English characters
-        assert page.table.columnWidth(0) >= page.table.fontMetrics().horizontalAdvance("W" * 20)
-        row_of = {page.model.data(page.model.index(r, 0)): r for r in range(page.model.rowCount())}
-        # the type column shows the Chinese name per category
-        assert page.model.data(page.model.index(row_of["24w14potato"], 1)) == "愚人节版本"
-        assert page.model.data(page.model.index(row_of["25w14a"], 1)) == "快照版"
-        assert page.model.data(page.model.index(row_of["release-0"], 1)) == "正式版"
-        assert page.model.data(page.model.index(row_of["b1.7.3"], 1)) == "远古版 Beta"
+        # every version is a dense card row, and its name has room for 20 English characters
+        assert len(page.rows) == 553
+        assert page.rows[0].text_width() >= page.fontMetrics().horizontalAdvance("W" * 20)
+        # the type tag shows the Chinese name per category
+        assert page.type_of("24w14potato") == "愚人节版本"
+        assert page.type_of("25w14a") == "快照版"
+        assert page.type_of("release-0") == "正式版"
+        assert page.type_of("b1.7.3") == "远古版 Beta"
+        # the date is humanized, not the raw ISO stamp the manifest carries
+        assert page.date_of("24w14potato").startswith("2024")
+        assert "2024-04-01" not in page.date_of("24w14potato")
         # category tabs: all/release/snapshot/april-fools/legacy
         tabs = page.tabs
         assert len(tabs) == 5
@@ -1081,32 +1369,28 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
                     t.setChecked(True)
             page._refilter()
 
-        def cell(row, col):
-            return page.model.data(page.model.index(row, col))
+        def ids():
+            return page.version_ids()
 
         set_filter("april_fools")
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "24w14potato"
+        assert ids() == ["24w14potato"]
         set_filter("release")
-        assert page.model.rowCount() == 550
+        assert page.list.count() == 550
         set_filter("snapshot")
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "25w14a"
+        assert ids() == ["25w14a"]
         set_filter("legacy")
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "b1.7.3"
+        assert ids() == ["b1.7.3"]
         # search box: combines with the tab condition (debounced in the UI, apply directly here)
         set_filter(None)
         page.search_edit.setText("potato")
         page._refilter()
-        assert page.model.rowCount() == 1
-        assert cell(0, 0) == "24w14potato"
+        assert ids() == ["24w14potato"]
         page.search_edit.setText("release-")
         page._refilter()
-        assert page.model.rowCount() == 550
+        assert page.list.count() == 550
         page.search_edit.clear()
         page._refilter()
-        assert page.model.rowCount() == 553
+        assert page.list.count() == 553
     finally:
         if window is not None:
             window.close()
@@ -1145,7 +1429,7 @@ def test_instance_open_folder_button(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["instances"]
         assert page.open_folder_button is not None
-        page.list.setCurrentRow(0)
+        assert page.select_instance("t")
         page._open_folder()
         assert opened == [str(ws_tmp / "mc" / "instances" / "t").replace("\\", "/")] or True
         assert "已打开" in window.status_label.text()
@@ -1193,7 +1477,7 @@ def test_instances_mods_panel_loads(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["instances"]
         assert page.mods_table.columnCount() == 6
-        page.list.setCurrentRow(0)
+        assert page.select_instance("t")
         import time
 
         for _ in range(100):
@@ -1231,7 +1515,7 @@ def test_resources_page_layout_contains_tabs(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["mods"]
         assert page.tabs.parent() is page
-        assert page.findChild(QLabel, "pageTitle") is not None
+        assert page.findChild(QLabel, "pageTitle") is None
     finally:
         if window is not None:
             window.close()
@@ -1286,10 +1570,13 @@ def test_instances_page_lists_base_versions(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        items = [page.list.item(i).text() for i in range(page.list.count())]
-        assert "1.20.1" in items
-        assert any("Fabric 0.15.11-1.20.1" in t for t in items)
-        assert any(t.startswith("红石测试") for t in items)  # display name wins over the id
+        # One card per instance: the display name is the card's title, the version + loader line is
+        # its meta, so the two old row-text facts still have to hold.
+        names = [card.name_label.text() for card in page.cards()]
+        metas = [card.meta_label.text() for card in page.cards()]
+        assert "1.20.1" in names
+        assert any("Fabric 0.15.11" in meta for meta in metas)
+        assert any(name.startswith("红石测试") for name in names)  # display name wins over the id
     finally:
         if window is not None:
             window.close()
@@ -1330,7 +1617,7 @@ def test_instance_detail_fills_on_selection(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         assert page.detail_stack.currentWidget() is detail
         assert detail.instance_id == "1.20.1"
@@ -1368,7 +1655,7 @@ def test_instance_tab_row_switches_stacked_pages(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         assert detail.stack.currentIndex() == 0
         for index in range(len(detail.tabs)):
@@ -1402,15 +1689,23 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         detail.set_tab(4)
+        # The per-instance memory field is a number; "GB" belongs to its row label.
+        assert detail.memory_spin.suffix() == ""
+        assert any(
+            label.text()
+            == i18n.tr("instances.detail.row.memory") + i18n.tr("unit.gb.label")
+            for label in detail.findChildren(QLabel)
+        )
         detail.java_follow_check.setChecked(False)
         detail.java_edit.setText(str(java))
         detail.memory_follow_check.setChecked(False)
         detail.memory_spin.setValue(6.0)
         detail.jvm_args_edit.setText("-XX:+UseG1GC")
         detail.game_args_edit.setText("--width 1280")
+        detail.server_edit.setText("mc.example.com")
         detail.settings_save_button.click()
         app.processEvents()
 
@@ -1419,6 +1714,7 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
         assert stored.settings.memory_gb == 6.0
         assert stored.settings.jvm_args == "-XX:+UseG1GC"
         assert stored.settings.game_args == "--width 1280"
+        assert stored.settings.server == "mc.example.com"
 
         # a full page reload reads the overrides back into the widgets
         page.refresh(select="1.20.1")
@@ -1430,8 +1726,15 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
         assert page.detail.memory_spin.value() == 6.0
         assert page.detail.jvm_args_edit.text() == "-XX:+UseG1GC"
         assert page.detail.game_args_edit.text() == "--width 1280"
-        # the overview reports the instance's own memory
+        assert page.detail.server_edit.text() == "mc.example.com"
+        # clearing the field is the way back to "join no server"
+        page.detail.server_edit.setText("")
+        page.detail.settings_save_button.click()
+        app.processEvents()
+        assert get_instance("1.20.1", game).settings.server == ""
+        # the overview reports the instance's own memory, still as a read-only value with its unit
         assert "6" in page.detail.overview_values["memory"].text()
+        assert i18n.tr("unit.gb") in page.detail.overview_values["memory"].text()
         assert i18n.tr("instances.detail.memory.source.instance") in (
             page.detail.overview_values["memory"].text()
         )
@@ -1444,7 +1747,6 @@ def test_instance_settings_save_survives_reload(app, monkeypatch, ws_tmp):
 def test_instance_settings_reset_clears_overrides(app, monkeypatch, ws_tmp):
     """重置本实例设置 drops every override (and the isolation choice) after confirmation."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_reset"))
-    from PySide6.QtWidgets import QMessageBox
 
     from launcher import config as config_mod
     from launcher.instances import get_instance, set_instance_settings, update_instance
@@ -1456,18 +1758,15 @@ def test_instance_settings_reset_clears_overrides(app, monkeypatch, ws_tmp):
     config_mod.save(cfg, cfg_path)
     set_instance_settings("1.20.1", game_dir=game, memory_gb=8.0, jvm_args="-Xss4M")
     update_instance("1.20.1", game_dir=game, isolated="off")
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
-    )
+    # "Yes" in the reset confirmation, which gui/inwindow_dialog.py draws over the window.
+    monkeypatch.setattr("gui.inwindow_dialog.question", lambda *a, **k: True)
     from gui.main_window import MainWindow
 
     window = None
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         detail.set_tab(4)
         assert detail.memory_spin.value() == 8.0
@@ -1505,7 +1804,7 @@ def test_instance_not_isolated_banner_and_one_click(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance("1.20.1")
         detail = page.detail
         assert detail.overview_values["isolation"].text().startswith(i18n.tr("common.off"))
         # the banner sits on top of the 模组 and 资源 tabs (a stacked page is only visible when current)
@@ -1531,8 +1830,6 @@ def test_instance_not_isolated_banner_and_one_click(app, monkeypatch, ws_tmp):
 def test_instances_search_filters_the_list(app, monkeypatch, ws_tmp):
     """The search box filters by display name / id / profile label and reports an empty result."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_search"))
-    from PySide6.QtCore import Qt
-
     from launcher import config as config_mod
 
     game = ws_tmp / "mc"
@@ -1547,23 +1844,22 @@ def test_instances_search_filters_the_list(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        assert page.list.count() == 2
+        assert len(page.cards()) == 2
         page.search_edit.setText("红石")
         page._on_search_changed()
-        assert page.list.count() == 1
-        assert page.list.item(0).data(Qt.ItemDataRole.UserRole) == "fabric-loader-0.15.11-1.20.1"
+        assert page.card_ids() == ["fabric-loader-0.15.11-1.20.1"]
         # the profile label is searchable too
         page.search_edit.setText("Fabric")
         page._on_search_changed()
-        assert page.list.count() == 1
+        assert page.card_ids() == ["fabric-loader-0.15.11-1.20.1"]
         page.search_edit.setText("nothing-matches")
         page._on_search_changed()
-        assert page.list.count() == 0
+        assert page.cards() == []
         assert page.list_stack.currentWidget() is page.empty_search
         page.search_edit.clear()
         page._on_search_changed()
-        assert page.list.count() == 2
-        assert page.list_stack.currentWidget() is page.list
+        assert len(page.cards()) == 2
+        assert page.list_stack.currentWidget() is page.content_scroll
     finally:
         if window is not None:
             window.close()
@@ -1580,7 +1876,7 @@ def test_display_version_name_normalizes_loaders():
     assert display_version_name("quilt-loader-0.24.0-1.20.1") == "Quilt 0.24.0-1.20.1"
 
 
-def test_launch_combo_normalizes_and_keeps_real_id(app, monkeypatch, ws_tmp):
+def test_launch_hero_normalizes_and_keeps_real_id(app, monkeypatch, ws_tmp):
     """The launch page shows normalized names but launches with the real profile id."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_norm"))
     from launcher import config as config_mod
@@ -1600,11 +1896,11 @@ def test_launch_combo_normalizes_and_keeps_real_id(app, monkeypatch, ws_tmp):
         window = MainWindow()
         page = window.pages["launch"]
         page._populate_versions()
-        labels = [page.version_combo.itemText(i) for i in range(page.version_combo.count())]
+        labels = [label for label, _id in page.version_choices]
         assert "Fabric 0.15.11-1.20.1" in labels
-        page.version_combo.setCurrentIndex(page.version_combo.findData("fabric-loader-0.15.11-1.20.1"))
-        real_id = page.version_combo.currentData() or page.version_combo.currentText()
-        assert real_id == "fabric-loader-0.15.11-1.20.1"
+        page.set_version_id("fabric-loader-0.15.11-1.20.1")
+        assert page.version_label.text() == "Fabric 0.15.11-1.20.1"
+        assert page._current_version_id() == "fabric-loader-0.15.11-1.20.1"
     finally:
         if window is not None:
             window.close()

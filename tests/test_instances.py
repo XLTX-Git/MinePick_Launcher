@@ -48,10 +48,12 @@ from launcher.instances import (
 )
 
 
-def _write_version(game, version_id: str, *, jar: bool = True) -> None:
+def _write_version(
+    game, version_id: str, *, jar: bool = True, file_name: str | None = None
+) -> None:
     folder = game / "versions" / version_id
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / (version_id + ".json")).write_text(
+    (folder / (file_name or (version_id + ".json"))).write_text(
         json.dumps(
             {
                 "id": version_id,
@@ -266,3 +268,77 @@ def test_legacy_instances_dir_is_only_reported(ws_tmp):
     assert legacy_instances_dir(game) == game / "instances"
     assert list(list_instances(game)) == ["1.20.1"]  # never merged automatically
     assert not (game / "versions" / "old").exists()
+
+
+# ---------------------------------------------------------------------------
+# Version profiles that are not named <folder>.json
+# ---------------------------------------------------------------------------
+
+
+def test_instance_with_a_version_json_is_usable(ws_tmp):
+    game = ws_tmp / "mc"
+    _write_version(game, "1.20.1", file_name="version.json")
+
+    assert list(list_instances(game)) == ["1.20.1"]
+    assert resolve_instance("1.20.1", _cfg(game), game).id == "1.20.1"
+
+    # A copy is normalised to the official layout: folder name and profile file agree again.
+    copied = create_instance("副本", "1.20.1", game)
+    assert copied.id == "副本"
+    target = instance_dir(game, "副本")
+    assert json.loads((target / "副本.json").read_text(encoding="utf-8"))["id"] == "副本"
+    assert not (target / "version.json").exists()
+
+
+def test_arbitrarily_named_profile_survives_a_rename(ws_tmp):
+    game = ws_tmp / "mc"
+    _write_version(game, "handpack", file_name="我的整合包.json")
+
+    assert list(list_instances(game)) == ["handpack"]
+    renamed = rename_instance("handpack", "生存档", game)
+
+    assert renamed.id == "生存档"
+    moved = instance_dir(game, "生存档")
+    assert json.loads((moved / "生存档.json").read_text(encoding="utf-8"))["id"] == "生存档"
+    assert not (moved / "我的整合包.json").exists()
+
+
+def test_jar_only_instance_is_visible_and_reports_the_missing_json(ws_tmp):
+    game = ws_tmp / "mc"
+    folder = game / "versions" / "26.3-snapshot-8"
+    folder.mkdir(parents=True)
+    (folder / "26.3-snapshot-8.jar").write_bytes(b"jar")
+
+    # Not hidden: the user has to be able to see and delete the damaged install.
+    assert list(list_instances(game)) == ["26.3-snapshot-8"]
+    assert resolve_instance("26.3-snapshot-8", _cfg(game), game).id == "26.3-snapshot-8"
+
+    with pytest.raises(InstancesError) as raised:
+        create_instance("copy", "26.3-snapshot-8", game)
+    assert ".jar" in str(raised.value) and "json" in str(raised.value)
+
+
+def test_renaming_a_folder_without_a_profile_does_not_crash(ws_tmp):
+    game = ws_tmp / "mc"
+    folder = game / "versions" / "broken"
+    folder.mkdir(parents=True)
+    (folder / "broken.jar").write_bytes(b"jar")
+
+    renamed = rename_instance("broken", "broken-renamed", game)
+    assert renamed.id == "broken-renamed"
+    moved = instance_dir(game, "broken-renamed")
+    assert (moved / "broken-renamed.jar").is_file()  # the jar follows the folder name
+    assert list(list_instances(game)) == ["broken-renamed"]
+
+
+def test_our_sidecar_keeps_a_folder_visible_without_a_profile(ws_tmp):
+    game = ws_tmp / "mc"
+    folder = game / "versions" / "lost"
+    folder.mkdir(parents=True)
+    (folder / INSTANCE_META_FILENAME).write_text(
+        json.dumps({"id": "lost", "note": "红石测试"}), encoding="utf-8"
+    )
+
+    found = list_instances(game)
+    assert list(found) == ["lost"]
+    assert found["lost"].note == "红石测试"

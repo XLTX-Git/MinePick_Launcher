@@ -36,11 +36,15 @@ from launcher.mods.models import (
     ModInfo,
     ModSearchHit,
     ModVersion,
+    SearchHits,
 )
 from launcher.net.downloader import Downloader, DownloadProgress, DownloadTask
 
 MODRINTH_API = "https://api.modrinth.com/v2"
 USER_AGENT = "mclauncher/0.1.0 (modrinth downloader)"
+#: Loader ids as Modrinth spells them (Quilt included: ``launcher.mods.loaders.LOADERS`` is the
+#: installer's list of installable loaders and intentionally leaves Quilt out of the launch path).
+_LOADER_CATEGORIES = frozenset({"fabric", "forge", "neoforge", "quilt", "liteloader", "rift"})
 
 
 def _client() -> httpx.Client:
@@ -65,21 +69,39 @@ def fetch_project(slug: str, *, client: httpx.Client | None = None) -> dict:
             client.close()
 
 
+#: The dropdown's semantic sort keys mapped to Modrinth's ``index`` values (all documented).
+SORT_INDEXES = {
+    "relevance": "relevance",
+    "downloads": "downloads",
+    "updated": "updated",
+    "newest": "newest",
+}
+
+
 def search_projects(
     query: str,
     *,
     limit: int = 20,
+    offset: int = 0,
+    sort: str = "relevance",
     project_type: str = "mod",
     client: httpx.Client | None = None,
-) -> list[ModSearchHit]:
-    """Search Modrinth projects by keyword (project_type: mod/resourcepack/shader, sorted by downloads)."""
+) -> SearchHits:
+    """Search Modrinth projects by keyword (project_type: mod/resourcepack/shader).
+
+    ``sort`` is one of :data:`SORT_INDEXES`' keys; the default is relevance, so a keyword no longer
+    surfaces the biggest projects first. ``offset``/``limit`` page the results, and the returned
+    :class:`~launcher.mods.models.SearchHits` carries Modrinth's ``total_hits`` for the next-page
+    decision.
+    """
     own = client is None
     if own:
         client = _client()
     params = {
         "query": query,
         "limit": str(limit),
-        "index": "downloads",
+        "offset": str(max(0, offset)),
+        "index": SORT_INDEXES.get(sort, SORT_INDEXES["relevance"]),
         "facets": json.dumps([["project_type:" + project_type]]),
     }
     try:
@@ -97,6 +119,12 @@ def search_projects(
     for entry in payload.get("hits", []):
         if not isinstance(entry, dict):
             continue
+        categories = entry.get("categories") or []
+        # Modrinth reports loader support as categories on a mod ("fabric"/"forge"/...); a resource pack
+        # or shader has none. A future API that returns a dedicated `loaders` field wins over that guess.
+        loaders = entry.get("loaders")
+        if not isinstance(loaders, list):
+            loaders = [item for item in categories if isinstance(item, str) and item in _LOADER_CATEGORIES]
         hits.append(
             ModSearchHit(
                 slug=entry.get("slug") or entry.get("project_id") or "",
@@ -104,9 +132,12 @@ def search_projects(
                 description=entry.get("description") or "",
                 downloads=int(entry.get("downloads") or 0),
                 icon_url=entry.get("icon_url") or "",
+                updated=str(entry.get("date_modified") or ""),
+                loaders=[str(item) for item in loaders],
+                source="modrinth",
             )
         )
-    return hits
+    return SearchHits(hits, total=int(payload.get("total_hits") or 0))
 
 
 def list_installed_content(

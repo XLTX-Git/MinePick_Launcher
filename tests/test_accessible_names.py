@@ -170,8 +170,9 @@ def window(monkeypatch):
     # visited as empty containers and the gate would look green while measuring nothing.
     instances_page = built.pages["instances"]
     instances_page.refresh()
-    if instances_page.list.count():
-        instances_page.list.setCurrentRow(0)
+    card_ids = instances_page.card_ids()
+    if card_ids:
+        instances_page.select_instance(card_ids[0])
     app.processEvents()
     yield app, built
     built.close()

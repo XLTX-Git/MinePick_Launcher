@@ -15,39 +15,38 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Launch page: choose version/account/memory/language and launch the game."""
+"""Launch page: choose a version/account and launch the game (direct connect lives per instance)."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QDateTime, QLocale, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
-    QComboBox,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from gui import i18n, icons
+from gui import block_icons, i18n, icons, theme
 from gui.accessibility_launch import (
     prepare_launch_accessibility,
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
+from gui.paint_utils import avatar_pixmap, block_pixmap
 from gui.widgets import (
-    NoWheelDoubleSpinBox,
-    build_page_header,
+    PAGE_HEADER_GAP,
     disable_keeping_focus,
     set_app_status,
-    style_form,
-    style_page_layout,
 )
 from gui.workers import run_in_background
 from launcher import config, paths
@@ -60,9 +59,116 @@ from launcher.launch import (
     resolve_launch_account,
     run_process,
 )
+from launcher.meta.version import version_json_path
 
 tr = i18n.tr
 _LOGGER = logging.getLogger(__name__)
+
+#: Version kinds the manifest knows, mapped onto the labels the versions page already uses.
+_TYPE_LABEL_KEYS = {
+    "release": "versions.type.release",
+    "snapshot": "versions.type.snapshot",
+    "april_fools": "versions.type.april",
+    "old_beta": "versions.type.old_beta",
+    "old_alpha": "versions.type.old_alpha",
+}
+_SNAPSHOT_ID = re.compile(r"^\d{2}w\d{2}[a-z]$")
+
+
+def _locale_name(code: str) -> str:
+    """``zh_cn`` -> ``zh_CN``: QLocale wants the region upper-cased."""
+    language, _, region = code.partition("_")
+    return f"{language}_{region.upper()}" if region else language
+
+
+def _base_version_id(version_id: str) -> str:
+    """The Minecraft version behind a loader profile id (the id itself for a vanilla one)."""
+    if version_id.startswith(("fabric-loader-", "quilt-loader-")):
+        return version_id.split("-")[-1]
+    if "-forge-" in version_id:
+        return version_id.split("-forge-", 1)[0]
+    return version_id
+
+
+def _loader_label(version_id: str) -> str:
+    """``fabric-loader-0.16.9-1.20.1`` -> ``Fabric 0.16.9``; empty for a vanilla version."""
+    if version_id.startswith("fabric-loader-"):
+        parts = version_id.split("-")
+        return "Fabric " + parts[2] if len(parts) >= 4 else "Fabric"
+    if version_id.startswith("quilt-loader-"):
+        parts = version_id.split("-")
+        return "Quilt " + parts[2] if len(parts) >= 4 else "Quilt"
+    if version_id.startswith("neoforge-"):
+        return "NeoForge " + version_id[len("neoforge-") :]
+    if "-forge-" in version_id:
+        return "Forge " + version_id.split("-forge-", 1)[1]
+    return ""
+
+
+def _guessed_version_type(version_id: str) -> str:
+    """A local fallback when the version JSON is absent or carries no ``type``."""
+    base = _base_version_id(version_id)
+    if _SNAPSHOT_ID.match(base):
+        return "snapshot"
+    if base.startswith("b1."):
+        return "old_beta"
+    if base.startswith("a1."):
+        return "old_alpha"
+    return "release"
+
+
+class _LaunchActionButton(QPushButton):
+    """The primary action, painting its 16px title through a child label.
+
+    A QPushButton paints one font size; the launch sheet wants the click target and its text to have
+    separate metrics, so the title lives in a transparent label that takes no focus and no mouse.
+    The button stays one keyboard stop and one click.
+    """
+
+    def __init__(self, title: str) -> None:
+        super().__init__()
+        self._title = title
+        self.setObjectName("launchButton")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 4, 0, 4)
+        self._layout.setSpacing(0)
+        self._layout.addStretch(1)
+        self._title_label = QLabel(title)
+        self._title_label.setObjectName("launchActionTitle")
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._title_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # The dark sheet has no rule for this label; ButtonText is the button's own white there.
+        self._title_label.setForegroundRole(QPalette.ColorRole.ButtonText)
+        self._layout.addWidget(self._title_label)
+        self._layout.addStretch(1)
+        self.setFixedHeight(40)
+        self._sync_accessible_name()
+
+    def text(self) -> str:  # QPushButton.text() is not virtual; callers and tests use this
+        return self._title
+
+    def setText(self, text: str) -> None:
+        self._title = text
+        self._title_label.setText(text)
+        self._sync_accessible_name()
+
+    def _sync_accessible_name(self) -> None:
+        self.setAccessibleName(self._title)
+
+
+def _count_worlds(saves_dir: Path) -> int:
+    """World folders under ``saves`` (a folder counts when it holds a level.dat)."""
+    try:
+        return sum(
+            1
+            for entry in saves_dir.iterdir()
+            if entry.is_dir() and (entry / "level.dat").is_file()
+        )
+    except OSError:
+        return 0
 
 
 class LaunchPage(QWidget):
@@ -73,84 +179,188 @@ class LaunchPage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.version_combo = QComboBox()
-        self.version_combo.setEditable(True)
-        # Accounts are picked on the account page: an icon-only button jumps there, and the label
-        # next to it says which account is active.
+        self._version_id = ""
+        self._version_choices: list[tuple[str, str]] = []
+        self.setObjectName("launchPage")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        # ---- version block: the page's visual subject (and its page header) ----
+        self.version_icon = QLabel()
+        self.version_icon.setFixedSize(32, 32)
+        self.version_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version_icon.setPixmap(block_pixmap(30))
+        # The big version number is this page's visual subject, not a page name: the shared page
+        # header (name + description) was removed from every top-level page. It keeps the same
+        # 20px heading treatment through its own object name.
+        self.version_label = QLabel(tr("launch.version.none"))
+        self.version_label.setObjectName("launchVersionTitle")
+        self.version_label.setProperty("versionHero", True)
+        # The panel is 360px wide and 16px of paper on each side plus the 32px block icon leaves this
+        # line 284px. The Japanese "no version selected" sentence is 300px at the 20px hero size, so
+        # the label clipped its tail instead of drawing it. Wrapping keeps the sentence and the type
+        # size as they are (no shorter translation, no smaller font); the panel's stretches absorb the
+        # second line, and every language whose label fits stays exactly one line tall.
+        self.version_label.setWordWrap(True)
+        self.version_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.version_meta = QLabel("")
+        self.version_meta.setObjectName("launchVersionMeta")
+        # A "switch instances?" line used to sit under the subtitle. The instance buttons below already
+        # say the same thing, so the key stays in the tables but the page no longer draws it.
+
+        version_text = QVBoxLayout()
+        version_text.setContentsMargins(0, 0, 0, 0)
+        version_text.setSpacing(4)
+        version_text.addWidget(self.version_label)
+        version_text.addWidget(self.version_meta)
+        version_text.addStretch(1)
+
+        version_row = QHBoxLayout()
+        version_row.setContentsMargins(0, 0, 0, 0)
+        version_row.setSpacing(12)
+        version_row.addWidget(self.version_icon, 0, Qt.AlignmentFlag.AlignTop)
+        version_row.addLayout(version_text, 1)
+
+        self.version_block = QWidget()
+        self.version_block.setLayout(version_row)
+
+        # ---- account block: one inline row, the switch button on its right ----
+        self.avatar_label = QLabel()
+        self.avatar_label.setFixedSize(36, 36)
+        self.avatar_label.setAccessibleName(tr("launch.account.avatar"))
         self.account_label = QLabel("")
-        self.account_label.setObjectName("hint")
+        self.account_label.setObjectName("accountName")
+        # Accounts are switched on the account page: this is a plain button, not a menu or a combo.
         self.account_button = QPushButton()
+        # Keep the shared #iconButton identity (it already owns the dark sheet's quiet icon style and
+        # focus ring); the launch sheet narrows it to 24px through the accountSwitch property.
         self.account_button.setObjectName("iconButton")
+        self.account_button.setProperty("accountSwitch", True)
         # A noun, not the tooltip's verb phrase: a screen reader must not read a command (C4).
         self.account_button.setAccessibleName(tr("nav.account"))
-        self.account_button.setIcon(icons.icon("switch"))
+        self.account_button.setIcon(icons.icon("switch", 16))
+        self.account_button.setIconSize(QSize(16, 16))
         self.account_button.setToolTip(tr("launch.account.switch"))
-        self.account_button.setFixedWidth(46)
-        self.memory_spin = NoWheelDoubleSpinBox()
-        self.memory_spin.setRange(0.5, 64.0)
-        self.memory_spin.setSingleStep(0.5)
-        self.memory_spin.setSuffix(" " + tr("unit.gb"))
-        self.server_edit = QLineEdit()
-        self.server_edit.setAccessibleName(tr("launch.server"))  # WCAG 4.1.2
-        self.server_edit.setPlaceholderText(tr("launch.server.placeholder"))
-        self.launch_button = QPushButton(tr("launch.button"))
-        self.select_instance_button = QPushButton(tr("launch.instances.select"))
-        self.select_instance_button.setObjectName("secondaryButton")
-        self.select_instance_button.setIcon(icons.icon("instances"))
-        self.instance_settings_button = QPushButton(tr("launch.instances.settings"))
-        self.instance_settings_button.setObjectName("secondaryButton")
-        self.instance_settings_button.setIcon(icons.icon("settings"))
+        self.account_button.setFixedSize(24, 24)
 
-        # Only what a normal launch needs: version, account, memory and (optionally) a server to
-        # join. The offline user name, the game language, custom JVM arguments and the server port
-        # used to sit here too, but almost nobody touched them: the language and the JVM arguments
-        # are launcher settings, an offline name falls back to "Player", and the port defaults to
-        # 25565. They all still work - just not as clutter on the main page.
         account_row = QHBoxLayout()
         account_row.setContentsMargins(0, 0, 0, 0)
-        account_row.setSpacing(6)
+        account_row.setSpacing(12)
+        account_row.addWidget(self.avatar_label)
         account_row.addWidget(self.account_label, 1)
-        account_row.addWidget(self.account_button)
+        account_row.addWidget(self.account_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        form = QFormLayout()
-        style_form(form)
-        form.addRow(tr("launch.version"), self.version_combo)
-        form.addRow(tr("launch.account"), account_row)
-        form.addRow(tr("launch.memory"), self.memory_spin)
-        form.addRow(tr("launch.server"), self.server_edit)
-
-        instance_actions = QHBoxLayout()
-        instance_actions.setContentsMargins(0, 0, 0, 0)
-        instance_actions.setSpacing(6)
-        instance_actions.addStretch(1)
-        instance_actions.addWidget(self.select_instance_button)
-        instance_actions.addWidget(self.instance_settings_button)
-        instance_actions.addStretch(1)
-        # A little wider than the natural size: the two actions sit under the full-width launch
-        # button and read better when they are not cramped against their labels.
+        # ---- the one primary action and its two equal secondary siblings ----
+        self.launch_button = _LaunchActionButton(tr("launch.button"))
+        self.select_instance_button = QPushButton(tr("launch.instances.select"))
+        self.instance_settings_button = QPushButton(tr("launch.instances.settings"))
         for button in (self.select_instance_button, self.instance_settings_button):
-            button.setMinimumWidth(button.sizeHint().width() + 10)
+            # Equal width, same baseline, 12px apart: the two halves of one secondary row. The labels
+            # are long in German and Russian, so the launch sheet gives them 12px type and 8px side
+            # padding - measured against the 320px panel interior, that is what keeps both on one line.
+            button.setObjectName("secondaryButton")
+            button.setFixedHeight(40)
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        layout = QVBoxLayout(self)
-        style_page_layout(layout)
-        layout.addWidget(build_page_header(tr("nav.launch"), tr("page.launch.desc")))
-        layout.addLayout(form)
-        layout.addWidget(self.launch_button)
-        layout.addLayout(instance_actions)
+        secondary_row = QHBoxLayout()
+        secondary_row.setContentsMargins(0, 0, 0, 0)
+        secondary_row.setSpacing(12)
+        secondary_row.addWidget(self.select_instance_button, 1)
+        secondary_row.addWidget(self.instance_settings_button, 1)
+
+        # The old "Advanced" block held the direct-server field. It was the only way to reach --server,
+        # so the field moved to the per-instance settings (instances page, settings tab) instead of being
+        # dropped: the value is instance data, not launch-page state, and the launch page still reads it
+        # through resolve_instance().server when it builds the command line. The keys stay in the tables.
+
+        # ---- quiet bottom block: counts only when they exist, then the last launch ----
+        self.stats_label = QLabel("")
+        self.stats_label.setObjectName("launchStats")
+        self.stats_label.setVisible(False)
+        self.last_launch_label = QLabel("")
+        self.last_launch_label.setObjectName("launchLast")
+        self.last_launch_label.setWordWrap(True)
+
+        # ---- the white card: 16px of paper around it, 16px of its own air inside ----
+        self.panel = QWidget()
+        self.panel.setObjectName("launchPanel")
+        self.panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.panel.setFixedWidth(360)
+        self.panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        panel = QVBoxLayout(self.panel)
+        panel.setContentsMargins(16, 16, 16, 16)
+        panel.setSpacing(0)
+        panel.addWidget(self.version_block)
+        # The version block is this panel's top content; the gap to the account row below it
+        # stays the same 16px the instance-detail header uses.
+        panel.addSpacing(PAGE_HEADER_GAP)
+        panel.addLayout(account_row)
+        panel.addStretch(1)
+        panel.addWidget(self.launch_button)
+        panel.addSpacing(12)
+        panel.addLayout(secondary_row)
+        panel.addStretch(1)
+        panel.addWidget(self.stats_label)
+        panel.addSpacing(4)
+        panel.addWidget(self.last_launch_label)
+
+        # The rest of the page is deliberately blank: the panel is the only thing on the paper.
+        layout = QHBoxLayout(self)
+        # 16px of paper on every side: the panel is a card floating on the page, not a half of a
+        # two-column split. The right half stays empty on purpose (no artwork, no widgets).
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(0)
+        layout.addWidget(self.panel, 0)
         layout.addStretch(1)
 
         self.launch_button.clicked.connect(self._on_launch_clicked)
         self.account_button.clicked.connect(self.account_requested.emit)
         self.select_instance_button.clicked.connect(self._request_instance)
         self.instance_settings_button.clicked.connect(self._request_instance_settings)
+        theme.register_self_styling(self)
 
         self.refresh_config()
         self.refresh_account()
         self._populate_versions()
 
+    def on_theme_applied(self) -> None:
+        """Re-draw the block icon and avatar after a theme/accent swap."""
+        self._refresh_version_icon()
+        self.refresh_account()
+
+    # ---- version state: the launch page shows it, the paths choose it ----
+
+    @property
+    def version_choices(self) -> list[tuple[str, str]]:
+        """(display label, real profile id) for every installed version, installed-only."""
+        return list(self._version_choices)
+
+    @property
+    def installed_versions(self) -> list[str]:
+        """The real ids behind the display labels, sorted the way the page lists them."""
+        return [version_id for _label, version_id in self._version_choices]
+
+    def _version_label_text(self) -> str:
+        """The display name of the current profile, never the raw loader id when a name exists."""
+        version_id = self._current_version_id()
+        if not version_id:
+            return tr("launch.version.none")
+        for label, candidate in self._version_choices:
+            if candidate == version_id:
+                return label
+        from launcher.instances import display_version_name
+
+        return display_version_name(version_id)
+
     def refresh_config(self) -> None:
-        cfg, _ = config.load()
-        self.memory_spin.setValue(cfg.memory_gb)
+        """The settings page changed something the launch page shows: re-read the quiet lines.
+
+        Memory is deliberately not here any more - it is a launcher setting (settings page) and a
+        per-instance one (instance settings), so the launch page reads ``cfg.memory_gb`` at launch
+        time instead of owning a second copy the user has to keep in sync.
+        """
+        self._refresh_last_launch()
+        self._refresh_stats()
 
     def refresh_account(self) -> None:
         """Show the selected account; switching happens on the account page (one click away)."""
@@ -159,13 +369,152 @@ class LaunchPage(QWidget):
         account = accounts.get(cfg.selected_account) if cfg.selected_account else None
         if account is None:
             self.account_label.setText(tr("launch.account.none.item"))
+            self.avatar_label.clear()
             return
         kind = tr("kind.ms") if account.type == "microsoft" else tr("kind.offline")
         self.account_label.setText(tr("launch.account.label", account.username, kind))
+        avatar = avatar_pixmap(account.username, 36)
+        if avatar is None:
+            self.avatar_label.clear()
+        else:
+            self.avatar_label.setPixmap(avatar)
+
+    def _refresh_version_block(self) -> None:
+        """Update the block icon, the version number, the meta line and the launch history."""
+        self._refresh_version_icon()
+        self.version_label.setText(self._version_label_text())
+        self.version_meta.setText(self._version_meta_text())
+        self._refresh_last_launch()
+        self._refresh_stats()
+
+    def _refresh_version_icon(self) -> None:
+        """Show the selected version's own block as a 3D cube, the drawn block when it has no texture.
+
+        The texture comes from the same three-step lookup the instance cards use (the version's assets,
+        then its client jar, then the user cache), so the launch page shows the exact artwork of the
+        version it is about to run - a 1.20.1 world shows the 1.20.1 grass, not a generic icon.
+        """
+        version_id = self._current_version_id()
+        if not version_id:
+            self.version_icon.setPixmap(block_pixmap(30))
+            return
+        from launcher.meta import block_textures
+
+        game_dir = self._game_dir()
+        category = block_textures.icon_category(version_id, self._version_type(version_id))
+        block = block_textures.block_name_for_category(category)
+        self.version_icon.setPixmap(
+            block_icons.block_pixmap(
+                block,
+                30,
+                game_dir=game_dir,
+                version_id=version_id,
+                cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
+            )
+        )
+
+    def _refresh_stats(self) -> None:
+        """Show mods/worlds only when the selected profile really has some.
+
+        Zeros are not information: the mock-up's "Mod 0 · 世界 0" line read as empty chrome, so a
+        zero component is dropped, and a line with no components hides itself entirely.
+        """
+        parts: list[str] = []
+        version_id = self._current_version_id()
+        if version_id:
+            try:
+                from launcher.instances import resolve_instance
+                from launcher.memory import count_mods
+
+                cfg, _ = config.load()
+                resolved = resolve_instance(version_id, cfg, self._game_dir())
+                mods = count_mods(resolved.mods_dir)
+                worlds = _count_worlds(resolved.launch_dir / "saves")
+                if mods:
+                    parts.append(tr("launch.stats.mods", mods))
+                if worlds:
+                    parts.append(tr("launch.stats.worlds", worlds))
+            except Exception:  # noqa: BLE001 - a missing instance simply has nothing to count
+                parts = []
+        text = ""
+        if len(parts) == 2:
+            text = tr("launch.stats.line", parts[0], parts[1])
+        elif parts:
+            text = parts[0]
+        self.stats_label.setText(text)
+        self.stats_label.setVisible(bool(text))
+
+    def _version_type(self, version_id: str) -> str:
+        """The version JSON's own ``type``, or a local guess when the file is absent.
+
+        Read from disk only: a version the user typed but has not installed must not start a
+        manifest download just to label the hero row. The profile is found under any JSON name,
+        so a hand-made ``version.json`` labels the row just as the official layout does.
+        """
+        path = version_json_path(self._game_dir() / "versions" / version_id)
+        data: dict = {}
+        if path is not None:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
+        declared = str(data.get("type") or "")
+        return declared or _guessed_version_type(version_id)
+
+    def _version_meta_text(self) -> str:
+        version_id = self._current_version_id()
+        if not version_id:
+            return ""
+        from launcher.meta.manifest import version_category
+
+        kind = version_category(version_id, self._version_type(version_id))
+        type_label = tr(_TYPE_LABEL_KEYS.get(kind, "versions.type.release"))
+        loader = _loader_label(version_id)
+        return tr("launch.version.meta", type_label, loader) if loader else type_label
+
+    def _last_launch_stamp(self, version_id: str) -> float:
+        """When this version last ran: the instance's own stamp, else its latest game log.
+
+        ``Instance.last_played`` is the clean source, but nothing writes it today; ``latest.log``
+        (the file the game itself appends to) is the honest fallback, and its mtime is a real "last
+        launch" rather than a made-up value. Both routes are local and best-effort: any failure
+        means "never launched".
+        """
+        from launcher.instances import get_instance, resolve_instance
+
+        try:
+            instance = get_instance(version_id, self._game_dir())
+            if instance is not None and instance.last_played:
+                return float(instance.last_played)
+            cfg, _ = config.load()
+            resolved = resolve_instance(version_id, cfg, self._game_dir())
+            log = resolved.launch_dir / "logs" / "latest.log"
+            if log.is_file():
+                return float(log.stat().st_mtime)
+        except Exception:  # noqa: BLE001 - a missing/unreadable instance just means "none"
+            return 0.0
+        return 0.0
+
+    def _refresh_last_launch(self) -> None:
+        """The quiet bottom line: "last launch: <date> · <version>" or "never launched"."""
+        version_id = self._current_version_id()
+        stamp = self._last_launch_stamp(version_id) if version_id else 0.0
+        if stamp <= 0 or not version_id:
+            self.last_launch_label.setText(tr("launch.last.none"))
+            return
+        from launcher.instances import display_version_name
+
+        locale = QLocale(_locale_name(i18n.current_language()))
+        when = locale.toString(
+            QDateTime.fromSecsSinceEpoch(int(stamp)).date(),
+            QLocale.FormatType.ShortFormat,
+        )
+        detail = tr("launch.last.detail", when, display_version_name(version_id))
+        self.last_launch_label.setText(tr("launch.last.line", detail))
 
     def _current_version_id(self) -> str:
-        """The profile id behind the version dropdown (it shows display names, stores ids)."""
-        return str(self.version_combo.currentData() or self.version_combo.currentText().strip())
+        """The real profile id behind the display label on screen."""
+        return self._version_id.strip()
 
     def _request_instance(self) -> None:
         """Jump to the instances page showing the selected profile."""
@@ -184,13 +533,23 @@ class LaunchPage(QWidget):
         self.instance_settings_requested.emit(version_id)
 
     def set_version_id(self, version_id: str) -> None:
-        index = self.version_combo.findData(version_id)
-        if index >= 0:
-            self.version_combo.setCurrentIndex(index)
-        else:
-            from launcher.instances import display_version_name
+        """Show/launch this profile (the versions and instances pages hand one over).
 
-            self.version_combo.setEditText(display_version_name(version_id))
+        The launch page is the one place that decides which profile the launcher will run, so the
+        choice is written to ``config.selected_instance`` here instead of being kept in memory only.
+        """
+        self._version_id = str(version_id or "").strip()
+        self._remember_selected_instance(self._version_id)
+        self._refresh_version_block()
+
+    def _remember_selected_instance(self, instance_id: str) -> None:
+        """Persist the launch target (empty = keep the historical first-installed behaviour)."""
+        cfg, cfg_path = config.load()
+        target = str(instance_id or "").strip()
+        if str(cfg.selected_instance or "").strip() == target:
+            return
+        cfg.selected_instance = target
+        config.save(cfg, cfg_path)
 
     def _game_dir(self) -> Path:
         cfg, _ = config.load()
@@ -202,24 +561,32 @@ class LaunchPage(QWidget):
         )
 
     def _populate_versions(self) -> None:
-        """Version dropdown lists only installed versions/profiles (kept editable so an uninstalled id can be typed manually)."""
+        """List only installed versions/profiles, keeping the stored/current one when it still exists."""
         from launcher.install import list_installed_versions
         from launcher.instances import display_version_name
 
+        cfg, _ = config.load()
+        stored = str(cfg.selected_instance or "").strip()
         installed = sorted(list_installed_versions(self._game_dir()))
-        current_id = self.version_combo.currentData() or self.version_combo.currentText().strip()
-        self.version_combo.blockSignals(True)
-        self.version_combo.clear()
-        for version_id in installed:
-            self.version_combo.addItem(display_version_name(version_id), version_id)
-        if current_id and current_id in installed:
-            self.version_combo.setCurrentIndex(self.version_combo.findData(current_id))
-        elif installed:
-            self.version_combo.setCurrentIndex(0)
-        self.version_combo.blockSignals(False)
+        self._version_choices = [(display_version_name(vid), vid) for vid in installed]
+        ids = [version_id for _label, version_id in self._version_choices]
+        if stored and stored in ids:
+            self._version_id = stored
+        elif stored:
+            # The chosen instance was deleted or renamed: forget the dangling id and fall back to
+            # the historical rule instead of showing a profile that no longer exists.
+            self._remember_selected_instance("")
+            self._version_id = ids[0] if ids else ""
+        elif self._version_id and self._version_id not in ids:
+            # The profile disappeared (uninstalled/renamed): fall back to the first one, or to the
+            # empty state when nothing is installed.
+            self._version_id = ids[0] if ids else ""
+        elif not self._version_id and ids:
+            self._version_id = ids[0]
+        self._refresh_version_block()
 
     def refresh_versions(self) -> None:
-        """Refresh the dropdown after the versions page installs/uninstalls."""
+        """Refresh the installed list after the versions page installs/uninstalls."""
         self._populate_versions()
 
     def _on_launch_clicked(self, _checked: bool = False) -> None:
@@ -227,7 +594,7 @@ class LaunchPage(QWidget):
         self.launch(trigger_source_for_click(self.launch_button))
 
     def launch(self, trigger_source: TriggerSource | str = TriggerSource.UNKNOWN) -> None:
-        version_id = (self.version_combo.currentData() or self.version_combo.currentText()).strip()
+        version_id = self._current_version_id()
         if not version_id:
             set_app_status(self, tr("launch.msg.need_id"))
             return
@@ -276,9 +643,12 @@ class LaunchPage(QWidget):
 
     def _launch_now(self, version_id: str, cfg, game_dir: Path) -> None:
         """The actual launch worker, reached only through the single pre-launch accessibility gate."""
-        server = self.server_edit.text().strip() or None
-        # Auto memory: size the heap from mod count and available RAM at launch time
-        memory_gb = self.memory_spin.value()
+        # Direct connect is per instance now (instances page, settings tab): the launch page shows no
+        # field but still passes the instance's address to the game, so a configured server keeps being
+        # joined at launch time. It is read from the same resolved instance as memory/java, below.
+        # Memory is a setting (settings page) or a per-instance override (instance settings); this
+        # page no longer keeps a third copy, so the ordinary case reads the launcher setting.
+        memory_gb = cfg.memory_gb
         if cfg.memory_auto:
             from launcher.memory import count_mods, suggest_memory_gb, system_memory_gb
 
@@ -312,7 +682,7 @@ class LaunchPage(QWidget):
                     language=cfg.game_language or None,
                     jvm_args=resolved.jvm_args or (cfg.jvm_args or None),
                     game_args=resolved.game_args,
-                    server=server,
+                    server=resolved.server or None,
                 )
                 return ("ok", prepared, resolved)
             except JavaMissingError as exc:
@@ -326,16 +696,16 @@ class LaunchPage(QWidget):
         )
 
     def _confirm_java_download(self, major: int) -> bool:
-        from PySide6.QtWidgets import QMessageBox
+        from gui import inwindow_dialog
 
-        answer = QMessageBox.question(
+        # default_yes keeps the old QMessageBox default button: Enter accepts the download offer
+        # instead of dismissing it.
+        return inwindow_dialog.question(
             self,
             "Java",
             tr("launch.msg.java_need", major),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            default_yes=True,
         )
-        return answer == QMessageBox.StandardButton.Yes
 
     def _download_java_then_retry(self, major: int) -> None:
         from gui.workers import ProgressBridge

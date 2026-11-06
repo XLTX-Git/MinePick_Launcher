@@ -1,8 +1,8 @@
-/* MinePick Launcher — light theme
+/* MinePick Launcher 鈥?light theme
  *
  * This sheet holds no colour literals: every colour is a token placeholder resolved by gui/theme.py
  * (NEUTRAL_TOKENS + accent_palette), so one token carries a value per theme and the palette
- * lives in exactly one place. See MinePick_UI_实现规范.md §2.7.
+ * lives in exactly one place. See MinePick_UI_瀹炵幇瑙勮寖.md 搂2.7.
  * Unresolved placeholders are caught by tests/test_qss_tokens.py.
  *
  * Kept from the released theme on purpose (do not regress):
@@ -57,6 +57,22 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     selection-color: __ACCENT_SEL_TEXT__;
 }
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover { border-color: __BORDER_HOVER__; }
+
+/* Placeholder text: Qt draws it from the widget's text colour at 50% alpha, and the `color` rule above
+   overwrites the palette's PlaceholderText role (FG_HINT) on every input. The painted placeholder was
+   therefore #8f949a on white - a washed-out grey at 2.9:1 that belongs to no token in this theme, which
+   is exactly the "those light characters in the field look wrong" the user reported. Qt 6 has the
+   placeholder-text-color property, so FG_HINT (the secondary-text colour used everywhere else, 6.4:1 on
+   the white field) is pinned here. It stays clearly lighter than the near-black FG_TEXT of real input,
+   so a field that already has content never reads as empty at a glance. */
+QLineEdit { placeholder-text-color: __FG_HINT__; }
+QComboBox { placeholder-text-color: __FG_HINT__; }
+/* the editor inside an editable combo is its own QLineEdit */
+QComboBox QLineEdit { placeholder-text-color: __FG_HINT__; }
+/* A disabled field's placeholder steps down with its text: FG_DISABLED is one step lighter than the
+   FG_DISABLED_2 the disabled inputs paint their value in, so the two roles stay apart. Inactive
+   components are exempt from WCAG 1.4.3, which is why this one value sits below 3:1 on its own fill. */
+QLineEdit:disabled, QComboBox:disabled { placeholder-text-color: __FG_DISABLED__; }
 /* Focus visuals live in one place: the [keyboardFocus="true"] block at the end of this sheet.
    The rules that used to sit here were plain :focus, so clicking an input with the mouse
    painted a ring - the rule is that nothing shows focus unless it came from Tab, the arrow
@@ -78,7 +94,7 @@ QHeaderView::section {
     border: none;
     border-bottom: 1px solid __BORDER_LIST__;
     padding: 8px;
-    font-weight: 600;
+    font-weight: 400;
 }
 /* Header corners stay square: rounding a section exposed the base style's light
    default background in the clipped notch (light-grey wedges at both top corners). */
@@ -112,7 +128,7 @@ QPushButton {
     border: 4px solid transparent;
     border-radius: __RADIUS_SM__;
     padding: 4px 12px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton:hover { background: __ACCENT_BUTTON_HOVER__; }
 QPushButton:pressed { background: __ACCENT_BUTTON_PRESS__; }
@@ -166,7 +182,7 @@ QPushButton#secondaryButton {
     color: __FG_BUTTON_SECONDARY__;
     border: 1px solid __BORDER_BUTTON_SECONDARY__;
     padding: 8px 16px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#secondaryButton:hover {
     background: __BG_BUTTON_SECONDARY__;
@@ -185,7 +201,7 @@ QPushButton#dangerButton {
     color: __DANGER_FG__;
     border: 1px solid __DANGER_BORDER__;
     padding: 8px 16px;
-    font-weight: 600;
+    font-weight: 400;
 }
 QPushButton#dangerButton:hover { background: __DANGER_BG__; border-color: __DANGER_BORDER_2__; }
 QPushButton#dangerButton:pressed { background: __DANGER_BG_2__; }
@@ -194,6 +210,30 @@ QPushButton#dangerButton:disabled {
     color: __DANGER_FG_2__;
     border-color: __DANGER_BORDER_3__;
 }
+
+/* Warning variant: the primary action of a warning reads in the warning colour, the way the danger
+   variant already reads in the danger one. It keeps the variant box exactly (1px border, 8/16 padding,
+   both on the spacing ladder) so the three variants cannot drift apart. Used by the in-window dialogs
+   (gui/inwindow_dialog.py): "the launcher is warning you" must not look like an ordinary confirmation.
+   Measured on the card it sits on (BG_LIST): 9.81:1 dark, 5.16:1 light - both clear 4.5:1. */
+QPushButton#warningButton {
+    background: transparent;
+    color: __FG_STATUS_WARNING__;
+    border: 1px solid __FG_STATUS_WARNING__;
+    padding: 8px 16px;
+    font-weight: 400;
+}
+QPushButton#warningButton:hover { background: __BG_BUTTON_SECONDARY__; }
+QPushButton#warningButton:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#warningButton:disabled {
+    background: transparent;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+/* A warning button chosen as a dialog's default: the ring has to be the one the outlined variants use,
+   because FG_SELECTED (the filled button's ring) is white on white in the light theme. */
+QPushButton#dangerButton[defaultChoice="true"],
+QPushButton#warningButton[defaultChoice="true"] { border-color: __FOCUS_RING__; }
 
 /* ---------- status text severity ---------- */
 
@@ -230,11 +270,12 @@ QListWidget#sidebar[keyboardFocus="true"]:focus {
 }
 QListWidget#sidebar::item {
     color: __FG_HINT__;
-    padding: 8px 12px;
+    /* 24px icon + 10px gap; 4px side padding leaves room for the longest Russian label. */
+    padding: 4px 4px;
     margin: 4px 4px;
     border-radius: __RADIUS_LG__;
     border-left: 3px solid transparent;
-    font-weight: 500;
+    font-weight: 400;
 }
 QListWidget#sidebar::item:hover { background: __BG_SIDEBAR__; color: __FG_TEXT__; }
 /* Selected pill: rounded on both sides so the shape stays symmetric. */
@@ -243,7 +284,7 @@ QListWidget#sidebar::item:selected {
     color: __ACCENT_SEL_TEXT__;
     border-left: 3px solid __ACCENT__;
     border-radius: __RADIUS_LG__;
-    font-weight: 700;
+    font-weight: 400;
 }
 
 /* ---------- progress ---------- */
@@ -373,12 +414,29 @@ QComboBox::drop-down {
     border: none;
     background: transparent;
 }
+/* Lucide chevron-down at 16px, no box: one SVG per state because a QSS image cannot be tinted.
+   The focus state is gated on [keyboardFocus="true"], like every other focus cue in this sheet. */
 QComboBox::down-arrow {
-    image: url(__DOWN_ARROW__);
-    width: 10px;
-    height: 6px;
+    image: url(__CHEVRON_DOWN__);
+    width: 16px;
+    height: 16px;
     margin-right: 8px;
 }
+/* The state comes from a dynamic property, not :hover / :disabled: Qt 6.11 applies those two in front
+   of a subcontrol to every combo (see gui/widgets.py:ComboArrowState for the measured behaviour). */
+QComboBox[comboHover="true"]::down-arrow,
+QComboBox[keyboardFocus="true"]::down-arrow {
+    image: url(__CHEVRON_DOWN_ACTIVE__);
+}
+QComboBox[comboDisabled="true"]::down-arrow {
+    image: url(__CHEVRON_DOWN_DISABLED__);
+}
+/* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup). gui/popup_shape.py
+   makes that window translucent and frameless (keeping Qt::Popup, which is what closes it on an
+   outside click) and clears the container's own frame; the list below is then the only surface, so
+   its radius really is the popup's corner and the pixels outside the 1px BORDER_LIST arc show the
+   page behind instead of a square window patch. The radius comes from the same card token as
+   #pageCard; the 4px list padding keeps the viewport's square corners inside that arc. */
 QComboBox QAbstractItemView {
     background: __BG_LIST_2__;
     color: __FG_TEXT__;
@@ -423,40 +481,20 @@ QWidget#tooltipLayer {
     border-radius: __RADIUS_SM__;
 }
 
-/* ---------- spin box buttons: flat ---------- */
+/* ---------- spin box: no up/down buttons ---------- */
 
+/* Hide the two sub-controls but keep QSpinBox: typing and the Up/Down keys still change the value
+   (the keyboard path is the widget's own, not the buttons'), and NoWheelSpinBox keeps the wheel
+   behaviour unchanged. The 12px right padding is the room the text needs without the buttons. */
+QSpinBox, QDoubleSpinBox {
+    padding-right: 12px;
+}
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-    background: transparent;
+    width: 0;
+    height: 0;
     border: none;
-    width: 20px;
-}
-QSpinBox::up-button:hover, QSpinBox::down-button:hover,
-QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
-    background: __BG_SEPARATOR__;
-}
-QSpinBox::up-button, QDoubleSpinBox::up-button {
-    subcontrol-origin: border;
-    subcontrol-position: top right;
-    /* the image belongs on the arrow, not on the button: on the button Qt stretches an 8x5 bitmap to
-       fill the whole 20px-wide control, which is what made the arrows look the wrong size */
-    border-top-right-radius: __RADIUS_SM__;
-}
-QSpinBox::down-button, QDoubleSpinBox::down-button {
-    subcontrol-origin: border;
-    subcontrol-position: bottom right;
-    border-bottom-right-radius: __RADIUS_SM__;
-}
-
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-    image: url(__SPIN_UP__);
-    width: 8px;
-    height: 5px;
-}
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-    image: url(__SPIN_DOWN__);
-    width: 8px;
-    height: 5px;
+    background: transparent;
 }
 
 
@@ -497,7 +535,7 @@ QGroupBox::title {
     left: 12px;
     padding: 0 4px;
     color: __FG_HINT__;
-    font-weight: 700;
+    font-weight: 400;
 }
 
 /* ---------- versions page: category chips + latest cards ---------- */
@@ -508,14 +546,14 @@ QPushButton#categoryTab {
     border: 1px solid transparent;
     border-radius: 15px;
     padding: 8px 16px;
-    font-weight: 500;
+    font-weight: 400;
 }
 QPushButton#categoryTab:hover { color: __FG_TEXT__; background: __BG_SIDEBAR__; }
 QPushButton#categoryTab:checked {
     background: __ACCENT_BUTTON__;
     color: __FG_SELECTED__;
     border-color: __ACCENT_BUTTON__;
-    font-weight: 700;
+    font-weight: 400;
 }
 
 /* Keyboard focus must survive the id rule: `QPushButton:focus` loses to `QPushButton#categoryTab`.
@@ -526,15 +564,191 @@ QPushButton#categoryTab[keyboardFocus="true"]:focus {
     color: __FG_TEXT__;
 }
 
-/* Uniform border width on purpose: a thicker left border pokes out of the rounded
-   corner in Qt, so the emphasis comes from the accent-colored 1px border instead. */
+/* The latest-version cards are white cards like every other card on the paper: the accent border
+   this used to carry was the only place the accent framed something that is not a control. The
+   emphasis now comes from the version number and the install button inside. */
 QFrame#latestCard {
-    background: __BG_LIST_2__;
-    border: 1px solid __ACCENT__;
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
     border-radius: __RADIUS_LG__;
 }
 QLabel#latestKind { color: __FG_HINT__; font-size: 12px; }
-QLabel#latestVersion { font-size: 16px; font-weight: 700; color: __FG_CARD_LATEST__; }
+QLabel#latestVersion { font-size: 15px; font-weight: 600; color: __FG_CARD_LATEST__; }
+
+/* ---------- versions page: dense version cards ---------- */
+/* The list itself paints nothing: every row is its own white card (painted in code, like the
+   resource rows), so the paper shows through the 8px gap between two cards. */
+
+QWidget#versionsPage QLineEdit {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 12px;
+    font-size: 13px;
+}
+QWidget#versionsPage QLineEdit:hover { border-color: __BORDER_HOVER__; }
+QWidget#versionsPage QLineEdit[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+QListWidget#versionList {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    outline: none;
+}
+QListWidget#versionList::item {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QListWidget#versionList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+/* ---------- versions page: the install step (instance name + loader choice) ---------- */
+/* The list is replaced by this step (not covered by a window): one breadcrumb card, one row per
+   loader, one pill button. The loader rows paint their own surface in code, like the version rows
+   above; the rule below exists for the focus contract the keyboard walkthrough reads, and the row
+   paints the same ring from the same property. */
+
+QFrame#installBreadcrumb {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+    border-radius: __RADIUS_LG__;
+}
+QWidget#versionsPage QLabel#installFixedName {
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 0 12px;
+}
+QWidget#versionsPage QLabel#installNameHint { color: __FG_HINT__; font-size: 12px; }
+QWidget#versionsPage QLabel#installNameHint[error="true"] { color: __DANGER_FG__; }
+QWidget#versionsPage QLabel#installStepHint { color: __FG_HINT__; font-size: 12px; }
+QWidget#versionsPage QLabel#installFieldLabel { color: __FG_HINT__; font-size: 12px; }
+QWidget#versionsPage QLineEdit[invalid="true"] {
+    border-color: __DANGER_FG__;
+    color: __DANGER_FG__;
+}
+
+/* The one primary action of the step: a centred pill, 48px tall, fully rounded. */
+QPushButton#installPrimary {
+    background: __ACCENT_BUTTON__;
+    color: __FG_SELECTED__;
+    border: 1px solid transparent;
+    border-radius: 24px;
+    padding: 0 24px;
+    font-size: 15px;
+    font-weight: 600;
+}
+QPushButton#installPrimary:hover { background: __ACCENT_BUTTON_HOVER__; }
+QPushButton#installPrimary:pressed { background: __ACCENT_BUTTON_PRESS__; }
+QPushButton#installPrimary:disabled { background: __BG_DISABLED__; color: __FG_DISABLED__; }
+QPushButton#installPrimary[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+QAbstractButton#loaderChoiceRow[keyboardFocus="true"] { border: 1px solid __FOCUS_RING__; }
+
+/* ---------- shared page cards (java / account) ---------- */
+/* One white card holding a 15px section title and a list of dense rows. The rows paint their own
+   hover/selection tint and the hairline between two of them; the card owns the surface. */
+
+QFrame#pageCard {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+    border-radius: __RADIUS_LG__;
+}
+
+/* A child scroll area must not paint its own square viewport over the card's rounded corner.
+   The cards inset their lists today; this keeps a future flush child from bringing the square
+   corner back, which is what tools/audit_card_radius.py reads pixel by pixel. */
+QFrame#pageCard QAbstractScrollArea,
+QFrame#pageCard QAbstractScrollArea > QWidget#qt_scrollarea_viewport,
+QFrame#pageCard QWidget#qt_scrollarea_viewport,
+QFrame#pageCard QListWidget,
+QFrame#pageCard QTableWidget,
+QFrame#pageCard QTableView,
+QFrame#pageCard QTextEdit,
+QFrame#pageCard QPlainTextEdit {
+    background: transparent;
+}
+
+/* The step between the 20px page title and the 12px hint: one section heading inside a card. */
+QLabel#sectionTitle { font-size: 15px; font-weight: 600; color: __FG_TEXT__; }
+/* A form row's own label (no QFormLayout to pass it on): 13px, same colour as body text. */
+QLabel#formLabel { font-size: 13px; color: __FG_TEXT__; }
+
+QListWidget#javaManagedList, QListWidget#javaDetectedList {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    outline: none;
+}
+QListWidget#javaManagedList::item, QListWidget#javaDetectedList::item {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QListWidget#javaManagedList[keyboardFocus="true"],
+QListWidget#javaDetectedList[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* Row-level delete: the danger colour on a secondary button, sized like #rowInstall. */
+QPushButton#rowDanger {
+    background: transparent;
+    color: __DANGER_FG__;
+    border: 1px solid __DANGER_BORDER__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QPushButton#rowDanger:hover { background: __DANGER_BG__; border-color: __DANGER_BORDER_2__; }
+QPushButton#rowDanger:pressed { background: __DANGER_BG_2__; }
+QPushButton#rowDanger:disabled {
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QPushButton#rowDanger[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
+/* ---------- account page: the account-list card ---------- */
+
+QWidget#accountPage QLabel#hint { font-size: 12px; }
+
+QListWidget#accountList {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    outline: none;
+}
+QListWidget#accountList::item {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QListWidget#accountList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+/* Neutral row action (the account row's switch): the row button's shape, without the install name. */
+QPushButton#rowAction {
+    background: transparent;
+    color: __FG_BUTTON_SECONDARY__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QPushButton#rowAction:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QPushButton#rowAction:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#rowAction:disabled {
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QPushButton#rowAction[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
 
 /* ---------- icon-only buttons (launch page: switch account) ---------- */
 
@@ -563,16 +777,26 @@ QLabel#overlayCode {
     border: 1px solid __BORDER_OVERLAY_CODE__;
     border-radius: __RADIUS_SM__;
     padding: 0 8px;
-    font-weight: 700;
+    font-weight: 400;
 }
 QLabel#overlayBody { color: __FG_OVERLAY_BODY__; }
 QScrollArea#overlayScroll { background: transparent; }
 
-/* ---------- page header ---------- */
+/* ---------- second-level heading + launch version block ---------- */
 
-QWidget#pageHeader { background: transparent; }
-QLabel#pageTitle { font-size: 18px; font-weight: 700; color: __FG_PAGE_TITLE__; }
-QLabel#pageSubtitle { color: __FG_HINT__; font-size: 11px; }
+/* Top-level pages no longer draw a page name or description; the 16px top inset is a layout
+   value (gui/widgets.add_page_top_inset). Two headings remain: the drilled-in instance-detail
+   page keeps its back/title row, and the launch page's version number is data, not a page name.
+   They share one 20px/12px type scale through their own object names. */
+QLabel#instanceDetailTitle, QWidget#launchPage QLabel#launchVersionTitle {
+    color: __FG_PAGE_TITLE__;
+    font-size: 20px;
+    font-weight: 600;
+}
+QLabel#instanceDetailHint, QWidget#launchPage QLabel#launchVersionMeta {
+    color: __FG_HINT__;
+    font-size: 12px;
+}
 
 /* ---------- sidebar brand ---------- */
 
@@ -598,7 +822,8 @@ QPushButton[keyboardFocus="true"] { background: __ACCENT_HOVER__; }
    light sheet. Their focus cue stays the FOCUS_RING they were already paired with, which clears 3:1
    against the surfaces they sit on in both themes. Only the colour is set - the 1px width comes from
    their own rule, so this cannot shift anything. */
-QPushButton#secondaryButton[keyboardFocus="true"], QPushButton#dangerButton[keyboardFocus="true"] {
+QPushButton#secondaryButton[keyboardFocus="true"], QPushButton#dangerButton[keyboardFocus="true"],
+QPushButton#warningButton[keyboardFocus="true"] {
     border-color: __FOCUS_RING__;
 }
 QScrollArea[keyboardFocus="true"] { border: 1px solid __FOCUS_RING__; }
@@ -623,28 +848,52 @@ QTabWidget[keyboardFocus="true"]::pane {
 /* ---------- custom title bar (frameless window) ---------- */
 
 QWidget#titleBar {
-    background: __BG_WINDOW__;
-    border-bottom: 1px solid __BORDER_LIST__;
+    background: __BG_TOPBAR__;
+    border-bottom: none;
 }
-QLabel#titleBarTitle { color: __FG_TEXT__; font-size: 13px; font-weight: 600; }
+QLabel#titleBarTitle { color: __FG_TOPBAR__; font-size: 13px; font-weight: 400; }
 
 QPushButton#titleBarMinimize, QPushButton#titleBarClose {
     background: transparent;
     border: none;
     border-radius: __RADIUS_SM__;
-    color: __FG_HINT__;
+    color: __FG_TOPBAR__;
     font-size: 13px;
     padding: 0;
 }
 QPushButton#titleBarMinimize:hover {
     background: __BG_TITLEBAR_MINIMIZE__;
-    color: __FG_TEXT__;
+    color: __FG_TOPBAR__;
 }
-QPushButton#titleBarClose:hover { background: __BG_TITLEBAR_CLOSE__; color: __FG_SELECTED__; }
+QPushButton#titleBarClose:hover { background: __BG_TITLEBAR_CLOSE__; color: __FG_TOPBAR__; }
 
-/* ---------- frameless window: root and content keep the window background ---------- */
+/* ---------- frameless window: chrome, paper and the navigation rail ---------- */
 
-QWidget#appRoot, QWidget#appContent { background: __BG_WINDOW__; }
+/* Two explicit layers below the title bar. appRoot is the window chrome (one step lighter than the
+   paper); appContent and the page stack carry the page paper. The stack must paint it, not only the
+   page widget: QStackedLayout lays its child out inside the stack's contents rect, so the 6/12/12/12
+   inset around the pages would otherwise show the chrome colour as a frame. */
+QWidget#appRoot { background: __BG_WINDOW__; }
+QWidget#appContent { background: __BG_PAGE__; }
+QStackedWidget#pageStack { background: __BG_PAGE__; }
+
+/* The navigation rail is the one surface darker and bluer than the paper, so the cards in the content
+   area are the brightest thing on screen. The 1px right border is the only line between the two; it
+   sits inside the rail's fixed 162px width, so nothing in the window layout moves. */
+QWidget#navRail {
+    background: __BG_NAV__;
+    border-right: 1px solid __BORDER_NAV__;
+}
+
+/* Page-level scroll viewports paint the paper themselves. Setting it only on the page container is not
+   enough: the viewport is the widget that scrolls, and a transparent viewport falls back to the
+   platform's white Base - the white streak that appears when a long page is scrolled to its end.
+   Scoped by page, so the white overlay card and the first-run wizard keep their own surface. */
+QWidget#settingsPage QScrollArea > QWidget#qt_scrollarea_viewport,
+QWidget#aboutPage QScrollArea > QWidget#qt_scrollarea_viewport,
+QWidget#instanceDetail QScrollArea > QWidget#qt_scrollarea_viewport {
+    background: __BG_PAGE__;
+}
 
 /* ---------- first-run wizard overlay ---------- */
 
@@ -664,7 +913,7 @@ QLabel#wizardDot[current="true"] { background: __ACCENT__; }
 
 QWidget#wizardRail { background: __BG_WINDOW__; border-right: 1px solid __BORDER_LIST__; }
 QLabel#wizardRailItem { color: __FG_RAIL_ITEM__; font-size: 13px; padding: 8px 4px; }
-QLabel#wizardRailItem[state="current"] { color: __FG_PAGE_TITLE__; font-weight: 700; }
+QLabel#wizardRailItem[state="current"] { color: __FG_PAGE_TITLE__; font-weight: 400; }
 QLabel#wizardRailItem[state="done"] { color: __FG_HINT__; }
 QWidget#wizardContent { background: __BG_WINDOW__; }
 QWidget#wizardActionBar { background: __BG_WINDOW__; border-top: 1px solid __BORDER_LIST__; }
@@ -680,7 +929,7 @@ QPushButton#wizardOption, QPushButton#wizardBrowse {
     border-radius: __RADIUS_SM__;
     color: __FG_OPTION__;
     padding: 8px 12px;
-    font-weight: 500;
+    font-weight: 400;
     min-height: 22px;
 }
 QPushButton#wizardOption:hover, QPushButton#wizardBrowse:hover { border-color: __BORDER_HOVER__; color: __FG_OPTION_2__; }
@@ -688,8 +937,714 @@ QPushButton#wizardOption[selected="true"] {
     background: __ACCENT_SOFT__;
     border: 1px solid __ACCENT__;
     color: __FG_OPTION_2__;
-    font-weight: 700;
+    font-weight: 400;
 }
 QLabel#wizardStatus { color: __FG_HINT__; font-size: 12px; }
 QLabel#wizardBullet { color: __FG_OPTION__; font-size: 13px; }
 QDoubleSpinBox#wizardMemory { min-height: 30px; }
+
+/* ========================================================================== */
+/* Settings page mock-up (light only): PCL's paper + one white card.          */
+/*                                                                            */
+/* Everything here is scoped to QWidget#settingsPage / #settingsCard, so no   */
+/* other page moves. It deliberately adds no widget and no image: the white    */
+/* layer is the existing scroll content, and the accent is the same            */
+/* user-chosen __ACCENT_BUTTON__ the rest of the app already uses.             */
+/* The page header is gone on every top-level page; the card starts 16px below the page top
+   (gui/widgets.add_page_top_inset), with no extra title chrome to reintroduce. */
+/* ========================================================================== */
+
+/* Layer 1 - the page paper behind the page, the same token every other page uses. */
+QWidget#settingsPage {
+    background: __BG_PAGE__;
+}
+
+/* Layer 2 - one white card, no shadow and no second outline. */
+QWidget#settingsPage QWidget#settingsCard {
+    background: __BG_LIST__;
+    border: none;
+    border-radius: __RADIUS_LG__;
+}
+
+/* PCL form metrics scaled to this window, one density step tighter: a 32px field in a 38px row
+   (6px gutter), 6px radius, 1px #c5d5e8 border, 12px left padding, 15px text. The label column,
+   the fixed 32px height and the 38px row pitch are layout values in settings_page.py.
+   The min-heights differ by control because Qt adds a different frame allowance: a plain
+   QLineEdit and a QComboBox need 30 (30+2), while a spin box already carries 4px of frame
+   (28+4). Both land on exactly 32px, which is the height the page was measured at. */
+QWidget#settingsPage QLineEdit,
+QWidget#settingsPage QComboBox,
+QWidget#settingsPage QSpinBox,
+QWidget#settingsPage QDoubleSpinBox {
+    background: __BG_LIST__;
+    color: __FG_TEXT__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 12px;
+    font-size: 15px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}
+QWidget#settingsPage QLineEdit,
+QWidget#settingsPage QComboBox {
+    min-height: 30px;
+}
+QWidget#settingsPage QSpinBox,
+QWidget#settingsPage QDoubleSpinBox {
+    min-height: 28px;
+}
+/* A combo/spin box already draws its own frame; the internal editor must not draw a
+   second one inside it. */
+QWidget#settingsPage QComboBox QLineEdit,
+QWidget#settingsPage QSpinBox QLineEdit,
+QWidget#settingsPage QDoubleSpinBox QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: 0;
+}
+QWidget#settingsPage QLineEdit:hover,
+QWidget#settingsPage QComboBox:hover,
+QWidget#settingsPage QSpinBox:hover,
+QWidget#settingsPage QDoubleSpinBox:hover {
+    border-color: __BORDER_HOVER__;
+}
+QWidget#settingsPage QLineEdit:disabled,
+QWidget#settingsPage QComboBox:disabled,
+QWidget#settingsPage QSpinBox:disabled,
+QWidget#settingsPage QDoubleSpinBox:disabled {
+    background: __BG_LAUNCH_FIELD_DISABLED__;
+    color: __FG_DISABLED_2__;
+    border-color: __BG_LAUNCH_FIELD_DISABLED__;
+}
+/* Keep the keyboard-only contract: id-scoped rules above would otherwise win
+   over the generic [keyboardFocus="true"] ring at the end of the base sheet. */
+QWidget#settingsPage QLineEdit[keyboardFocus="true"]:focus,
+QWidget#settingsPage QComboBox[keyboardFocus="true"]:focus,
+QWidget#settingsPage QSpinBox[keyboardFocus="true"]:focus,
+QWidget#settingsPage QDoubleSpinBox[keyboardFocus="true"]:focus {
+    border: 1px solid __FOCUS_RING__;
+}
+
+/* The fixed label column: left aligned like PCL, never re-centred per row. 12px keeps every
+   wrapped German/French/Russian label at two lines of 16px inside the 32px row; the column is
+   widened in settings_page.py rather than the row being made taller. */
+QWidget#settingsPage QLabel#settingsFieldLabel {
+    color: __FG_TEXT__;
+    font-size: 12px;
+}
+QWidget#settingsPage QLabel#hint {
+    font-size: 12px;
+}
+
+/* Sliders: a flat 4px track (accent on the filled side) with a white 16px handle ringed in the accent.
+   Every subcontrol is styled on purpose. A QSlider whose groove / add-page / handle are not in the
+   sheet falls back to the platform's sunken groove, which is the "why is the slider's bar 3D?" the user
+   reported: the add-page (the unfilled side of the settings slider) was still drawn by Fusion, and the
+   wizard's slider had no rule at all, so every slider was native in dark.
+
+   Geometry is the interesting part. The handle moves inside the groove's contents rect, so a 4px groove
+   clips a 16px handle away entirely (measured: no handle pixels at all). The recipe that usually fixes
+   that is `margin: -5px 0` on the handle, but `margin` is the one property the spacing-ladder audit
+   checks and -5px is off the ladder. So the groove is 16px tall - the handle then fits with
+   `margin: 0` - and the 4px line is painted inside it by a gradient with near-hard stops
+   (0.375/0.39 and 0.61/0.625 of 16px). Duplicate stop positions do not survive Qt's parser (measured:
+   they degrade into a full-height ramp), which is why the pairs are 0.015 apart instead of equal.
+   `add-page` stays transparent so the groove's own band shows through on the unfilled side.
+   Disabled follows the field treatment above. */
+QSlider::groove:horizontal {
+    height: 16px;
+    border: none;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __BORDER_LIST__,
+        stop: 0.61 __BORDER_LIST__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::sub-page:horizontal {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __ACCENT_BUTTON__,
+        stop: 0.61 __ACCENT_BUTTON__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::add-page:horizontal {
+    background: transparent;
+}
+QSlider::handle:horizontal {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    border-radius: 8px;
+    background: __BG_LIST__;
+    border: 2px solid __ACCENT_BUTTON__;
+}
+QSlider::handle:horizontal:hover {
+    background: __BG_HOVER__;
+}
+QSlider::groove:horizontal:disabled {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __BG_DISABLED_2__,
+        stop: 0.61 __BG_DISABLED_2__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::sub-page:horizontal:disabled {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0.375 transparent,
+        stop: 0.39 __BG_DISABLED_2__,
+        stop: 0.61 __BG_DISABLED_2__,
+        stop: 0.625 transparent
+    );
+}
+QSlider::handle:horizontal:disabled {
+    border-color: __BORDER_LIST__;
+    background: __BG_DISABLED__;
+}
+QSlider[keyboardFocus="true"]:focus::handle:horizontal {
+    border-color: __FOCUS_RING__;
+    background: __ACCENT_SOFT__;
+}
+QWidget#settingsPage QLabel#memoryValue {
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 600;
+    padding-left: 12px;
+}
+QWidget#settingsPage QLabel#memoryValue:disabled {
+    color: __FG_DISABLED_2__;
+}
+
+/* Secondary buttons: white fill, one neutral outline, dark label. The accent is
+   not used as a hover colour here - only the keyboard ring keeps it. */
+QWidget#settingsPage QPushButton#secondaryButton {
+    background: __BG_LIST__;
+    color: __FG_TEXT__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 16px;
+    min-height: 30px;
+    font-weight: 400;
+}
+QWidget#settingsPage QPushButton#secondaryButton:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __BORDER_HOVER__;
+    color: __FG_TEXT__;
+}
+QWidget#settingsPage QPushButton#secondaryButton:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#settingsPage QPushButton#secondaryButton:disabled {
+    background: __BG_LIST__;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#settingsPage QPushButton#secondaryButton[keyboardFocus="true"] {
+    background: __BG_LIST__;
+    border-color: __FOCUS_RING__;
+}
+QWidget#settingsPage QPushButton#secondaryButton[keyboardFocus="true"]:disabled {
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+
+/* The existing accessibility QGroupBox becomes a quiet section: no framed card,
+   just a hairline and a 16px heading above 12px of air. */
+QWidget#settingsPage QGroupBox {
+    background: transparent;
+    border: none;
+    border-top: 1px solid __BG_SEPARATOR__;
+    border-radius: 0;
+    margin-top: 24px;
+    padding: 16px 0 0 0;
+}
+QWidget#settingsPage QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 0;
+    padding: 0 4px 12px 0;
+    color: __FG_TEXT__;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* ========================================================================== */
+/* About page: the shared #pageCard cards, with the titles inside them.       */
+/*                                                                            */
+/* The three sections used to be QGroupBoxes. Qt paints a group box's title   */
+/* on the frame, so "软件信息" / "软件更新" sat above the card border and     */
+/* read as page headings rather than card headings. about_page.py now builds  */
+/* a plain QFrame#pageCard with a 15/600 label and 16px of layout padding;    */
+/* #pageCard supplies the same fill, border and radius as every other card,  */
+/* so this block only needs the inside-a-card text rules. No new colour.      */
+/* ========================================================================== */
+
+/* Inside a card: the explanation text is the 12px hint, and a long URL wraps under the button that
+   opens it instead of stretching the card. */
+QWidget#aboutPage QLabel#hint { font-size: 12px; }
+QWidget#aboutPage QLabel#aboutLink { font-size: 12px; color: __FG_HINT__; }
+
+/* ========================================================================== */
+/* Launch page: the shared page paper + one white side panel flush to the     */
+/* edge.                                                                      */
+/*                                                                            */
+/* Everything is scoped to #launchPage / #launchPanel, so no other page moves. */
+/* The right half is deliberately blank paper: no artwork, no widgets.        */
+/* The paper is the same __BG_PAGE__ every other page paints - it is not a    */
+/* second, slightly different blue. No rule here reaches the dark sheet.      */
+/* ========================================================================== */
+
+QWidget#launchPage {
+    background: __BG_PAGE__;
+}
+
+/* 360px wide (set in code) and inset 16px by the page layout: a white card floating on the paper,
+   rounded on all four corners like every other card, instead of a strip welded to the window edge. */
+QWidget#launchPage QWidget#launchPanel {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_LG__;
+}
+
+/* The account name is the panel's own 14px label; the version block above it is the page's
+   visual subject and keeps the 20px launchVersionTitle treatment. */
+QWidget#launchPage QLabel#accountName {
+    color: __FG_LAUNCH__;
+    font-size: 14px;
+    font-weight: 400;
+}
+QWidget#launchPage QLabel#launchStats,
+QWidget#launchPage QLabel#launchLast {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 11px;
+}
+
+/* Inline account switch (24px, on the name row): a quiet icon, not a second row. */
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"] {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 0;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:hover {
+    background: __BG_HOVER__;
+    border-color: transparent;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"]:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#iconButton[accountSwitch="true"][keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* The one filled control. Its green fill and white text come from the base QPushButton rule; the
+   16px title label is the only text inside it. */
+QWidget#launchPage QPushButton#launchButton {
+    padding: 0;
+}
+QWidget#launchPage QPushButton#launchButton QLabel#launchActionTitle {
+    background: transparent;
+    color: __FG_SELECTED__;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* Two equal secondary actions: white face, 1px neutral border, dark label. 12px type and 8px side
+   padding are what keep the longest German/Russian label on one line inside a 154px half. */
+QWidget#launchPage QPushButton#secondaryButton {
+    background: __BG_LIST__;
+    color: __FG_LAUNCH__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    padding: 8px 8px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QWidget#launchPage QPushButton#secondaryButton:hover {
+    background: __BG_HOVER__;
+    border-color: __ACCENT__;
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton:disabled {
+    background: __BG_LIST__;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[keyboardFocus="true"]:disabled {
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* Advanced disclosure: a secondary button that reads as a quiet text row. It keeps the
+   #secondaryButton object name on purpose - that is the selector the focus ring is attached to in
+   BOTH sheets, so the keyboard cue exists in the dark theme too without editing style.qss. */
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"] {
+    background: transparent;
+    border-color: transparent;
+    color: __FG_LAUNCH_HINT__;
+    padding: 4px 8px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 400;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:hover {
+    background: __BG_HOVER__;
+    border-color: transparent;
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"]:checked {
+    color: __FG_LAUNCH__;
+}
+QWidget#launchPage QPushButton#secondaryButton[disclosure="true"][keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+/* PCL form metrics: 40px field, 6px radius, 1px #c5d5e8 border, 12px left padding, 15px text;
+   focus turns the border into the accent, disabled greys the whole field. The label column and the
+   56px row are set in code. */
+QWidget#launchPage QLineEdit {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 12px;
+    min-height: 38px;
+    color: __FG_LAUNCH__;
+    font-size: 15px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}
+QWidget#launchPage QLineEdit:hover {
+    border-color: __BORDER_HOVER__;
+}
+QWidget#launchPage QLineEdit:disabled {
+    background: __BG_LAUNCH_FIELD_DISABLED__;
+    color: __FG_DISABLED__;
+}
+QWidget#launchPage QLineEdit[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+QWidget#launchPage QLabel#fieldLabel {
+    color: __FG_LAUNCH_HINT__;
+    font-size: 12px;
+}
+
+/* ---------- resources page: category chips + dense result cards ---------- */
+
+QWidget#resourcesPage { background: transparent; }
+
+/* The tab bar is gone: four checkable buttons switch the stacked pages. 32px tall, fully rounded,
+   8px apart (the HBox in code owns the gap). The unselected label uses ACCENT_TEXT: the shade derived
+   against both the page paper and this chip's own tinted hover fill, because the button fill shade
+   (ACCENT_BUTTON) only guarantees WHITE text on itself and measured 4.3:1 as text on the paper. The
+   pure ACCENT does not reach 4.5 either (3.0-3.7:1 there). The checked chip already carries white
+   text; where FOCUS_RING equals its own fill, the ring switches to that same white so the focus stays
+   visible. */
+QPushButton#resourceChip {
+    background: transparent;
+    color: __ACCENT_TEXT__;
+    border: 1px solid transparent;
+    border-radius: 16px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 400;
+}
+QPushButton#resourceChip:hover { background: __ACCENT_TINT__; }
+QPushButton#resourceChip:checked {
+    background: __ACCENT_BUTTON__;
+    color: __FG_SELECTED__;
+    border-color: __ACCENT_BUTTON__;
+}
+QPushButton#resourceChip[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+QPushButton#resourceChip:checked[keyboardFocus="true"]:focus { border-color: __FG_SELECTED__; }
+
+/* PCL field metrics: 36px tall (fixed in code), 6px radius, 1px border, 12px left padding, 13px text. */
+QWidget#resourcesPage QLineEdit {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 12px;
+    font-size: 13px;
+}
+QWidget#resourcesPage QComboBox {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LAUNCH_FIELD__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 24px 0 12px;
+    font-size: 13px;
+}
+QWidget#resourcesPage QLineEdit:hover,
+QWidget#resourcesPage QComboBox:hover { border-color: __BORDER_HOVER__; }
+QWidget#resourcesPage QLineEdit[keyboardFocus="true"],
+QWidget#resourcesPage QComboBox[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+/* Result list: the cards are painted by _ResourceRow, the view only scrolls (8px item spacing). */
+QListWidget#resourceList {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0;
+    outline: none;
+}
+QListWidget#resourceList::item {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+QListWidget#resourceList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
+
+/* Install button inside a card: secondary look, compact. */
+QPushButton#rowInstall {
+    background: transparent;
+    color: __FG_BUTTON_SECONDARY__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 16px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QPushButton#rowInstall:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QPushButton#rowInstall:pressed { background: __BG_BUTTON_SECONDARY_2__; }
+QPushButton#rowInstall:disabled {
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QPushButton#rowInstall[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
+/* Inspector beside the list: full summary, dependency hints and the original actions. */
+QFrame#resourceDetail {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_TABLE__;
+    border-radius: __RADIUS_LG__;
+}
+QFrame#resourceDetail QLabel#title { font-size: 15px; font-weight: 600; color: __FG_TEXT__; }
+
+/* ========================================================================== */
+/* Instances: card grid and the drilled-down detail page.                     */
+/*                                                                            */
+/* The grid is a QListWidget in IconMode with one real card button per item.   */
+/* The detail sidebar is 200px (layout constant in instance_detail.py), with   */
+/* 36px rows and 20px group headings; the styles here only paint state.        */
+/* ========================================================================== */
+
+/* ---------- the 200px game-folder rail (the instances page's first level) ----------
+   A page-local column, not a second main rail. Its selected row speaks the same selection language
+   the detail sidebar and the current card use: 3px accent bar on the left, accent text, pale wash.
+   The row widgets inside the list items are transparent, so the item's own fill is what is seen. */
+QWidget#instanceFolderRail { background: transparent; }
+QListWidget#instanceFolderList {
+    background: transparent;
+    /* The transparent border is the focus ring's placeholder, the same shape QListWidget#sidebar uses:
+       a view repaints its frame on focus, while an item's :focus pseudo-state proved unreliable. */
+    border: 1px solid transparent;
+    outline: none;
+    padding: 0;
+}
+QListWidget#instanceFolderList[keyboardFocus="true"]:focus {
+    border-color: __FOCUS_RING__;
+}
+QListWidget#instanceFolderList::item {
+    background: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    /* Square: the selected row is an accent bar plus a pale wash, not a rounded pill. */
+    border-radius: 0;
+    padding: 0;
+}
+QListWidget#instanceFolderList::item:hover { background: __BG_SIDEBAR__; }
+QListWidget#instanceFolderList::item:selected {
+    background: __ACCENT_TINT__;
+    border-left: 3px solid __ACCENT__;
+}
+QLabel#instanceFolderName {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 13px;
+    font-weight: 400;
+}
+QLabel#instanceFolderName[active="true"] { color: __ACCENT_TEXT__; }
+QLabel#instanceFolderCount {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 11px;
+}
+QLabel#instanceFolderCount[active="true"] { color: __ACCENT_TEXT__; }
+/* The flat search results' summary line ("N 个结果"), the resources page's wording. */
+QLabel#instanceResultCount {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 12px;
+}
+QScrollArea#instanceGroupScroll {
+    background: transparent;
+    border: none;
+}
+QWidget#instanceGroups, QWidget#instanceGroupSection,
+QWidget#instanceFolderEmpty { background: transparent; }
+QFrame#instanceCard {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_LG__;
+}
+QFrame#instanceCard:hover {
+    background: __BG_LIST__;
+    border-color: __ACCENT__;
+}
+/* The current instance speaks the detail sidebar's selection language: a 3px accent bar on the
+   left plus the pale accent wash. Declared after :hover so a hover cannot repaint the bar away. */
+QFrame#instanceCard[current="true"],
+QFrame#instanceCard[current="true"]:hover {
+    background: __ACCENT_TINT__;
+    border-color: __ACCENT__;
+    border-left: 3px solid __ACCENT__;
+}
+QLabel#instanceCardName {
+    background: transparent;
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 700;
+}
+QLabel#instanceCardMeta,
+QLabel#instanceCardCounts {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 12px;
+}
+QLabel#instanceCardIcon {
+    background: transparent;
+    border-radius: __RADIUS_SM__;
+}
+/* 使用 is the card's primary action: it keeps the base accent fill and states only its metrics. */
+QPushButton#instanceCardUse {
+    padding: 0 12px;
+    font-size: 12px;
+}
+/* 管理 stays the quiet outline the whole card used to draw for it. */
+QPushButton#instanceCardManage {
+    background: transparent;
+    color: __FG_BUTTON_SECONDARY__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: __RADIUS_SM__;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QPushButton#instanceCardManage:hover {
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QPushButton#instanceCardManage[keyboardFocus="true"]:focus {
+    background: transparent;
+    border-color: __FOCUS_RING__;
+    color: __FG_TEXT__;
+}
+
+QWidget#instanceBrowser, QWidget#instanceDetailPage, QWidget#instanceContent,
+QWidget#instanceNavBody, QWidget#instanceContentStack { background: transparent; }
+QScrollArea#instanceNavScroll,
+QScrollArea#instanceContentScroll {
+    background: transparent;
+    border: none;
+}
+QPushButton#backButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: __RADIUS_SM__;
+    color: __FG_HINT__;
+    font-weight: 400;
+    padding: 4px 8px;
+    text-align: left;
+}
+QPushButton#backButton:hover { color: __FG_TEXT__; background: __BG_SIDEBAR__; }
+QPushButton#backButton[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
+QPushButton#instanceNavItem {
+    background: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    /* Square: the selected row is a 3px accent bar plus a very pale accent wash, not a rounded pill.
+       Same language as the main rail's selection, without the pill silhouette. */
+    border-radius: 0;
+    padding: 0;
+    text-align: left;
+}
+QPushButton#instanceNavItem:hover { background: __BG_SIDEBAR__; }
+QPushButton#instanceNavItem:checked {
+    background: __ACCENT_TINT__;
+    border-left: 3px solid __ACCENT__;
+}
+QPushButton#instanceNavItem[keyboardFocus="true"]:focus {
+    background: __BG_SIDEBAR__;
+    border-left: 3px solid __FOCUS_RING__;
+}
+QPushButton#instanceNavItem:hover QLabel#instanceNavLabel { color: __FG_TEXT__; }
+QLabel#instanceNavLabel {
+    background: transparent;
+    color: __FG_HINT__;
+    font-size: 13px;
+    font-weight: 400;
+}
+QLabel#instanceNavLabel[active="true"] {
+    color: __ACCENT_TEXT__;
+    font-weight: 400;
+}
+QLabel#instanceNavIcon { background: transparent; }
+QLabel#instanceNavBadge {
+    background: __BG_SIDEBAR__;
+    border-radius: 9px;
+    color: __FG_HINT__;
+    font-size: 11px;
+    padding: 0 4px;
+}
+QLabel#instanceNavBadge[active="true"] {
+    background: __ACCENT_SOFT__;
+    color: __ACCENT_TEXT__;
+}
+QLabel#instanceNavGroup {
+    color: __FG_HINT__;
+    font-size: 11px;
+    padding: 0 12px;
+}
+QFrame#instanceNavSeparator {
+    background: __BORDER_LIST__;
+    border: none;
+}
+
+QWidget#instanceCard {
+    background: __BG_LIST__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_LG__;
+}
+QLabel#instanceCardTitle {
+    background: transparent;
+    color: __FG_TEXT__;
+    font-size: 15px;
+    font-weight: 700;
+}
+QPlainTextEdit#instanceLogView {
+    background: __BG_LIST_2__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_SM__;
+    color: __FG_TEXT__;
+    padding: 8px;
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-size: 12px;
+    selection-background-color: __ACCENT_SEL__;
+    selection-color: __ACCENT_SEL_TEXT__;
+}

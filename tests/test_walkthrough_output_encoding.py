@@ -93,7 +93,11 @@ def test_a_non_ascii_interface_language_prints_and_exits_zero(ws_tmp):
     stdout = proc.stdout
     assert proc.returncode == 0, f"{stdout[-2000:]}\n{proc.stderr[-2000:]}"
     # The run really was German: without this the umlaut assertion below could pass on an English run.
-    assert "Instanzen suchen" in stdout, f"the German profile was not used:\n{stdout[-2000:]}"
+    # Read the report, not stdout: a control that measures cleanly is no longer echoed to stdout, so
+    # asking stdout for a specific German label makes this test fail whenever the UI gets better.
+    assert "Instanzen suchen" in report.read_text(encoding="utf-8"), (
+        f"the German profile was not used:\n{stdout[-2000:]}"
+    )
     assert "öffnen" in stdout, (
         "the umlaut did not survive the tool's stdout - its output is still in the console code page, "
         f"which the caller decodes as UTF-8:\n{stdout[-2000:]}"

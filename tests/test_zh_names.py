@@ -15,15 +15,83 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Unit tests for launcher/mods/zh_names.py: Chinese name table loading, CJK detection, local search."""
+"""The bundled Chinese name table and the three matching layers built on it.
 
-from launcher.mods.zh_names import has_cjk, search_local, zh_name, zh_names
+The data file is shipped content, so it is tested like content: its shape (one slug per project,
+at least 400 projects, no empty alias) and the searches a Chinese user actually types.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from launcher import paths
+from launcher.mods.zh_names import (
+    EXACT,
+    SUBSTRING,
+    TOKEN,
+    english_query,
+    has_cjk,
+    match_slugs,
+    name_match,
+    search_local,
+    tokenize,
+    zh_aliases,
+    zh_name,
+    zh_names,
+)
+
+DATA = "launcher/mods/data/zh_mod_names.json"
+
+#: A three-entry table for the layer tests: the bundled one holds hundreds of projects, so a hit
+#: there proves the data, not the algorithm.
+TABLE = {
+    "litematica": ("投影", "Litematica"),
+    "entityculling": ("实体渲染机制优化", "Entity Culling"),
+    "sodium": ("钠", "Sodium"),
+    "appleskin": ("苹果皮", "AppleSkin"),
+}
 
 
-def test_zh_names_loads_dict() -> None:
-    table = zh_names()
-    assert isinstance(table, dict)
-    assert all(k and v for k, v in table.items())
+def test_table_has_at_least_four_hundred_projects() -> None:
+    assert len(zh_aliases()) >= 400
+    assert len(zh_names()) >= 400
+
+
+def test_table_has_no_duplicate_slug() -> None:
+    seen: dict[str, object] = {}
+
+    def pairs_hook(pairs):
+        for key, value in pairs:
+            assert key not in seen, f"duplicate slug in {DATA}: {key}"
+            seen[key] = value
+        return seen
+
+    json.loads(paths.resource_path(DATA).read_text(encoding="utf-8"), object_pairs_hook=pairs_hook)
+    assert len(seen) == len(zh_aliases())
+
+
+def test_every_entry_has_non_empty_trimmed_aliases() -> None:
+    for slug, aliases in zh_aliases().items():
+        assert slug and slug == slug.strip(), repr(slug)
+        assert len(aliases) >= 1, slug
+        for alias in aliases:
+            assert alias and alias == alias.strip(), (slug, alias)
+        assert len(set(aliases)) == len(aliases), slug  # no alias listed twice
+
+
+def test_every_entry_can_find_itself() -> None:
+    """Each alias of each project resolves back to that project (the table is its own index)."""
+    for slug, aliases in zh_aliases().items():
+        for alias in aliases:
+            assert slug in search_local(alias), (slug, alias)
+
+
+def test_zh_name_and_unknown_slug() -> None:
+    assert zh_name("sodium") == zh_aliases()["sodium"][0]
+    assert zh_name("__definitely_not_a_mod__") == ""
 
 
 def test_has_cjk() -> None:
@@ -33,14 +101,94 @@ def test_has_cjk() -> None:
     assert has_cjk("") is False
 
 
-def test_search_local_roundtrip() -> None:
-    """Any entry in the table: it can find itself by both its Chinese name and slug."""
-    assert search_local("") == []
-    for slug, name in list(zh_names().items())[:20]:
-        assert slug in search_local(slug), slug
-        assert slug in search_local(name), name
+# ---------- layer 1: exact ----------
 
 
-def test_zh_name_unknown_returns_empty() -> None:
-    assert zh_name("__definitely_not_a_mod__") == ""
+@pytest.mark.parametrize("query", ["sodium", "SODIUM", "钠"])
+def test_exact_match_on_slug_english_name_and_chinese_name(query: str) -> None:
+    matches = match_slugs(query, TABLE)
+    assert matches[0].slug == "sodium"
+    assert matches[0].tier == EXACT
 
+
+def test_exact_match_wins_over_a_longer_name_containing_it() -> None:
+    # "钠" is also a substring of "钠扩展"; the exact entry must come first.
+    table = {"sodium": ("钠",), "sodium-extra": ("钠扩展",)}
+    assert [match.slug for match in match_slugs("钠", table)] == ["sodium", "sodium-extra"]
+
+
+# ---------- layer 2: substring ----------
+
+
+@pytest.mark.parametrize("query", ["投影仪", "投影模组"])
+def test_substring_matches_when_a_recorded_name_is_inside_the_query(query: str) -> None:
+    matches = match_slugs(query, TABLE)
+    assert matches[0].slug == "litematica"
+    assert matches[0].tier == SUBSTRING
+
+
+def test_substring_matches_when_the_query_is_inside_a_recorded_name() -> None:
+    matches = match_slugs("litema", TABLE)
+    assert matches[0].slug == "litematica"
+    assert matches[0].tier == SUBSTRING
+
+
+# ---------- layer 3: tokens ----------
+
+
+def test_token_layer_matches_when_no_single_field_contains_the_query() -> None:
+    # "apple skin" is not a substring of "AppleSkin", but both words are.
+    matches = match_slugs("apple skin", TABLE)
+    assert matches[0].slug == "appleskin"
+    assert matches[0].tier == TOKEN
+
+
+def test_chinese_run_without_spaces_is_split_using_the_table() -> None:
+    """The reported case: 实体渲染优化, with no spaces and no such name in the table."""
+    assert tokenize("实体渲染优化") in {("实体渲染", "优化"), ("实体", "渲染", "优化")}
+    matches = match_slugs("实体渲染优化", TABLE)
+    assert matches[0].slug == "entityculling"
+    assert matches[0].tier == TOKEN
+
+
+def test_token_layer_requires_every_word_to_hit() -> None:
+    # "apple" is part of "AppleSkin", so the first word alone would match; a compound whose second
+    # word is in no name must not.
+    assert [match.slug for match in match_slugs("apple", TABLE)] == ["appleskin"]
+    assert match_slugs("apple banana", TABLE) == []
+
+
+# ---------- the two user reports, against the shipped table ----------
+
+
+def test_projection_finds_litematica() -> None:
+    matches = match_slugs("投影")
+    assert matches and matches[0].slug == "litematica"
+    assert matches[0].tier == EXACT
+
+
+def test_entity_render_optimization_finds_entity_culling() -> None:
+    matches = match_slugs("实体渲染优化")
+    assert matches, "实体渲染优化 must reach the table"
+    # Modrinth carries the project under both "entityculling" and "entity-culling"; either is fine.
+    assert matches[0].name == "实体渲染机制优化"
+    assert {match.slug for match in matches} >= {"entityculling"}
+    assert matches[0].tier in (EXACT, SUBSTRING, TOKEN)
+
+
+def test_optimization_query_finds_several_projects() -> None:
+    """搜 "优化" is a broad query: it has to return more than the one mod it was tested with."""
+    assert len(match_slugs("优化")) >= 3
+
+
+def test_english_query_turns_a_chinese_word_into_the_slug_the_api_knows() -> None:
+    assert english_query("投影") == "litematica"
+    assert english_query("实体渲染优化") in {"entityculling", "entity-culling"}
+    assert english_query("钠") == "sodium"
+    assert english_query("no-such-query-at-all") == ""
+
+
+def test_name_match_ignores_empty_input() -> None:
+    assert name_match("", ("sodium", "Sodium")) is None
+    assert name_match("   ", ("sodium", "Sodium")) is None
+    assert match_slugs("") == []

@@ -1,132 +1,3235 @@
 {
- "3dskinlayers": "3D 皮肤层",
- "aged": "Aged",
- "appleskin": "苹果皮",
- "architectury-api": "Architectury API",
- "ardacraft": "ArdaCraft",
- "astralex": "AstraLex 光影",
- "bare-bones": "裸骨 Bare Bones",
- "battlearmorytacz": "BattleArmory TACZ",
- "better-leaves": "更好的树叶 Better Leaves",
- "better-mc-fabric-bmc2": "更好的MC（Fabric）",
- "better-mc-forge-bmc4": "更好的MC（Forge）",
- "better-modlist-neoforge": "更好的模组列表",
- "bliss-shader": "Bliss 光影",
- "bloop-shaders": "Bloop 光影",
- "body-camera-shader": "Body Camera 光影",
- "brasil-cobblemon-mobile": "Cobblemon Brasil [Mobile]",
- "bsl-shaders": "BSL 光影",
- "bsl-shaders-classic": "BSL Classic 光影",
- "cave-horror-project-modpack": "洞穴恐怖计划",
- "chat-reporting-helper": "聊天报告帮助程序",
- "cloth-config": "Cloth Config API",
- "cobblemon-classic-grass-pack": "Cobblemon 经典草地材质包",
- "cobblemon-emissive-ores": "Cobblemon 发光矿石",
- "cobblemon-fabric": "Cobblemon",
- "cobblemon-interface": "宝可梦界面 Cobblemon Interface",
- "cobblemon-interface-modded": "Cobblemon Interface 扩展组件",
- "cobblemondelta": "Cobblemon Delta",
- "cobbleverse": "Cobbleverse",
- "complementary-reimagined": "Complementary 光影",
- "complementary-unbound": "Complementary Unbound 光影",
- "continuity": "Continuity",
- "create_plus": "创造+",
- "curios": "饰品",
- "default-dark-mode": "默认暗色模式 Default Dark Mode",
- "default-hd-128x": "原生高清 Default HD 128x",
- "dramatic-skys": "极致拟真天空 Dramatic Skys",
- "dynamic-fps": "动态FPS",
- "e19_cobblemon_minimap_icons": "E19 Cobblemon 小地图图标",
- "enchant-icons-countxd": "附魔图标 Enchant Icons",
- "entity-model-features": "实体模型特性",
- "entityculling": "实体渲染机制优化",
- "entitytexturefeatures": "实体纹理特性",
- "extended_drawers": "扩展抽屉",
- "fabric-api": "Fabric API",
- "fabric-language-kotlin": "Fabric Language Kotlin",
- "fabulously-optimized": "Fabulously Optimized",
- "faithful-64x": "Faithful 64x",
- "fancy-crops": "精美作物 Fancy Crops",
- "fast-better-grass": "更好的草地 Fast Better Grass",
- "fastpbr": "FastPBR 光影",
- "ferrite-core": "铁氧体磁芯",
- "fps": "FPS Modpack",
- "fresh-animations": "新鲜动画 Fresh Animations",
- "fresh-animations-extensions": "Fresh Animations 扩展包",
- "fresh-smooth": "Fresh & Smooth",
- "fullbright-ub": "完全明亮 Fullbright UB",
- "geckolib": "GeckoLib",
- "glowing-glints": "Glowing Glints",
- "hoplite-for-lunar-client": "Hoplite for Lunar Client",
- "hysteria-shaders": "歇斯底里光影",
- "i-like-vanilla": "我喜欢原版",
- "icon-xaeros": "Xaero 图标 Icon Xaero's",
- "immediatelyfast": "ImmediatelyFast",
- "insanity-shader": "Insanity 光影",
- "iris": "Iris 光影",
- "jade": "玉",
- "jei": "JEI 物品管理器",
- "kappa-shader": "Kappa 光影",
- "landscapes-reimagined-genesis": "Landscapes Reimagined Genesis",
- "lithium": "锂",
- "low-fire-pack": "低火材质包 Low Fire Pack",
- "low-on-fire": "低火 Low on Fire",
- "makeup-ultra-fast-shaders": "MakeUp 光影",
- "mandalas-gui-dark-mode": "Mandala GUI 暗色模式",
- "mellow": "Mellow 光影",
- "miniature-shader": "微缩光影",
- "modernfix": "现代化修复",
- "modmenu": "模组菜单",
- "new-glowing-ores": "新发光矿石 New Glowing Ores",
- "noble": "Noble 光影",
- "nostalgia-shader": "Nostalgia 光影",
- "not-enough-animations": "更多动画",
- "onastick": "便携工具",
- "onastick-forge": "便携工具",
- "optifabric-modpack": "OptiFabric Modpack",
- "paladins-furniture": "帕拉丁的家具",
- "pastel-shaders": "Pastel 光影",
- "photon-shader": "Photon 光影",
- "pokemon-elysium": "Pokemon Elysium",
- "potato-shaders": "土豆光影",
- "programmer-art-fix": "程序员艺术修复 Programmer Art Fix",
- "prominence-2-fabric": "Prominence II",
- "puffradio": "PuffRadio",
- "rad-enchants": "Rad的魔咒",
- "rct-trainer-textures-plus": "Radical Cobblemon 训练师纹理增强",
- "realisticcraft": "RealisticCraft",
- "reeses-sodium-options": "Reese的钠视频界面",
- "remarkably": "Remarkably Optimized",
- "renderpearl": "渲染珍珠",
- "rethinking-voxels": "Rethinking Voxels 光影",
- "rso": "红石生电优化",
- "shrimple": "Shrimple 光影",
- "simple-grass-flowers": "Simple Grass Flowers",
- "simple-voice-chat": "简单的语音聊天",
- "skyblock-enhanced": "SkyBlock Enhanced",
- "skyblocker-modpack": "Skyblocker Modpack",
- "slimes-adventure": "Slimes Adventure",
- "sodium": "钠",
- "sodium-extra": "钠扩展",
- "sodiumplus": "Sodium Plus",
- "solas-shader": "Solas 光影",
- "spooklementary": "Spooklementary 光影",
- "super-duper-vanilla": "Super Duper Vanilla 光影",
- "super-factory-manager": "超级工厂管理器",
- "supplementaries-knowlogy": "Supplementaries知识学",
- "the-horrors-in-the-fog": "The Horrors in the Fog",
- "the-pixelmon-modpack": "The Pixelmon Modpack",
- "tinkers-planner": "匠魂蓝图",
- "translations-for-sodium": "Sodium 汉化",
- "tras-fresh-player": "Tras Fresh Player",
- "vanilla-perfected": "Vanilla Perfected",
- "vanilla-plus-shader": "原版增强光影",
- "vanillaa": "VanillAA 光影",
- "veinminer": "连锁挖矿",
- "visual-vibrance": "Visual Vibrance 光影",
- "xaeros-minimap": "Xaero的小地图",
- "xaeros-world-map": "Xaero的世界地图",
- "yacl": "YACL",
- "zombie-invade-100-days": "僵尸入侵100天",
- "zoomify": "Zoomify"
+ "3dskinlayers": [
+  "3D 皮肤层",
+  "3D Skin Layers"
+ ],
+ "7-days-to-mine": [
+  "七日杀",
+  "7 Days to Mine"
+ ],
+ "abyssal-corrupter": [
+  "深渊侵蚀者",
+  "Abyssal Corrupter"
+ ],
+ "accelerated-recoiling": [
+  "加速碰撞",
+  "Accelerated Recoiling"
+ ],
+ "advanced-enchantment": [
+  "高级附魔",
+  "Advanced-Enchantment"
+ ],
+ "advanced-loot-info": [
+  "高级战利品信息显示",
+  "Advanced Loot Info (ALI)"
+ ],
+ "advancement-plaques": [
+  "进度牌匾",
+  "Advancement Plaques"
+ ],
+ "advancement-screenshot": [
+  "进度截图",
+  "Advancement Screenshot"
+ ],
+ "ae2": [
+  "应用能源2",
+  "Applied Energistics 2"
+ ],
+ "ae2-crystal-science": [
+  "应用能源：水晶科技",
+  "AE2 Crystal Science"
+ ],
+ "ae2-lightning-tech": [
+  "AE2 闪电科技",
+  "AE2 Lightning Tech"
+ ],
+ "ae2-screenshot": [
+  "AE2截图",
+  "AE2 ScreenShot"
+ ],
+ "aerodynamics4mc": [
+  "空气动力学",
+  "Aerodynamics4MC"
+ ],
+ "aeronautics-wind-sound": [
+  "航空学：破风",
+  "Aeronautics Wind Sound"
+ ],
+ "aged": [
+  "Aged"
+ ],
+ "ageratum": [
+  "藿香",
+  "Ageratum"
+ ],
+ "airdrop": [
+  "空投",
+  "Airdrop"
+ ],
+ "alfheim": [
+  "亚尔夫海姆",
+  "Alfheim"
+ ],
+ "alivecombat": [
+  "战斗生机",
+  "AliveCombat"
+ ],
+ "ancient-spellcraft": [
+  "古代咒法",
+  "Ancient Spellcraft"
+ ],
+ "anisum": [
+  "八角",
+  "Anisum"
+ ],
+ "antarchy": [
+  "安塔奇",
+  "Antarchy"
+ ],
+ "antideath-carpet-addition": [
+  "AD的Carpet拓展",
+  "Antideath-Carpet-addition"
+ ],
+ "anvilcraft": [
+  "铁砧工艺",
+  "AnvilCraft"
+ ],
+ "anyslottotem": [
+  "图腾随行",
+  "AnySlotTotem"
+ ],
+ "anything-but-fish": [
+  "就是不钓鱼",
+  "Anything But Fish"
+ ],
+ "apotheosis": [
+  "神化",
+  "Apotheosis"
+ ],
+ "apothic-flux": [
+  "通量神化",
+  "Apothic Flux"
+ ],
+ "appleskin": [
+  "苹果皮",
+  "AppleSkin"
+ ],
+ "applied-create": [
+  "应用机动",
+  "Applied Create"
+ ],
+ "applied-delight": [
+  "应用乐事",
+  "Applied Delight"
+ ],
+ "applied-mekanistics": [
+  "应用能源：通用机械附属",
+  "Applied Mekanistics"
+ ],
+ "aquamirae": [
+  "海灵物语",
+  "Aquamirae"
+ ],
+ "arcane-vortex": [
+  "秘法涡流",
+  "Arcane Vortex"
+ ],
+ "architectury-api": [
+  "Architectury API"
+ ],
+ "ardacraft": [
+  "ArdaCraft"
+ ],
+ "armor-model-api": [
+  "盔甲模型 API",
+  "Armor Model API"
+ ],
+ "armor-of-the-ages": [
+  "时代铠甲",
+  "Armor of the Ages"
+ ],
+ "arrbrants-custom-splash-texts": [
+  "ArrBrants 的自定义闪烁标语",
+  "ArrBrants' Custom Splash Texts"
+ ],
+ "ars-nouveau": [
+  "新生魔艺",
+  "Ars Nouveau"
+ ],
+ "artifacts": [
+  "奇异饰品",
+  "Artifacts"
+ ],
+ "asteorbar": [
+  "Asteor的状态栏和血量显示",
+  "AsteorBar"
+ ],
+ "astralex": [
+  "AstraLex 光影",
+  "AstraLex Shaders"
+ ],
+ "attribute-modifier": [
+  "属性修改器",
+  "Attribute Modifier"
+ ],
+ "aurelium": [
+  "樱粉星愿",
+  "Aurelium"
+ ],
+ "auto-reload-crossbow": [
+  "弩自动装填",
+  "[弩自动装填]auto reload crossbow"
+ ],
+ "autotranslation": [
+  "自动翻译",
+  "AutoTranslation"
+ ],
+ "avaritia-spear": [
+  "无尽贪婪：星辰贯穿之矛",
+  "Avaritia Spear"
+ ],
+ "bamboo-sign-editor": [
+  "告示牌编辑器",
+  "Bamboo Sign Editor"
+ ],
+ "bare-bones": [
+  "裸骨 Bare Bones",
+  "Bare Bones"
+ ],
+ "battlearmorytacz": [
+  "BattleArmory TACZ"
+ ],
+ "battlecorrection": [
+  "战斗修正",
+  "BattleCorrection"
+ ],
+ "baublesreforked": [
+  "饰品重铸",
+  "BaublesReforked"
+ ],
+ "beautify-refoxed": [
+  "美化！（NeoForge）",
+  "Beautify: ReFoxed"
+ ],
+ "bed-spawn-backport": [
+  "想设就设",
+  "Bed Spawn Backport"
+ ],
+ "bedrock-redux": [
+  "基岩再现",
+  "Bedrock Redux"
+ ],
+ "bedrock-skins": [
+  "基岩版皮肤",
+  "Bedrock Skins"
+ ],
+ "bento-box": [
+  "便当盒",
+  "Bento Box"
+ ],
+ "better-advancements": [
+  "更好的进度",
+  "Better Advancements"
+ ],
+ "better-blood-overlay": [
+  "血迹覆层增强",
+  "Better Blood Overlay"
+ ],
+ "better-climbing": [
+  "更好的攀爬",
+  "Better Climbing"
+ ],
+ "better-end-sky-retro": [
+  "更好的末地天空：复古",
+  "Better End Sky Retro"
+ ],
+ "better-leaves": [
+  "更好的树叶 Better Leaves",
+  "Motschen's Better Leaves"
+ ],
+ "better-mc-fabric-bmc2": [
+  "更好的MC（Fabric）",
+  "Better MC [FABRIC] - BMC2"
+ ],
+ "better-mc-forge-bmc4": [
+  "更好的MC（Forge）",
+  "Better MC [FORGE] - BMC4"
+ ],
+ "better-melon": [
+  "更好的西瓜",
+  "Better Melon"
+ ],
+ "better-mods-button": [
+  "更好的模组按钮",
+  "Better Mods Button"
+ ],
+ "better-ping-display": [
+  "更好的延迟显示",
+  "Better Ping Display [Forge/NeoForge]"
+ ],
+ "better-smithing-template": [
+  "好锻！",
+  "Better Smithing Template"
+ ],
+ "betterblockz": [
+  "更好的方块",
+  "BetterBlockZ"
+ ],
+ "betterend": [
+  "更好的末地",
+  "BetterEnd"
+ ],
+ "betternether": [
+  "更好的下界",
+  "BetterNether"
+ ],
+ "betterspeedhud": [
+  "更好的速度显示",
+  "BetterSpeedHUD"
+ ],
+ "beyondheights": [
+  "高度极限 [-2032~2031]（可自定义）",
+  "beyondheights"
+ ],
+ "bing-agriculture-extend": [
+  "冰·农业工具扩展",
+  "Bing Agriculture Extend"
+ ],
+ "biology-dictionary": [
+  "生物辞典",
+  "Biology Dictionary"
+ ],
+ "biomes-o-plenty": [
+  "超多生物群系",
+  "Biomes O' Plenty"
+ ],
+ "biomespy": [
+  "群系间谍",
+  "BiomeSpy"
+ ],
+ "birthday-fabric": [
+  "生日模组",
+  "birthday-fabric"
+ ],
+ "blabby-world": [
+  "话痨的世界",
+  "Blabby World"
+ ],
+ "black-gold-alliance": [
+  "黑金同盟",
+  "Black Gold Alliance"
+ ],
+ "bliss-shader": [
+  "Bliss 光影",
+  "Bliss Shaders"
+ ],
+ "bloop-shaders": [
+  "Bloop 光影",
+  "Bloop Shaders"
+ ],
+ "blue-archive-halo": [
+  "仿碧蓝档案光环",
+  "Blue Archive Halo"
+ ],
+ "bobby": [
+  "服务器区块缓存",
+  "Bobby"
+ ],
+ "body-camera-shader": [
+  "Body Camera 光影",
+  "Body Camera"
+ ],
+ "bongo": [
+  "宾果游戏",
+  "Bongo"
+ ],
+ "botania": [
+  "植物魔法",
+  "Botania"
+ ],
+ "bountiful": [
+  "赏金",
+  "Bountiful"
+ ],
+ "bountiful-fares": [
+  "丰饶食记",
+  "Bountiful Fares"
+ ],
+ "bow-infinity-fix": [
+  "无限附魔修复",
+  "Bow Infinity Fix"
+ ],
+ "brasil-cobblemon-mobile": [
+  "Cobblemon Brasil [Mobile]"
+ ],
+ "brewin-and-chewin": [
+  "饮酒作乐",
+  "Brewin' And Chewin'"
+ ],
+ "broadcast-radio": [
+  "电波通讯",
+  "Broadcast Radio"
+ ],
+ "bsl-shaders": [
+  "BSL 光影",
+  "BSL Shaders"
+ ],
+ "bsl-shaders-classic": [
+  "BSL Classic 光影",
+  "BSL Shaders - Classic"
+ ],
+ "buckshotroulette": [
+  "恶魔轮盘赌",
+  "BuckshotRoulette"
+ ],
+ "buddycards": [
+  "巴迪卡牌",
+  "Buddycards"
+ ],
+ "buildcraft": [
+  "建筑",
+  "BuildCraft"
+ ],
+ "buildcraft-community-edition": [
+  "建筑社区版",
+  "BuildCraft Community Edition"
+ ],
+ "burst-door-open": [
+  "破门而入",
+  "Burst Door Open"
+ ],
+ "calendar-mod": [
+  "日历",
+  "Calendar Mod"
+ ],
+ "camera-mod": [
+  "照相机",
+  "Camera Mod"
+ ],
+ "carianstyle": [
+  "卡利亚式附魔",
+  "CarianStyle"
+ ],
+ "carpet-ice-addition": [
+  "冰毯",
+  "Carpet Ice Addition"
+ ],
+ "carrier": [
+  "搬运",
+  "Carrier"
+ ],
+ "carry-on": [
+  "搬运",
+  "Carry On"
+ ],
+ "carry-on-extend": [
+  "搬运：拓展",
+  "Carry On Extend"
+ ],
+ "cave-delight": [
+  "洞穴乐事",
+  "Cave Delight"
+ ],
+ "celestisynth": [
+  "天神剑技",
+  "Celestisynth"
+ ],
+ "cell": [
+  "元元元元件件件件",
+  "Cell (Vanilla+)"
+ ],
+ "chainmining": [
+  "链式挖掘",
+  "ChainMining"
+ ],
+ "changshengjue": [
+  "长生诀",
+  "ChangShengJue"
+ ],
+ "chat-reporting-helper": [
+  "聊天报告帮助程序",
+  "Chat Reporting Helper"
+ ],
+ "chat-tools": [
+  "聊天工具箱",
+  "Chat Tools"
+ ],
+ "cheapaway": [
+  "不值钱的东西请远离我",
+  "CheapAway"
+ ],
+ "chest-cavity-forge-port": [
+  "胸腔Forge版",
+  "Chest Cavity - Forge Port"
+ ],
+ "chest-curio-items": [
+  "箱子里的小饰品",
+  "Chest Curio Items"
+ ],
+ "chest-item-vows": [
+  "箱子里的小饰品：誓令",
+  "Chest Item： Vows"
+ ],
+ "chinese-festivals": [
+  "中国节",
+  "Chinese Festivals"
+ ],
+ "chunky": [
+  "预生成区块",
+  "Chunky"
+ ],
+ "cinderscapes": [
+  "余烬奇景",
+  "Cinderscapes"
+ ],
+ "client-export-helper": [
+  "客户端数据导出",
+  "Client Export Helper"
+ ],
+ "cloth-config": [
+  "Cloth Config API"
+ ],
+ "cobblemon-classic-grass-pack": [
+  "Cobblemon 经典草地材质包",
+  "Cobblemon Classic Grass Pack"
+ ],
+ "cobblemon-emissive-ores": [
+  "Cobblemon 发光矿石",
+  "Cobblemon Emissive Ores"
+ ],
+ "cobblemon-fabric": [
+  "Cobblemon",
+  "Cobblemon Official Modpack [Fabric]"
+ ],
+ "cobblemon-interface": [
+  "宝可梦界面 Cobblemon Interface",
+  "Cobblemon Interface"
+ ],
+ "cobblemon-interface-modded": [
+  "Cobblemon Interface 扩展组件",
+  "Cobblemon Interface: Modded"
+ ],
+ "cobblemondelta": [
+  "Cobblemon Delta"
+ ],
+ "cobblestone-generator": [
+  "圆石生成器",
+  "Cobblestone Generator"
+ ],
+ "cobbleverse": [
+  "Cobbleverse",
+  "COBBLEVERSE - Pokemon Adventure [Cobblemon]"
+ ],
+ "colorful-blocks": [
+  "给你点颜色瞧瞧！",
+  "Colorful Blocks"
+ ],
+ "colortooltips": [
+  "灵动提示框",
+  "ColorTooltips"
+ ],
+ "colossal-chests": [
+  "巨型箱子",
+  "Colossal Chests"
+ ],
+ "comforts": [
+  "舒适用品",
+  "Comforts"
+ ],
+ "command-adjust": [
+  "指令调整",
+  "Command Adjust"
+ ],
+ "complementary-reimagined": [
+  "Complementary 光影",
+  "Complementary Shaders - Reimagined"
+ ],
+ "complementary-unbound": [
+  "Complementary Unbound 光影",
+  "Complementary Shaders - Unbound"
+ ],
+ "compound-v": [
+  "五号化合物",
+  "Compound V"
+ ],
+ "configurable-extra-mob-drops": [
+  "可配置的额外怪物掉落",
+  "Configurable Extra Mob Drops"
+ ],
+ "conflux-map": [
+  "同川地图",
+  "Conflux Map"
+ ],
+ "construction-wand-kots": [
+  "建筑手杖-耕云钓月版",
+  "Construction Wand - KOTS"
+ ],
+ "container-indexer": [
+  "箱柜索引",
+  "Container Indexer"
+ ],
+ "continuity": [
+  "Continuity"
+ ],
+ "convenient-storage": [
+  "便捷存储",
+  "Convenient Storage"
+ ],
+ "cooking-for-blockheads": [
+  "傻瓜烹饪/懒人厨房",
+  "Cooking for Blockheads"
+ ],
+ "crafting-dead-survival": [
+  "行尸走肉：生存",
+  "Crafting Dead: Survival"
+ ],
+ "crash-assistant": [
+  "崩溃助手",
+  "Crash Assistant"
+ ],
+ "create": [
+  "机械动力",
+  "Create"
+ ],
+ "create-aeronautics": [
+  "机械动力：航空学",
+  "Create Aeronautics"
+ ],
+ "create-aeronautics-easy-assembly": [
+  "机械动力航空学：简易组装",
+  "Create Aeronautics : Easy Assembly"
+ ],
+ "create-applied-kinetics": [
+  "机械动力：应用机械",
+  "Create: Applied Kinetics"
+ ],
+ "create-beyond-stock-fix": [
+  "机械动力&超越维度兼容性修复",
+  "Create Beyond Stock Fix"
+ ],
+ "create-big-cannons": [
+  "机械动力：火炮",
+  "Create Big Cannons"
+ ],
+ "create-bits-n-bobs": [
+  "零零件件",
+  "Create: Bits 'n' Bobs"
+ ],
+ "create-confectionery": [
+  "机械动力：甜食",
+  "Create Confectionery"
+ ],
+ "create-cultivation-craft-community-edition": [
+  "机械动力：栽培工艺社区版",
+  "Create: Cultivation Craft — Community Edition"
+ ],
+ "create-deepfried": [
+  "机械动力：油炸",
+  "Create: Deepfried"
+ ],
+ "create-diesel-generators": [
+  "机械动力：柴油动力",
+  "Create: Diesel Generators"
+ ],
+ "create-electro-energetics": [
+  "机械动力：电力学",
+  "Create: Electro Energetics"
+ ],
+ "create-electrolysis": [
+  "机械动力：电解",
+  "Create: Electrolysis"
+ ],
+ "create-energy-cannons": [
+  "机械动力：能量加农炮",
+  "Create: Energy Cannons"
+ ],
+ "create-factory-controller": [
+  "机械动力：工厂控制台",
+  "Create: Factory Controller"
+ ],
+ "create-fantasizing-again": [
+  "机械动力：又在幻想了",
+  "Create: Fantasizing Again"
+ ],
+ "create-flight-control": [
+  "机械动力：飞控学",
+  "Create: Flight Control"
+ ],
+ "create-fly": [
+  "机械动力飞越版",
+  "Create Fly"
+ ],
+ "create-food-filling": [
+  "机械动力：食物注药",
+  "Create: Food Filling"
+ ],
+ "create-gears-and-tavern": [
+  "齿轮与酒馆",
+  "Create: Gears and Tavern"
+ ],
+ "create-improve": [
+  "机械动力：改进",
+  "Create: Improve"
+ ],
+ "create-integrated-farming": [
+  "机械动力：集成农业",
+  "Create: Integrated Farming"
+ ],
+ "create-item-drawers": [
+  "机械动力：物品抽屉",
+  "Create: Item Drawers"
+ ],
+ "create-nested-factory": [
+  "机械动力：嵌套工厂",
+  "Create Nested Factory"
+ ],
+ "create-northstar": [
+  "机械动力：北极星",
+  "Create: Northstar"
+ ],
+ "create-nuclear-industry": [
+  "机械动力：核工业",
+  "create: nuclear industry"
+ ],
+ "create-optical": [
+  "机械动力：光学",
+  "Create Optical"
+ ],
+ "create-paper": [
+  "机械动力：纸张",
+  "Create Paper"
+ ],
+ "create-propulsion-simulated": [
+  "机械动力：推进工程 - 模拟物理",
+  "Create Propulsion: Simulated"
+ ],
+ "create-radars": [
+  "机械动力：雷达",
+  "Create: Radars"
+ ],
+ "create-routes": [
+  "机械动力：路線",
+  "Create: Routes"
+ ],
+ "create-simurail": [
+  "机械动力：模拟铁道",
+  "Create Simurail"
+ ],
+ "create-steam-n-rails": [
+  "机械动力：汽鸣铁道",
+  "Create: Steam 'n' Rails"
+ ],
+ "create-the-air-war": [
+  "机械动力：空战",
+  "Create: The Air War"
+ ],
+ "create-trading-floor": [
+  "机械动力：交易站点",
+  "Create: Trading floor"
+ ],
+ "create-tweaked-controllers": [
+  "机械动力：高级遥控器",
+  "Create: Tweaked Controllers"
+ ],
+ "create-villager-labor": [
+  "机械动力：村民劳工",
+  "Create Villager Labor"
+ ],
+ "create-wizardry": [
+  "机械动力：巫术",
+  "Create: Wizardry"
+ ],
+ "create_plus": [
+  "创造+",
+  "Create+"
+ ],
+ "croparia": [
+  "矿石作物/魔种之咏",
+  "Croparia"
+ ],
+ "crystal-craft": [
+  "晶体工艺",
+  "Crystal craft"
+ ],
+ "csgobox": [
+  "Csgo 箱子",
+  "Csgo box"
+ ],
+ "cuffed": [
+  "监禁",
+  "Cuffed"
+ ],
+ "cuisine-delight": [
+  "料理乐事",
+  "Cuisine Delight"
+ ],
+ "curiodrop": [
+  "饰品：战利品",
+  "curiodrop"
+ ],
+ "curios": [
+  "饰品",
+  "Curios API"
+ ],
+ "curtain": [
+  "窗帘",
+  "Curtain"
+ ],
+ "custom-gun-continued": [
+  "自定义枪械永续",
+  "Custom Gun Continued"
+ ],
+ "custom-title": [
+  "自定义称号",
+  "Custom Title"
+ ],
+ "custom-villager-trades": [
+  "自定义村民交易",
+  "Custom Villager Trades"
+ ],
+ "custom-window-title": [
+  "自定义窗口标题",
+  "Custom Window Title"
+ ],
+ "cyberware-reforged": [
+  "机械改造：重生",
+  "Cyberware: Reforged"
+ ],
+ "cyclic": [
+  "循环",
+  "Cyclic"
+ ],
+ "damage-engine": [
+  "伤害引擎",
+  "Damage Engine"
+ ],
+ "dashloader": [
+  "疾速加载",
+  "DashLoader"
+ ],
+ "datapack-function-library": [
+  "数据包函数支持库",
+  "datapack function library"
+ ],
+ "deathcore": [
+  "死亡榜",
+  "Deathcore"
+ ],
+ "decocraft": [
+  "装饰工艺",
+  "Decocraft"
+ ],
+ "deeper-and-darker": [
+  "幽邃黑暗",
+  "Deeper and Darker"
+ ],
+ "default-dark-mode": [
+  "默认暗色模式 Default Dark Mode",
+  "Default Dark Mode"
+ ],
+ "default-hd-128x": [
+  "原生高清 Default HD 128x",
+  "Default HD 128x"
+ ],
+ "defense-turrets": [
+  "防御炮台",
+  "Defense Turrets"
+ ],
+ "delight-o-flight": [
+  "云端之乐",
+  "Delight o' Flight"
+ ],
+ "depression": [
+  "抑郁症",
+  "Depression"
+ ],
+ "destroy": [
+  "坍毁化合",
+  "Destroy"
+ ],
+ "devourer-of-gods": [
+  "神明吞噬者",
+  "Devourer of Gods"
+ ],
+ "diet-appleseed-edition": [
+  "饮食均衡-苹果籽版",
+  "Diet - AppleSeed Edition"
+ ],
+ "diexvcreeper": [
+  "Diexv苦力怕",
+  "DiexvCreeper"
+ ],
+ "dimension-parasite": [
+  "维度寄生者",
+  "Dimension Parasite"
+ ],
+ "dimensional-dungeons": [
+  "维度地牢",
+  "Dimensional Dungeons"
+ ],
+ "discerning-the-eldritch": [
+  "窥玄探秘",
+  "Discerning The Eldritch"
+ ],
+ "dismantle-table": [
+  "拆解台",
+  "Dismantle Table"
+ ],
+ "display-delight": [
+  "展示乐事",
+  "Display Delight"
+ ],
+ "dlc-manager": [
+  "DLC管理器",
+  "DLC Manager"
+ ],
+ "dokimobs": [
+  "萌化生物",
+  "dokimobs"
+ ],
+ "dont-get-hurt": [
+  "无伤大雅",
+  "Dont Get Hurt"
+ ],
+ "draconic-evolution": [
+  "龙之进化/龙之研究",
+  "Draconic Evolution"
+ ],
+ "dragon-curse-chronicles": [
+  "龙咒异闻录",
+  "Dragon Curse Chronicles"
+ ],
+ "dragon-movement-fix": [
+  "末影龙移动修复",
+  "Dragon Movement Fix"
+ ],
+ "dramatic-skys": [
+  "极致拟真天空 Dramatic Skys",
+  "Dramatic Skys"
+ ],
+ "dream-stone": [
+  "梦之石",
+  "Dream Stone"
+ ],
+ "dungeon-now-loading": [
+  "地牢进行时",
+  "Dungeon Now Loading"
+ ],
+ "dungeons-and-taverns": [
+  "地下城与酒馆",
+  "Dungeons and Taverns"
+ ],
+ "dynamic-fps": [
+  "动态FPS",
+  "Dynamic FPS"
+ ],
+ "dynamic-nutrition": [
+  "动态营养",
+  "Dynamic Nutrition"
+ ],
+ "e19_cobblemon_minimap_icons": [
+  "E19 Cobblemon 小地图图标",
+  "E19 - Cobblemon Minimap Icons"
+ ],
+ "e33chat": [
+  "E33聊天界面",
+  "E33Chat"
+ ],
+ "easy-mob-spawn-control": [
+  "简易生物生成控制",
+  "Easy Mob Spawn Control"
+ ],
+ "easy-villagers": [
+  "村民物品化/简单村民",
+  "Easy Villagers"
+ ],
+ "easywhitelist": [
+  "简易白名单",
+  "EasyWhitelist"
+ ],
+ "eating-animation": [
+  "进食动画",
+  "Eating Animation"
+ ],
+ "ecliptic-seasons": [
+  "节气",
+  "Ecliptic Seasons"
+ ],
+ "ecological-garden": [
+  "生态花园",
+  "Ecological Garden"
+ ],
+ "ecological-replenishment-station": [
+  "生态补给站",
+  "Ecological Replenishment Station"
+ ],
+ "ecologics": [
+  "丰富的生态",
+  "Ecologics"
+ ],
+ "eeeab-s-mobs": [
+  "EEEAB的生物",
+  "EEEAB 's Mobs"
+ ],
+ "eidolon-edoni": [
+  "幻梦：欢宴",
+  "Eidolon:Edoni"
+ ],
+ "elder-tales": [
+  "幻境神话",
+  "elder tales"
+ ],
+ "elemental-reaction": [
+  "元素反应",
+  "Elemental Reaction"
+ ],
+ "emotecraft": [
+  "表情工艺",
+  "Emotecraft"
+ ],
+ "enchant-icons-countxd": [
+  "附魔图标 Enchant Icons",
+  "Enchant Icons"
+ ],
+ "enchanting-infuser": [
+  "附魔灌注台",
+  "Enchanting Infuser"
+ ],
+ "enchanting-plus": [
+  "高级附魔台",
+  "Enchanting Plus"
+ ],
+ "enchantment-descriptions": [
+  "附魔描述",
+  "Enchantment Descriptions"
+ ],
+ "enchantment-preview": [
+  "附魔透视",
+  "Enchantment Preview"
+ ],
+ "end-remastered-promax": [
+  "末地创世增强",
+  "End Remastered ProMax"
+ ],
+ "ender-storage": [
+  "末影存储",
+  "Ender Storage"
+ ],
+ "ender-zoology": [
+  "末影动物学",
+  "Ender Zoology"
+ ],
+ "enderscape": [
+  "末影之景",
+  "Enderscape"
+ ],
+ "enemybanner": [
+  "敌怪旗",
+  "EnemyBanner"
+ ],
+ "enhanced-celestials-2-default-lunar-events": [
+  "月亮事件 2：默认月亮事件",
+  "Enhanced Celestials 2: Default Lunar Events"
+ ],
+ "enigmatic-addons": [
+  "神秘遗物扩展",
+  "Enigmatic Addons"
+ ],
+ "enigmatic-armor": [
+  "神秘护甲",
+  "Enigmatic Armor"
+ ],
+ "enigmatic-legacy": [
+  "神秘遗物+",
+  "Enigmatic Legacy"
+ ],
+ "entity-culling": [
+  "实体渲染机制优化",
+  "Entity Culling"
+ ],
+ "entity-model-features": [
+  "实体模型特性",
+  "[EMF] Entity Model Features"
+ ],
+ "entityculling": [
+  "实体渲染机制优化",
+  "Entity Culling"
+ ],
+ "entitytexturefeatures": [
+  "实体纹理特性",
+  "[ETF] Entity Texture Features"
+ ],
+ "entomophobia": [
+  "昆虫恐惧症",
+  "Entomophobia"
+ ],
+ "epic-fight": [
+  "史诗战斗",
+  "Epic Fight"
+ ],
+ "epicfight-resurrection": [
+  "史诗战斗-重生",
+  "EpicFight-Resurrection"
+ ],
+ "epiphany": [
+  "顿悟",
+  "Epiphany"
+ ],
+ "eternal-starlight": [
+  "永恒星光",
+  "Eternal Starlight"
+ ],
+ "eternal-tales": [
+  "永恒传说",
+  "Eternal Tales"
+ ],
+ "ether-craft": [
+  "以太工艺",
+  "Ether Craft"
+ ],
+ "exp-level-up-health": [
+  "经验提升生命",
+  "Exp Level Up Health"
+ ],
+ "exparticle": [
+  "粒子扩展",
+  "ExParticle"
+ ],
+ "experience-durability": [
+  "经验耐久",
+  "Experience Durability"
+ ],
+ "explosion-breaks-no-block": [
+  "爆炸不破坏方块",
+  "Explosion Breaks No Block"
+ ],
+ "exposure": [
+  "拾光定影",
+  "Exposure"
+ ],
+ "extended-ae": [
+  "AE2扩展",
+  "Extended AE"
+ ],
+ "extended-storage": [
+  "拓展存储",
+  "Extended Storage"
+ ],
+ "extra-enchantments": [
+  "额外附魔",
+  "Extra Enchantments"
+ ],
+ "extra-enchantments-and-curses": [
+  "更多附魔和诅咒",
+  "Extra Enchantments and Curses"
+ ],
+ "extrabotany": [
+  "额外植物学",
+  "Extrabotany"
+ ],
+ "extractinatorforked": [
+  "提炼机（分支版）",
+  "ExtractinatorForked"
+ ],
+ "extradelight": [
+  "额外乐事",
+  "ExtraDelight"
+ ],
+ "eye-cross": [
+  "眼之交叉",
+  "Eye Cross"
+ ],
+ "fabric-api": [
+  "Fabric API"
+ ],
+ "fabric-language-kotlin": [
+  "Fabric Language Kotlin"
+ ],
+ "fabulously-optimized": [
+  "Fabulously Optimized"
+ ],
+ "faithful-64x": [
+  "Faithful 64x"
+ ],
+ "fakeplayer": [
+  "假人伙伴",
+  "fakeplayer"
+ ],
+ "fancy-crops": [
+  "精美作物 Fancy Crops",
+  "(Bee's) Fancy Crops"
+ ],
+ "fancy-enchantments": [
+  "奇异附魔",
+  "Fancy Enchantments"
+ ],
+ "farmers-delight": [
+  "农夫乐事",
+  "Farmer's Delight"
+ ],
+ "fast-better-grass": [
+  "更好的草地 Fast Better Grass",
+  "Fast Better Grass"
+ ],
+ "fast-recipe-search": [
+  "快速配方查找",
+  "Fast Recipe Search"
+ ],
+ "fastpbr": [
+  "FastPBR 光影",
+  "FastPBR"
+ ],
+ "fastworkbench": [
+  "工作台性能优化",
+  "FastWorkbench"
+ ],
+ "ferrite-core": [
+  "铁氧体磁芯",
+  "FerriteCore"
+ ],
+ "find-me": [
+  "找到我",
+  "Find me"
+ ],
+ "fire-extinguisher": [
+  "灭火器",
+  "Fire Extinguisher 🧯"
+ ],
+ "first-class-flying": [
+  "头等飞行",
+  "First Class Flying"
+ ],
+ "first-person-model": [
+  "更真实的第一人称模型",
+  "First-person Model"
+ ],
+ "first-steps": [
+  "初见",
+  "First Steps"
+ ],
+ "flexibook": [
+  "自定义书",
+  "FlexiBook"
+ ],
+ "food-plus": [
+  "食物Plus",
+  "Food Plus"
+ ],
+ "foodcraft-reloaded": [
+  "食物工艺重置版",
+  "FoodCraft: Reloaded"
+ ],
+ "footprintparticle": [
+  "脚印粒子",
+  "FootprintParticle"
+ ],
+ "forestry": [
+  "林业",
+  "Forestry"
+ ],
+ "forestry-ce-butterflies": [
+  "林业：社区版 - 蝴蝶",
+  "Forestry: CE - Butterflies"
+ ],
+ "forgiving-void": [
+  "仁慈的虚空",
+  "Forgiving Void"
+ ],
+ "formula-helmets": [
+  "方程式头盔",
+  "Formula Helmets"
+ ],
+ "fossils-and-archeology-revival": [
+  "考古与化石",
+  "Fossils and Archeology: Revival"
+ ],
+ "fox-trot-brew": [
+  "狐步酿香",
+  "Fox Trot Brew"
+ ],
+ "fps": [
+  "FPS Modpack"
+ ],
+ "fresh-animations": [
+  "新鲜动画 Fresh Animations",
+  "Fresh Animations"
+ ],
+ "fresh-animations-extensions": [
+  "Fresh Animations 扩展包",
+  "Fresh Animations: Extensions"
+ ],
+ "fresh-smooth": [
+  "Fresh & Smooth"
+ ],
+ "freshness": [
+  "新鲜度",
+  "Freshness"
+ ],
+ "fullbright-ub": [
+  "完全明亮 Fullbright UB",
+  "Fullbright UB"
+ ],
+ "functionalstoragelegacy": [
+  "怀旧功能性存储",
+  "Functional Storage Legacy"
+ ],
+ "future-mc": [
+  "未来的MC",
+  "Future MC"
+ ],
+ "gachaaddiction": [
+  "抽卡瘾",
+  "GachaAddiction"
+ ],
+ "game-of-reborn": [
+  "复活赛",
+  "Game of Reborn"
+ ],
+ "gamma-utils": [
+  "伽玛工具",
+  "Gamma Utils (Fullbright)"
+ ],
+ "geckolib": [
+  "GeckoLib"
+ ],
+ "genshin-craft": [
+  "原的世界",
+  "Genshin Craft"
+ ],
+ "geocraft": [
+  "天圆地方",
+  "GeoCraft"
+ ],
+ "glass-armor": [
+  "玻璃盔甲",
+  "Glass Armor"
+ ],
+ "glowing-glints": [
+  "Glowing Glints",
+  "Enchantment Outlines"
+ ],
+ "god-potion": [
+  "神药",
+  "God Potion"
+ ],
+ "goetic-legacy": [
+  "诡厄遗物",
+  "Goetic Legacy"
+ ],
+ "goety-apostle-fix": [
+  "诡厄巫法内存修复",
+  "goety-apostle-fix"
+ ],
+ "goety-awaken": [
+  "诡厄巫法：觉醒",
+  "Goety: Awaken"
+ ],
+ "goety-cataclysm": [
+  "诡厄灾变",
+  "Goety Cataclysm"
+ ],
+ "goety-integration": [
+  "巫法集成",
+  "Goety Integration"
+ ],
+ "goety-invasion": [
+  "诡厄侵扰",
+  "Goety & Invasion"
+ ],
+ "goety-ominous": [
+  "诡厄巫法：凶兆",
+  "Goety Ominous"
+ ],
+ "goety-revelation": [
+  "诡厄巫法：启示录",
+  "Goety: Revelation"
+ ],
+ "goety-twilight": [
+  "诡厄暮色",
+  "Goety Twilight"
+ ],
+ "greedy-villagers": [
+  "更良心的村民",
+  "Greedy Villagers"
+ ],
+ "gregtech-ce-unofficial": [
+  "格雷科技社区版：非官方版",
+  "GregTech CE Unofficial"
+ ],
+ "gregtechceu-modern": [
+  "格雷科技现代版",
+  "GregTech CEu Modern"
+ ],
+ "guard-horn": [
+  "警卫号角",
+  "Guard Horn"
+ ],
+ "guard-villagers-tacz-support": [
+  "警卫村民 TaCZ 支持",
+  "Guard Villagers TACZ Support"
+ ],
+ "gui-tween": [
+  "GUI 动画",
+  "GUI Tween"
+ ],
+ "guns-without-roses": [
+  "枪炮“没”瑰",
+  "Guns Without Roses"
+ ],
+ "hadean-breathe": [
+  "幽焰之息",
+  "Hadean Breathe"
+ ],
+ "handheld-moon": [
+  "掌中明月",
+  "Handheld Moon - (with flashlight)"
+ ],
+ "hardcore-darkness": [
+  "真实的黑夜",
+  "Hardcore Darkness"
+ ],
+ "heart-crystal": [
+  "心之水晶",
+  "Heart Crystal"
+ ],
+ "hex-casting": [
+  "咒法学",
+  "Hex Casting"
+ ],
+ "hexerei": [
+  "魔法巫师",
+  "Hexerei"
+ ],
+ "hide-item-frame": [
+  "隐藏物品展示框",
+  "Hide Item Frame"
+ ],
+ "hiresshot": [
+  "高清摄影",
+  "HiResShot"
+ ],
+ "hoplite-for-lunar-client": [
+  "Hoplite for Lunar Client"
+ ],
+ "horror-video-tape": [
+  "惊魂录像带",
+  "Horror Video Tape"
+ ],
+ "hoshikima": [
+  "随意作品",
+  "Hoshikima"
+ ],
+ "hostile-neural-networks": [
+  "敌对神经网络",
+  "Hostile Neural Networks"
+ ],
+ "howling-werewolf": [
+  "月厄狼人",
+  "Howling Werewolf"
+ ],
+ "huazhou-chinese-armor": [
+  "华胄",
+  "HuaZhou : Chinese Armor"
+ ],
+ "hud-manager": [
+  "界面管理器",
+  "HUD Manager"
+ ],
+ "humanoid-villagers": [
+  "人形村民",
+  "Humanoid Villagers"
+ ],
+ "hundred-years-warfare": [
+  "百年战争",
+  "Hundred Years Warfare"
+ ],
+ "hysteria-shaders": [
+  "歇斯底里光影",
+  "Hysteria Shaders"
+ ],
+ "i-feel-bad": [
+  "恙 | 疫恙待诊",
+  "I Feel Bad"
+ ],
+ "i-like-vanilla": [
+  "我喜欢原版",
+  "I Like Vanilla"
+ ],
+ "i18nupdatemod": [
+  "自动汉化更新",
+  "I18nUpdateMod"
+ ],
+ "iam-music-player-renewed": [
+  "Iam 音乐播放器：重生",
+  "Iam Music Player Renewed"
+ ],
+ "icon-xaeros": [
+  "Xaero 图标 Icon Xaero's",
+  "Icon Xaero's"
+ ],
+ "illager-invasion": [
+  "灾厄侵扰",
+  "Illager Invasion"
+ ],
+ "immediatelyfast": [
+  "ImmediatelyFast"
+ ],
+ "immersion-in-traffic-context": [
+  "沉浸交通道路",
+  "immersion in traffic context"
+ ],
+ "immersive-aircraft": [
+  "沉浸式飞机",
+  "Immersive Aircraft"
+ ],
+ "immersive-geology": [
+  "沉浸地质学",
+  "Immersive Geology"
+ ],
+ "immersive-intelligence": [
+  "沉浸智能",
+  "Immersive Intelligence"
+ ],
+ "immersive-melodies": [
+  "沉浸式奏乐",
+  "Immersive Melodies"
+ ],
+ "immersive-tooltip": [
+  "沉浸式提示框",
+  "Immersive:Tooltip"
+ ],
+ "immersive-vehicles": [
+  "沉浸载具",
+  "Immersive Vehicles"
+ ],
+ "immersive-weathering": [
+  "沉浸式风化",
+  "Immersive Weathering"
+ ],
+ "immersiveengineering": [
+  "沉浸工程",
+  "ImmersiveEngineering"
+ ],
+ "immortal-cultivation": [
+  "修仙之路",
+  "Immortal Cultivation"
+ ],
+ "immortalers-delight": [
+  "千古乐事",
+  "Immortalers Delight"
+ ],
+ "improved-mobs": [
+  "怪物增强",
+  "Improved Mobs"
+ ],
+ "improvement-minecarts": [
+  "改进的矿车！",
+  "Improvement Minecarts!"
+ ],
+ "inbox": [
+  "邮箱",
+  "Inbox"
+ ],
+ "indestructible-enchantment": [
+  "附魔：无法破坏",
+  "Indestructible Enchantment"
+ ],
+ "industrial-renewal": [
+  "工业复兴",
+  "Industrial Renewal"
+ ],
+ "infinity-cave": [
+  "无限洞穴",
+  "Infinity Cave"
+ ],
+ "infinity-item-editor-re": [
+  "无尽物品编辑器：重生",
+  "Infinity Item Editor Re"
+ ],
+ "ingameime-vintage": [
+  "游戏内输入法-1.12.2",
+  "IngameIME Vintage"
+ ],
+ "insanity-shader": [
+  "Insanity 光影",
+  "Insanity Shader"
+ ],
+ "inventory-particles": [
+  "物品栏粒子",
+  "Inventory Particles"
+ ],
+ "inventory-totem": [
+  "更好的图腾",
+  "Inventory Totem"
+ ],
+ "inventoryadvancementaccelerator": [
+  "背包成就性能优化",
+  "InventoryAdvancementAccelerator"
+ ],
+ "invmove": [
+  "边拿边走",
+  "InvMove"
+ ],
+ "iris": [
+  "Iris 光影",
+  "Iris Shaders"
+ ],
+ "iron-chest-fix": [
+  "更多箱子修复",
+  "Iron Chest Fix"
+ ],
+ "iron-ladders": [
+  "更多梯子",
+  "Iron Ladders"
+ ],
+ "iron-shulker-boxes": [
+  "更多潜影盒",
+  "Iron Shulker Boxes"
+ ],
+ "isometric-renders-forked": [
+  "等轴渲染 - 分叉版",
+  "Isometric Renders - Forked"
+ ],
+ "item-get": [
+  "物品提醒",
+  "Item Get!"
+ ],
+ "item-highlighter": [
+  "物品高亮",
+  "Item Highlighter"
+ ],
+ "items-displayed": [
+  "物品陈列",
+  "Items Displayed [Fabric]"
+ ],
+ "jade": [
+  "玉 🔍",
+  "Jade 🔍"
+ ],
+ "jei": [
+  "JEI 物品管理器",
+  "Just Enough Items (JEI)"
+ ],
+ "jei-integration-reborn": [
+  "JEI扩展：重生",
+  "JEI Integration: Reborn"
+ ],
+ "jellyfishing": [
+  "抓水母",
+  "Jellyfishing"
+ ],
+ "jerotes-village-second-round-world": [
+  "Jerotes村庄-二轮世界",
+  "Jerotes Village  - Second Round World"
+ ],
+ "jinzai-traffic-lights": [
+  "津仔的交通灯",
+  "JINZAI Traffic lights"
+ ],
+ "journeymap": [
+  "旅行地图",
+  "JourneyMap"
+ ],
+ "jumbo-furnace": [
+  "巨型熔炉",
+  "Jumbo Furnace"
+ ],
+ "kaleidoscope-cookery": [
+  "森罗物语：厨房",
+  "Kaleidoscope Cookery"
+ ],
+ "kaleidoscope-end": [
+  "森罗物语：末地",
+  "Kaleidoscope End"
+ ],
+ "kaleidoscope-end-refabricated": [
+  "森罗物语：末地——重织",
+  "Kaleidoscope End Refabricated"
+ ],
+ "kaleidoscope-sauce": [
+  "森罗物语：酱料",
+  "Kaleidoscope Sauce"
+ ],
+ "kaleidoscope-twilight": [
+  "森罗物语：暮色",
+  "Kaleidoscope Twilight"
+ ],
+ "kaleidoscope-world-liquor": [
+  "森罗物语：世界名酒",
+  "Kaleidoscope World Liquor"
+ ],
+ "kallfix": [
+  "卡了 OK",
+  "KAllFix"
+ ],
+ "kamen-rider-craft": [
+  "假面骑士工艺",
+  "Kamen Rider Craft"
+ ],
+ "kappa-shader": [
+  "Kappa 光影",
+  "Kappa Shader"
+ ],
+ "keep-my-soil-tilled": [
+  "保持肥沃",
+  "Keep My Soil Tilled"
+ ],
+ "keyboard-wizard-ce": [
+  "按键精灵社区版",
+  "Keyboard Wizard CE"
+ ],
+ "kingdomcome-combat": [
+  "天国的战斗",
+  "kingdomcome combat"
+ ],
+ "kleeslabs": [
+  "更好地破坏半砖",
+  "KleeSlabs"
+ ],
+ "krypton": [
+  "氪",
+  "Krypton"
+ ],
+ "ktfruaddon": [
+  "群峦救援-非官方版扩展",
+  "ktfruaddon"
+ ],
+ "kuvalich": [
+  "赤毒玄骸",
+  "KuvaLich"
+ ],
+ "l2-complements": [
+  "莱特兰-扩充",
+  "L2 Complements"
+ ],
+ "lan-server-properties": [
+  "自定义局域网联机",
+  "LAN Server Properties"
+ ],
+ "landscapes-reimagined-genesis": [
+  "Landscapes Reimagined Genesis"
+ ],
+ "laowu-meme": [
+  "老吴~",
+  "laowu meme"
+ ],
+ "large-ore-deposits": [
+  "大型矿床",
+  "Large Ore Deposits"
+ ],
+ "lastwords": [
+  "鸳鸯董卓",
+  "LastWords"
+ ],
+ "latiao-craft-2": [
+  "辣条工艺 2",
+  "Latiao Craft 2"
+ ],
+ "lava-clear-view": [
+  "熔岩下清晰视野",
+  "Lava Clear View"
+ ],
+ "lava-vision-enchantment": [
+  "附魔：熔岩明视",
+  "Lava Vision Enchantment"
+ ],
+ "lazybank": [
+  "咸鱼银行",
+  "Lazybank"
+ ],
+ "legendary-monsters": [
+  "传奇怪物",
+  "Legendary Monsters"
+ ],
+ "legendary-monsters-fix": [
+  "传奇怪物修改",
+  "Legendary Monsters Fix"
+ ],
+ "let-your-friend-eating": [
+  "让你的朋友吃！",
+  "Let Your Friend Eating!"
+ ],
+ "limit-breaker": [
+  "破限",
+  "Limit Breaker"
+ ],
+ "litematica": [
+  "投影",
+  "Litematica"
+ ],
+ "litematica-printer-hana": [
+  "投影打印机 Hana版",
+  "Litematica-Printer-Hana"
+ ],
+ "lithium": [
+  "锂",
+  "Lithium"
+ ],
+ "littletiles": [
+  "LT小方块",
+  "LittleTiles"
+ ],
+ "liubai": [
+  "留白",
+  "Liubai"
+ ],
+ "living-item": [
+  "活物品",
+  "Living Item"
+ ],
+ "llpsw-naruto-mod": [
+  "llpsw的火影忍者",
+  "llpsw Naruto Mod"
+ ],
+ "local-capes": [
+  "本地披风",
+  "Local Capes"
+ ],
+ "low-fire-pack": [
+  "低火材质包 Low Fire Pack",
+  "Low Fire"
+ ],
+ "low-on-fire": [
+  "低火 Low on Fire",
+  "Low On Fire"
+ ],
+ "luck-all-bonus": [
+  "全部运气奖励",
+  "Luck All Bonus"
+ ],
+ "lycanites-mobs": [
+  "恐怖生物",
+  "Lycanites Mobs"
+ ],
+ "magic-from-the-east": [
+  "东方秘术",
+  "Magic From The East"
+ ],
+ "mahou-tsukai": [
+  "魔法使",
+  "Mahou Tsukai"
+ ],
+ "maid-restaurant": [
+  "女仆餐厅",
+  "Maid Restaurant"
+ ],
+ "maidsoul-kitchen": [
+  "女仆厨房",
+  "Maidsoul Kitchen"
+ ],
+ "makeup-ultra-fast-shaders": [
+  "MakeUp 光影",
+  "MakeUp - Ultra Fast"
+ ],
+ "malstone": [
+  "灵灾附属：异域",
+  "Malstone"
+ ],
+ "mana-and-artifice": [
+  "魔法艺术3：巧工魔艺",
+  "Mana and Artifice"
+ ],
+ "manaitaplus-legacy": [
+  "砧板传承",
+  "ManaitaPlus Legacy"
+ ],
+ "mandalas-gui-dark-mode": [
+  "Mandala GUI 暗色模式",
+  "Mandala's GUI - Dark mode"
+ ],
+ "mca-romantic-expansion": [
+  "凡家物语：浪漫扩展",
+  "MCA: Romantic Expansion"
+ ],
+ "me-spawner": [
+  "ME刷怪笼",
+  "ME Spawner"
+ ],
+ "mekanism": [
+  "通用机械",
+  "Mekanism"
+ ],
+ "mekanism-heated": [
+  "通用机械：热力学",
+  "Mekanism: Heated"
+ ],
+ "mekanism-output-faster": [
+  "通用机械加速输出",
+  "Mekanism Output Faster"
+ ],
+ "mekanism-sun": [
+  "通用机械：人造太阳",
+  "Mekanism Sun"
+ ],
+ "mellow": [
+  "Mellow 光影",
+  "Mellow"
+ ],
+ "melodymagic": [
+  "旋律魔法",
+  "MelodyMagic"
+ ],
+ "memoryleakfix": [
+  "内存泄漏修复",
+  "MemoryLeakFix"
+ ],
+ "metalborn": [
+  "金属之子",
+  "Metalborn"
+ ],
+ "middle-earth": [
+  "中洲",
+  "Middle-earth"
+ ],
+ "minebackup": [
+  "存档时光机",
+  "MineBackup"
+ ],
+ "minecamera": [
+  "我的视角",
+  "MineCamera"
+ ],
+ "minecartrevolution": [
+  "矿车革命",
+  "MinecartRevolution"
+ ],
+ "minecolonies": [
+  "模拟殖民地",
+  "Minecolonies"
+ ],
+ "minecraft-transit-railway": [
+  "我的世界铁路",
+  "Minecraft Transit Railway"
+ ],
+ "mineimpact": [
+  "方神",
+  "MineImpact"
+ ],
+ "miniature-shader": [
+  "微缩光影",
+  "Miniature Shader"
+ ],
+ "moar-tcon": [
+  "更多匠魂材料",
+  "Moar TCon"
+ ],
+ "mod-name-tooltip": [
+  "模组名称显示",
+  "Mod Name Tooltip"
+ ],
+ "modern-baby-animals": [
+  "现代宝宝",
+  "Modern Baby Animals"
+ ],
+ "modern-delight": [
+  "现代乐事",
+  "Modern Delight"
+ ],
+ "modern-ui": [
+  "现代化 UI",
+  "Modern UI"
+ ],
+ "modernfix": [
+  "现代化修复",
+  "ModernFix"
+ ],
+ "modernobscure": [
+  "提示框杂烩",
+  "ModernObscure"
+ ],
+ "modmenu": [
+  "模组菜单",
+  "ModMenu"
+ ],
+ "modular-golems": [
+  "傀儡装配",
+  "Modular Golems"
+ ],
+ "modular-machinery-community-refoxed": [
+  "模块化机械：社区版重制",
+  "Modular Machinery: Community Refoxed"
+ ],
+ "modularshoot": [
+  "模块化射击",
+  "ModularShoot"
+ ],
+ "mooncake-delight": [
+  "月饼乐事",
+  "Mooncake Delight"
+ ],
+ "moonstone": [
+  "月之石",
+  "moonstone"
+ ],
+ "more-swords-legacy": [
+  "更多剑：传承",
+  "More Swords Legacy"
+ ],
+ "moreskilltree": [
+  "技能树",
+  "MoreSkillTree"
+ ],
+ "most-important-question": [
+  "史生大事",
+  "Most Important Question"
+ ],
+ "mouse-tweaks": [
+  "鼠标手势",
+  "Mouse Tweaks"
+ ],
+ "moves-like-mafuyu": [
+  "高速企鹅",
+  "Moves Like Mafuyu"
+ ],
+ "music-control": [
+  "音乐控制",
+  "Music Control"
+ ],
+ "myluckyblock": [
+  "我的幸运方块",
+  "MyLuckyBlock"
+ ],
+ "myosotis": [
+  "勿忘我",
+  "Myosotis"
+ ],
+ "mystical-agriculture": [
+  "神秘农业",
+  "Mystical Agriculture"
+ ],
+ "mystical-world-reborn": [
+  "魔幻世界重置版",
+  "Mystical World Reborn"
+ ],
+ "mythical-creatures-reborn": [
+  "神话生物重制版",
+  "Mythical Creatures Reborn"
+ ],
+ "mythicbotany": [
+  "神话植物学",
+  "MythicBotany"
+ ],
+ "neapolitan": [
+  "那不勒斯风味",
+  "Neapolitan"
+ ],
+ "neko-adventure": [
+  "猫的旅途",
+  "Neko Adventure"
+ ],
+ "neopasterdream": [
+  "新帕斯特之梦",
+  "NeoPasterDream"
+ ],
+ "nether-depths-upgrade": [
+  "炽海生机",
+  "Nether Depths Upgrade"
+ ],
+ "netmusic-loginneed": [
+  "网络音乐机：登登你的",
+  "NetMusic: LoginNeed"
+ ],
+ "new-better-combat": [
+  "新更好的战斗",
+  "New Better Combat"
+ ],
+ "new-glowing-ores": [
+  "新发光矿石 New Glowing Ores",
+  "New Glowing Ores"
+ ],
+ "new-visual-keybing": [
+  "可视化按键绑定管理",
+  "New Visual Keybing"
+ ],
+ "no-chat-reports": [
+  "禁用聊天举报",
+  "No Chat Reports"
+ ],
+ "no-lan-cheats": [
+  "禁用局域网作弊",
+  "No LAN Cheats"
+ ],
+ "no-narrator": [
+  "无旁白",
+  "NoNarrator"
+ ],
+ "no-particle": [
+  "无粒子",
+  "no particle"
+ ],
+ "noble": [
+  "Noble 光影",
+  "Noble Shaders"
+ ],
+ "nopackcompatcheck": [
+  "禁用资源包兼容性检查",
+  "NoPackCompatCheck"
+ ],
+ "nostalgia-shader": [
+  "Nostalgia 光影",
+  "Nostalgia Shader"
+ ],
+ "not-enough-animations": [
+  "更多动画",
+  "Not Enough Animations"
+ ],
+ "not-enough-wands": [
+  "更多魔杖",
+  "Not Enough Wands"
+ ],
+ "nti-modern-impression-lerian-nature": [
+  "NTI-现代印象-灵耶自然",
+  "NTI-Modern Impression-lerian nature"
+ ],
+ "nuclearcraft": [
+  "核电工艺",
+  "NuclearCraft"
+ ],
+ "observable": [
+  "可视性能侦测",
+  "Observable"
+ ],
+ "occultism": [
+  "神秘学",
+  "Occultism"
+ ],
+ "oceanic-expanse": [
+  "海洋拓展",
+  "Oceanic Expanse"
+ ],
+ "omg-why-do-you-not-say": [
+  "我去！不早说！！",
+  "OMG, WHY DO YOU NOT SAY!!!!!!!"
+ ],
+ "omnisearch": [
+  "万象搜索",
+  "Omnisearch"
+ ],
+ "onastick": [
+  "便携工具",
+  "On A Stick"
+ ],
+ "oneiricconcept": [
+  "梦华构想",
+  "[梦华构想]OneiricConcept"
+ ],
+ "only-tp": [
+  "只能TP",
+  "Only TP"
+ ],
+ "optifabric-modpack": [
+  "OptiFabric Modpack",
+  "OptiFabric"
+ ],
+ "options-rewriter": [
+  "Options重覆写",
+  "Options Rewriter"
+ ],
+ "ore-food": [
+  "矿物食品/矿物牛排",
+  "Ore Food"
+ ],
+ "orthocamera": [
+  "正交相机",
+  "OrthoCamera"
+ ],
+ "overloaded-armor-bar": [
+  "护甲显示上限突破",
+  "Overloaded Armor Bar"
+ ],
+ "overlord": [
+  "不死者之王",
+  "Overlord"
+ ],
+ "overreacting-mobs": [
+  "应激生物",
+  "Overreacting Mobs"
+ ],
+ "packagedauto": [
+  "封包合成",
+  "PackagedAuto"
+ ],
+ "paladins-furniture": [
+  "帕拉丁的家具",
+  "Paladin's Furniture Mod"
+ ],
+ "palladium": [
+  "钯",
+  "Palladium"
+ ],
+ "paragliders": [
+  "滑翔伞",
+  "Paragliders"
+ ],
+ "parcool": [
+  "跑酷！",
+  "ParCool!"
+ ],
+ "parry": [
+  "予以刀振/格挡！",
+  "Parry!"
+ ],
+ "particle-rain": [
+  "粒子雨",
+  "Particle Rain"
+ ],
+ "pastel-shaders": [
+  "Pastel 光影",
+  "Pastel Shaders"
+ ],
+ "patchouli": [
+  "帕秋莉手册",
+  "Patchouli"
+ ],
+ "pathfinding-edition-for-minecolonies": [
+  "殖民地寻路大修",
+  "Pathfinding Edition for MineColonies"
+ ],
+ "pattern-uploader": [
+  "样板自动上传",
+  "Pattern Uploader"
+ ],
+ "personal-anti-cheat": [
+  "反个人作弊",
+  "Personal Anti-Cheat"
+ ],
+ "photon-shader": [
+  "Photon 光影",
+  "Photon Shaders"
+ ],
+ "pick-up-notifier": [
+  "拾取提示",
+  "Pick Up Notifier"
+ ],
+ "pixelmon": [
+  "精灵宝可梦",
+  "Pixelmon"
+ ],
+ "placeable-goat-horns": [
+  "可放置山羊角",
+  "Placeable Goat Horns"
+ ],
+ "player-level": [
+  "玩家等级",
+  "Player Level"
+ ],
+ "playerrevive": [
+  "玩家救援",
+  "PlayerRevive"
+ ],
+ "plonk": [
+  "世界内物品放置",
+  "Plonk"
+ ],
+ "pokeball": [
+  "精灵球",
+  "PokeBall"
+ ],
+ "pokemon-elysium": [
+  "Pokemon Elysium"
+ ],
+ "polymorph": [
+  "多态合成",
+  "Polymorph"
+ ],
+ "poopsky": [
+  "空中厕所",
+  "PoopSky"
+ ],
+ "poopsky-flyimpact": [
+  "空中厕所：蝇趴",
+  "PoopSky: Flyimpact"
+ ],
+ "portable-storage": [
+  "随身仓库",
+  "Portable Storage"
+ ],
+ "potassium": [
+  "钾",
+  "Potassium"
+ ],
+ "potato-shaders": [
+  "土豆光影",
+  "Potato Shaders"
+ ],
+ "potion-bundles": [
+  "药水捆",
+  "Potion Bundles"
+ ],
+ "prefab": [
+  "预制建筑",
+  "Prefab"
+ ],
+ "prehistoric-nature": [
+  "史前自然",
+  "Prehistoric Nature"
+ ],
+ "programmer-art-fix": [
+  "程序员艺术修复 Programmer Art Fix",
+  "Programmer Art Fix"
+ ],
+ "projectcell": [
+  "等价元件",
+  "ProjectCell"
+ ],
+ "projecte-infinite": [
+  "等价交换无限",
+  "ProjectE Infinite"
+ ],
+ "projectmemo": [
+  "工程备忘录",
+  "ProjectMemo"
+ ],
+ "projectormc": [
+  "投影仪",
+  "ProjectorMC"
+ ],
+ "prominence-2-fabric": [
+  "Prominence II",
+  "Prominence™ II: Hasturian Era"
+ ],
+ "puffradio": [
+  "PuffRadio"
+ ],
+ "pullup": [
+  "飞行警报+",
+  "Pullup"
+ ],
+ "puyu": [
+  "璞玉",
+  "puyu"
+ ],
+ "qa-enchants": [
+  "Qa 附魔",
+  "Qa Enchants"
+ ],
+ "qliphoth-awakening": [
+  "逆卡巴拉：觉醒",
+  "Qliphoth Awakening"
+ ],
+ "quality-railway": [
+  "品质铁路",
+  "Quality Railway"
+ ],
+ "quark": [
+  "夸克",
+  "Quark"
+ ],
+ "quark-backpack-plus": [
+  "夸克背包增强",
+  "Quark Backpack Plus"
+ ],
+ "queqiao": [
+  "鹊桥",
+  "QueQiao"
+ ],
+ "railcraft": [
+  "铁路",
+  "Railcraft"
+ ],
+ "random-optimization": [
+  "随意优化",
+  "Random Optimization"
+ ],
+ "randomisland": [
+  "随机空岛",
+  "Random Island"
+ ],
+ "randomtp": [
+  "随机传送",
+  "RandomTP"
+ ],
+ "range-harvest": [
+  "快速丰收",
+  "[快速丰收] Range Harvest"
+ ],
+ "rankboard": [
+  "排行榜计分板",
+  "rankboard"
+ ],
+ "raritycore": [
+  "稀有度核心",
+  "RarityCore"
+ ],
+ "rationalcraft": [
+  "合理配方",
+  "RationalCraft"
+ ],
+ "rats": [
+  "老鼠",
+  "Rats"
+ ],
+ "rct-trainer-textures-plus": [
+  "Radical Cobblemon 训练师纹理增强",
+  "Radical Cobblemon Trainer Textures Plus"
+ ],
+ "real-peaceful-mode": [
+  "真正的和平模式",
+  "Real Peaceful Mode"
+ ],
+ "realistic-torches": [
+  "真实火把",
+  "Realistic Torches"
+ ],
+ "realisticcraft": [
+  "RealisticCraft"
+ ],
+ "realisticcruelty": [
+  "真实残忍",
+  "RealisticCruelty"
+ ],
+ "redstone-flight-control-set": [
+  "红石飞控组件",
+  "Redstone Flight Control Set"
+ ],
+ "reeses-sodium-options": [
+  "Reese的钠视频界面",
+  "Reese's Sodium Options"
+ ],
+ "refined-storage": [
+  "精致存储",
+  "Refined Storage"
+ ],
+ "refined-storage-cross-dimensional": [
+  "精致存储跨维度",
+  "Refined Storage Cross Dimensional"
+ ],
+ "regions-unexplored": [
+  "未至之地",
+  "Regions Unexplored"
+ ],
+ "regrowth": [
+  "再生",
+  "Regrowth"
+ ],
+ "rehurttime": [
+  "伤害免疫机制重做",
+  "ReHurtTime"
+ ],
+ "relics": [
+  "遗物",
+  "Relics"
+ ],
+ "remarkably": [
+  "Remarkably Optimized"
+ ],
+ "removephantoms": [
+  "移除幻翼",
+  "RemovePhantoms"
+ ],
+ "renderpearl": [
+  "渲染珍珠",
+  "RenderPearl"
+ ],
+ "resettable-trial-vaults-spawners": [
+  "可重置的试炼宝库与试炼刷怪笼",
+  "Resettable Trial Vaults & Spawners"
+ ],
+ "resource-replicator": [
+  "资源复制机",
+  "Resource Replicator"
+ ],
+ "resourcify": [
+  "资源下载机",
+  "Resourcify"
+ ],
+ "rethinking-voxels": [
+  "Rethinking Voxels 光影",
+  "Rethinking Voxels"
+ ],
+ "reveal-index-codex": [
+  "辑录与揭秘",
+  "Reveal: Index & Codex"
+ ],
+ "rewind": [
+  "回溯",
+  "Rewind"
+ ],
+ "rftools": [
+  "RF工具箱",
+  "RFTools (Legacy)"
+ ],
+ "ring-of-the-hundred-curses": [
+  "玩游戏时在做什么？有没有空？可以加上百咒吗？/ 百咒之戒",
+  "Ring of the Hundred Curses"
+ ],
+ "roadweaver": [
+  "阡陌交通",
+  "RoadWeaver"
+ ],
+ "rod-of-discord": [
+  "混沌传送杖",
+  "Rod of Discord"
+ ],
+ "rolling-gate": [
+  "卷帘门",
+  "RollingGate"
+ ],
+ "rs-integration": [
+  "共振存储",
+  "RS Integration"
+ ],
+ "rso": [
+  "红石生电优化"
+ ],
+ "rts-building-build-from-above": [
+  "RTS视角建造",
+  "RTS building: Build From Above"
+ ],
+ "rubidium": [
+  "铷",
+  "Rubidium"
+ ],
+ "rustic": [
+  "乡村",
+  "Rustic"
+ ],
+ "sable-maidragdoll": [
+  "女仆布娃娃",
+  "Sable: MaidRagdoll"
+ ],
+ "sakura": [
+  "樱",
+  "Sakura🌸"
+ ],
+ "sakura-tinker": [
+  "魂樱工匠",
+  "Sakura Tinker"
+ ],
+ "sanity-prequel": [
+  "理智：前传",
+  "Sanity: Prequel"
+ ],
+ "scannable-unofficial": [
+  "扫描器：非官方版",
+  "Scannable-Unofficial"
+ ],
+ "scape-and-run-holiday": [
+  "逃逸：节日",
+  "Scape and Run: Holiday"
+ ],
+ "scape-and-run-parasites-addon-immalleable-generator": [
+  "逃逸：无适应性发生器",
+  "Scape and Run Parasites Addon: Immalleable Generator"
+ ],
+ "scape-and-run-parasites-deep-sea-danger": [
+  "逃逸：寄生体深海危机",
+  "Scape and Run: Parasites Deep Sea Danger"
+ ],
+ "scape-and-run-parasites-halloween": [
+  "逃逸：寄生体万圣节",
+  "Scape and Run: Parasites Halloween"
+ ],
+ "sculk-horde": [
+  "幽匿部落",
+  "Sculk Horde"
+ ],
+ "search-on-mcmod": [
+  "MC百科搜索",
+  "Search on MCMOD"
+ ],
+ "security-craft": [
+  "安全工艺",
+  "SecurityCraft"
+ ],
+ "shape-shifter-curse-addon": [
+  "幻形者诅咒扩展包",
+  "Shape Shifter Curse Addon"
+ ],
+ "shinoyuki-betterautosave": [
+  "更好的自动保存",
+  "Shinoyuki-BetterAutoSave"
+ ],
+ "shrimple": [
+  "Shrimple 光影",
+  "Shrimple"
+ ],
+ "shulker-box-slot": [
+  "潜影盒插槽/潜影盒槽位",
+  "Shulker Box Slot"
+ ],
+ "simple-backups": [
+  "简单备份",
+  "Simple Backups"
+ ],
+ "simple-blood": [
+  "简易血效",
+  "Simple Blood"
+ ],
+ "simple-grass-flowers": [
+  "Simple Grass Flowers"
+ ],
+ "simple-improvement-renew": [
+  "简改焕新",
+  "Simple Improvement Renew"
+ ],
+ "simple-planes": [
+  "简单飞机",
+  "Simple Planes"
+ ],
+ "simple-voice-chat": [
+  "简单的语音聊天",
+  "Simple Voice Chat"
+ ],
+ "simplehats-lite": [
+  "简单帽子：轻量版",
+  "SimpleHats-Lite"
+ ],
+ "simpleminer": [
+  "简单连锁",
+  "SimpleMiner"
+ ],
+ "simplesorterr": [
+  "简单R键整理",
+  "SimplesorterR"
+ ],
+ "simpletp": [
+  "简单传送",
+  "SimpleTP"
+ ],
+ "simpletranslation": [
+  "简单翻译",
+  "simpletranslation"
+ ],
+ "skyblock-builder": [
+  "空岛建立者",
+  "Skyblock Builder"
+ ],
+ "skyblock-enhanced": [
+  "SkyBlock Enhanced"
+ ],
+ "skyblocker-modpack": [
+  "Skyblocker Modpack",
+  "Skyblocker Modpack - Hypixel Skyblock"
+ ],
+ "slashblade-murasame": [
+  "拔刀剑：丛雨丸",
+  "Slashblade Murasame"
+ ],
+ "slashblade-refabricated": [
+  "拔刀剑：重织",
+  "SlashBlade: Refabricated"
+ ],
+ "slashblade-resharped": [
+  "拔刀剑：重锋",
+  "SlashBlade:Resharped"
+ ],
+ "slashblade-return-journey": [
+  "拔刀剑：归途",
+  "SlashBlade: Return Journey"
+ ],
+ "slice-by-slice": [
+  "片片俱到",
+  "Slice By Slice"
+ ],
+ "slimes-adventure": [
+  "Slimes Adventure"
+ ],
+ "smooth-swapping": [
+  "平滑转移",
+  "Smooth Swapping"
+ ],
+ "smoothplayeranimations": [
+  "平滑玩家动作",
+  "SmoothPlayerAnimations"
+ ],
+ "sodium": [
+  "钠",
+  "Sodium"
+ ],
+ "sodium-extra": [
+  "钠扩展",
+  "Sodium Extra"
+ ],
+ "sodiumplus": [
+  "Sodium Plus"
+ ],
+ "solas-shader": [
+  "Solas 光影",
+  "Solas Shader"
+ ],
+ "soph-upgrade-addons": [
+  "精妙背包升级拓展",
+  "Soph Upgrade Addons"
+ ],
+ "sophisticated-jei-index": [
+  "精妙背包：JEI 索引升级",
+  "Sophisticated JEI Index"
+ ],
+ "sophisticated-sorter": [
+  "精妙整理",
+  "Sophisticated Sorter"
+ ],
+ "sorcery-age": [
+  "咒术时代",
+  "Sorcery Age"
+ ],
+ "space": [
+  "太空",
+  "Space"
+ ],
+ "spartan-weaponry-unofficial": [
+  "斯巴达的武器：非官方版",
+  "Spartan Weaponry Unofficial"
+ ],
+ "spear-core": [
+  "长矛核心",
+  "Spear Core"
+ ],
+ "special-mobs": [
+  "特殊怪物",
+  "Special Mobs"
+ ],
+ "spectrum": [
+  "光谱世界",
+  "Spectrum"
+ ],
+ "spirit-of-fight": [
+  "战魂",
+  "Spirit of Fight"
+ ],
+ "spooklementary": [
+  "Spooklementary 光影",
+  "Spooklementary"
+ ],
+ "star-dragon": [
+  "星辰龙",
+  "Star Dragon"
+ ],
+ "star-rating": [
+  "星级！",
+  "Star Rating"
+ ],
+ "starcatcher-auto": [
+  "捕星者自动钓鱼",
+  "Starcatcher Auto"
+ ],
+ "stardewvalley": [
+  "Stardewvalley星露谷",
+  "Stardewvalley"
+ ],
+ "starter-kit": [
+  "初始套件",
+  "Starter Kit"
+ ],
+ "stellaris": [
+  "群星",
+  "Stellaris"
+ ],
+ "stone-craft": [
+  "石头工艺",
+  "Stone Craft"
+ ],
+ "storagedrawers": [
+  "储物抽屉",
+  "StorageDrawers"
+ ],
+ "strange-world": [
+  "奇异世界",
+  "Strange World"
+ ],
+ "strayskins": [
+  "离线皮肤补丁",
+  "StraySkins"
+ ],
+ "strife-and-calamity": [
+  "战伐祸乱",
+  "Strife and Calamity"
+ ],
+ "strike-after-swing": [
+  "伤害要在结束动画后",
+  "Strike After Swing"
+ ],
+ "super-duper-vanilla": [
+  "Super Duper Vanilla 光影",
+  "Super Duper Vanilla"
+ ],
+ "super-factory-manager": [
+  "超级工厂管理器",
+  "Super Factory Manager"
+ ],
+ "superb-warfare": [
+  "卓越前线",
+  "Superb Warfare"
+ ],
+ "supplementaries": [
+  "锦致装饰",
+  "Supplementaries"
+ ],
+ "supplementaries-knowlogy": [
+  "Supplementaries知识学",
+  "Supplementaries Knowlogy"
+ ],
+ "sushi-mod": [
+  "寿司",
+  "sushi mod"
+ ],
+ "sweatyfeet": [
+  "汗脚",
+  "SweatyFeet"
+ ],
+ "syscmd": [
+  "系统命令",
+  "SYSCMD"
+ ],
+ "tablistextension": [
+  "TAB 列表扩展",
+  "TabListExtension"
+ ],
+ "taczcurios": [
+  "TaCZ饰品",
+  "TaczCurios"
+ ],
+ "talisman-jackiechan": [
+  "符咒",
+  "Talisman JackieChan"
+ ],
+ "taov-core": [
+  "瓦基大冒险核心",
+  "TAOV Core"
+ ],
+ "tardis-refined": [
+  "改良的TARDIS",
+  "TARDIS Refined"
+ ],
+ "tarotcards-remastered": [
+  "塔罗牌：重制",
+  "TarotCards: Remastered"
+ ],
+ "tastebud-delights": [
+  "味蕾乐事",
+  "TASTEBUD DELIGHTS"
+ ],
+ "tax-free-levels": [
+  "免税附魔",
+  "Tax Free Levels"
+ ],
+ "team-healthbar": [
+  "是敌是友一看便知",
+  "Team Healthbar"
+ ],
+ "technical-engineering-4": [
+  "科能工程4",
+  "Technical Engineering 4"
+ ],
+ "teleport-gate": [
+  "传送方块",
+  "Teleport Gate"
+ ],
+ "teleport-master": [
+  "传送命令",
+  "Teleport Master"
+ ],
+ "tensura-reincarnated": [
+  "关于我转生变成史莱姆这档事：转生",
+  "Tensura: Reincarnated"
+ ],
+ "terra-curio": [
+  "泰拉饰品",
+  "Terra Curio"
+ ],
+ "terrafirmacraft": [
+  "群峦传说",
+  "TerraFirmaCraft"
+ ],
+ "terrafirmagreg-core": [
+  "群峦格雷核心",
+  "TerraFirmaGreg-Core"
+ ],
+ "tfc-tools-trim": [
+  "群峦传说：工具纹饰",
+  "TFC Tools Trim"
+ ],
+ "tfcmaid": [
+  "群峦女仆",
+  "TFCMaid"
+ ],
+ "thaumic-tinkerer": [
+  "神秘工匠",
+  "Thaumic Tinkerer"
+ ],
+ "the-aurorian": [
+  "极光幽境非官方移植版",
+  "The Aurorian"
+ ],
+ "the-aurorian-reborn": [
+  "极光幽境重生",
+  "The Aurorian Reborn"
+ ],
+ "the-awakening-of-the-villagers": [
+  "村民意识",
+  "The Awakening of the Villagers"
+ ],
+ "the-block-box": [
+  "方块百宝箱",
+  "The Block Box"
+ ],
+ "the-curse-of-ramses-ii": [
+  "拉美西斯二世的诅咒",
+  "The Curse of Ramses II"
+ ],
+ "the-farlanders": [
+  "更多末影人",
+  "The Farlanders"
+ ],
+ "the-graveyard": [
+  "墓园",
+  "The Graveyard"
+ ],
+ "the-horrors-in-the-fog": [
+  "The Horrors in the Fog"
+ ],
+ "the-last-smith": [
+  "最后的太刀匠人",
+  "The Last Smith"
+ ],
+ "the-last-sword-you-never-forgot": [
+  "最终之剑：重铸",
+  "The Last Sword You Never Forgot"
+ ],
+ "the-last-sword-you-will-ever-need-remastered": [
+  "最终之剑：重制版",
+  "The Last Sword You Will Ever Need: Remastered"
+ ],
+ "the-lost-castle": [
+  "失落城堡",
+  "The Lost Castle"
+ ],
+ "the-pixelmon-modpack": [
+  "The Pixelmon Modpack"
+ ],
+ "the-slumbering-omen": [
+  "沉睡的预兆",
+  "The Slumbering Omen"
+ ],
+ "the-undead-revamped": [
+  "祸乱亡灵",
+  "THE UNDEAD REVAMPED"
+ ],
+ "thermal-dynamics": [
+  "热动力学",
+  "Thermal Dynamics"
+ ],
+ "thetrackers": [
+  "全追踪",
+  "TheTrackers"
+ ],
+ "thezenithsword": [
+  "天顶剑",
+  "TheZenithSword"
+ ],
+ "this-is-a-magic-staff": [
+  "万法皆杖",
+  "[ISS TMS] This is a Magic Staff !"
+ ],
+ "three-in-one-uncrafting-table": [
+  "三合一拆解台",
+  "Three In One Uncrafting Table"
+ ],
+ "tianjin-metro": [
+  "天津地铁",
+  "Tianjin Metro"
+ ],
+ "tictac-buttons": [
+  "滴答按钮",
+  "TicTac Buttons"
+ ],
+ "tidal-commission": [
+  "潮汐委托",
+  "Tidal Commission"
+ ],
+ "timeless-and-classics-guns": [
+  "永恒枪械工坊",
+  "Timeless and Classics Guns"
+ ],
+ "timeless-and-classics-zero": [
+  "永恒枪械工坊：零",
+  "[TaCZ] Timeless and Classics Zero"
+ ],
+ "tinkers-construct": [
+  "匠魂",
+  "Tinkers' Construct"
+ ],
+ "tinkers-evolution": [
+  "匠魂进化",
+  "Tinkers' Evolution"
+ ],
+ "tinkers-golem": [
+  "工匠傀儡",
+  "Tinkers' Golem"
+ ],
+ "tinkers-planner": [
+  "匠魂蓝图",
+  "Tinker's Planner"
+ ],
+ "tinkers-reforged": [
+  "工匠再锻",
+  "Tinkers Reforged"
+ ],
+ "tinkers-search": [
+  "工匠检索",
+  "Tinkers‘ Search"
+ ],
+ "titlechanger-next": [
+  "标题切换器 Next",
+  "TitleChanger Next"
+ ],
+ "tofucraftreload": [
+  "豆腐工艺重制版",
+  "TofuCraftReload"
+ ],
+ "tokusatsu-hero-instrumentality-project": [
+  "特摄英雄补完计划",
+  "Tokusatsu Hero Instrumentality Project"
+ ],
+ "tooltipfix": [
+  "提示框修复",
+  "ToolTipFix"
+ ],
+ "totemdoll": [
+  "图腾娃娃",
+  "Totem Doll"
+ ],
+ "touchcontroller": [
+  "触摸控制器",
+  "TouchController"
+ ],
+ "tough-as-nails": [
+  "意志坚定",
+  "Tough As Nails"
+ ],
+ "touhou-little-maid": [
+  "车万女仆",
+  "Touhou Little Maid"
+ ],
+ "touhou-maid-affection": [
+  "车万女仆附属：爱恋",
+  "Touhou Maid: Affection"
+ ],
+ "touhoulittlemaid-self-talk": [
+  "车万女仆：女仆自言自语",
+  "TouhouLittleMaid-Self-Talk"
+ ],
+ "trade-refresh": [
+  "交易刷新",
+  "Trade Refresh"
+ ],
+ "trade-tweaks": [
+  "交易优化",
+  "Trade Tweaks"
+ ],
+ "translations-for-sodium": [
+  "Sodium 汉化",
+  "Translations for Sodium"
+ ],
+ "tras-fresh-player": [
+  "Tras Fresh Player",
+  "Fresh Moves"
+ ],
+ "trinkets-and-baubles": [
+  "饰品与小玩意",
+  "Trinkets and Baubles"
+ ],
+ "tsuki": [
+  "月",
+  "Tsuki"
+ ],
+ "twilight-treehouses": [
+  "暮色树屋",
+  "Twilight Treehouses"
+ ],
+ "ultimate-car-mod": [
+  "终极汽车",
+  "Ultimate Car Mod"
+ ],
+ "ultimate-plane-mod": [
+  "终极飞机",
+  "Ultimate Plane Mod"
+ ],
+ "ultracraft": [
+  "奥特工艺",
+  "Ultracraft"
+ ],
+ "undertale-delight": [
+  "决心乐事",
+  "Undertale Delight"
+ ],
+ "universal-block": [
+  "通用格挡",
+  "Universal Block"
+ ],
+ "universal-tweaks": [
+  "通用修改",
+  "Universal Tweaks"
+ ],
+ "unknown-echoes": [
+  "未知回响",
+  "Unknown Echoes"
+ ],
+ "unusual-prehistory-2": [
+  "不寻常的史前史2",
+  "Unusual Prehistory 2"
+ ],
+ "useful-backpacks": [
+  "实用背包",
+  "Useful Backpacks"
+ ],
+ "usefulmagic": [
+  "实用魔法",
+  "UsefulMagic"
+ ],
+ "valkyrien-skies": [
+  "瓦尔基里天空",
+  "Valkyrien Skies"
+ ],
+ "vampirism": [
+  "吸血鬼/血族传说",
+  "Vampirism"
+ ],
+ "vanilla-cookbook": [
+  "原版烹饪书",
+  "Vanilla Cookbook"
+ ],
+ "vanilla-perfected": [
+  "Vanilla Perfected"
+ ],
+ "vanilla-plus-shader": [
+  "原版增强光影",
+  "Vanilla Plus Shader"
+ ],
+ "vanillaa": [
+  "VanillAA 光影",
+  "VanillAA"
+ ],
+ "veinminer": [
+  "连锁挖矿",
+  "VeinMiner"
+ ],
+ "veinrebirth": [
+  "矿脉重生",
+  "VeinRebirth"
+ ],
+ "vending-machine": [
+  "自动售货机",
+  "vending machine"
+ ],
+ "villager-workstations": [
+  "村民工作站",
+  "villager-workstations"
+ ],
+ "visual-creative-tab-editor": [
+  "可视化创造标签页编辑",
+  "Visual Creative Tab Editor"
+ ],
+ "visual-item-edit": [
+  "可视化物品编辑器",
+  "Visual Item Edit"
+ ],
+ "visual-keymap": [
+  "可视化键位图",
+  "Visual Keymap"
+ ],
+ "visual-set-edit": [
+  "可视化套装效果编辑器",
+  "[VSE]Visual Set Edit"
+ ],
+ "visual-vibrance": [
+  "Visual Vibrance 光影",
+  "Visual Vibrance"
+ ],
+ "vivid-move": [
+  "灵动！",
+  "Vivid Move!"
+ ],
+ "voicetrigger": [
+  "声随形动",
+  "VoiceTrigger"
+ ],
+ "voidauth": [
+  "虚空认证",
+  "VoidAuth"
+ ],
+ "voxlink": [
+  "沃克联机",
+  "VoxLink"
+ ],
+ "wanderers-campsite": [
+  "流浪商人营地",
+  "Wanderers Campsite"
+ ],
+ "waystones": [
+  "传送石碑/指路石",
+  "Waystones"
+ ],
+ "wealizh": [
+  "工业故事",
+  "Wealizh"
+ ],
+ "weapon-master": [
+  "武器大师",
+  "Weapon Master"
+ ],
+ "when-dungeons-arise": [
+  "地牢浮现之时",
+  "When Dungeons Arise"
+ ],
+ "wool-temples": [
+  "羊毛神殿",
+  "Wool Temples"
+ ],
+ "woot": [
+  "生物工厂",
+  "Woot"
+ ],
+ "worldedit": [
+  "创世神",
+  "WorldEdit"
+ ],
+ "xaeroplus": [
+  "Xaero的地图增强",
+  "XaeroPlus"
+ ],
+ "xaeros-minimap": [
+  "Xaero的小地图",
+  "Xaero's Minimap"
+ ],
+ "xaeros-world-map": [
+  "Xaero的世界地图",
+  "Xaero's World Map"
+ ],
+ "xdi8aho-mod": [
+  "灯纟火",
+  "Xdi8Aho Mod"
+ ],
+ "xiaoxingeesstoragefoodeater": [
+  "晓星亦忆的存储一键吃",
+  "XiaoXingEEsStorageFoodEater"
+ ],
+ "yacl": [
+  "YACL",
+  "YetAnotherConfigLib (YACL)"
+ ],
+ "your-ideas": [
+  "你的想法",
+  "Your Ideas"
+ ],
+ "yum-delicious": [
+  "Yum！美味！",
+  "yum! delicious!"
+ ],
+ "zenith": [
+  "天顶剑",
+  "Zenith"
+ ],
+ "zhipeiweidu": [
+  "我的支配维度",
+  "Zhipeiweidu"
+ ],
+ "zombie-invade-100-days": [
+  "僵尸入侵100天",
+  "Zombie Invade 100 Days"
+ ],
+ "zoomify": [
+  "Zoomify"
+ ]
 }

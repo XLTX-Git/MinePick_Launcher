@@ -78,6 +78,24 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     ("FG_TEXT", "BG_LIST_2", 4.5, True),
     ("FG_TEXT", "BG_SIDEBAR", 4.5, True),
     ("FG_TEXT", "BG_SECTION", 4.5, True),
+    # The page paper: every page's labels, titles and hints that are not inside a white card sit on it.
+    ("FG_TEXT", "BG_PAGE", 4.5, True),
+    ("FG_PAGE_TITLE", "BG_PAGE", 4.5, True),
+    ("FG_HINT", "BG_PAGE", 4.5, True),
+    ("FG_EMPTY_STATE", "BG_PAGE", 4.5, True),
+    ("FG_BUTTON_SECONDARY", "BG_PAGE", 4.5, True),
+    ("FG_LAUNCH", "BG_PAGE", 4.5, True),
+    ("FG_LAUNCH_HINT", "BG_PAGE", 4.5, True),
+    # The navigation rail: its item labels, their hover colour and the accent text the light sheet puts
+    # on a chip that sits on the paper (ACCENT_TEXT is derived against the paper and the chip's tint).
+    ("FG_HINT", "BG_NAV", 4.5, True),
+    ("FG_TEXT", "BG_NAV", 4.5, True),
+    ("ACCENT_TEXT", "BG_PAGE", 4.5, True, ("light",)),
+    ("ACCENT_TEXT", "ACCENT_TINT", 4.5, True, ("light",)),
+    # Launch page mock-up: the white side panel and its two text roles.
+    ("FG_LAUNCH", "BG_LIST", 4.5, True),
+    ("FG_LAUNCH_HINT", "BG_LIST", 4.5, True),
+    ("FG_DISABLED", "BG_LAUNCH_FIELD_DISABLED", 3.0, False),
     ("FG_TEXT", "BG_BUTTON_ICON", 4.5, True),
     ("FG_TEXT", "BG_HOVER", 4.5, True),
     ("FG_TEXT", "BG_DISABLED_2", 4.5, True),
@@ -94,12 +112,21 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     ("FG_OPTION_2", "BG_OPTION", 4.5, True),
     ("FG_BUTTON_SECONDARY", "BG_BUTTON_SECONDARY", 4.5, True),
     ("FG_BUTTON_SECONDARY", "BG_BUTTON_SECONDARY_2", 4.5, True),
+    # The pressed fill the dark sheet paints instead (BG_BUTTON_SECONDARY_2 is the light one now): the
+    # outlined variants keep their label colour while pressed, so the label has to clear this fill too.
+    ("FG_BUTTON_SECONDARY", "BG_BUTTON_PRESSED", 4.5, True),
     ("FG_CARD_LATEST", "BG_SECTION", 4.5, True),
     ("FG_OVERLAY_BODY", "BG_OVERLAY_CODE", 4.5, True),
     ("FG_OVERLAY_CODE", "BG_OVERLAY_CODE", 4.5, True),
+    # The overlay card is its own surface (BG_OVERLAY_CARD), not a page: its title inherits FG_TEXT and
+    # its body is FG_OVERLAY_BODY, so both have to be measured against the card, not against BG_LIST.
+    ("FG_OVERLAY_BODY", "BG_OVERLAY_CARD", 4.5, True),
+    ("FG_TEXT", "BG_OVERLAY_CARD", 4.5, True),
     ("DANGER_FG", "BG_WINDOW", 4.5, True),
     ("DANGER_FG", "BG_LIST", 4.5, True),
+    ("DANGER_FG", "BG_PAGE", 4.5, True),
     ("FG_STATUS_WARNING", "BG_WINDOW", 4.5, True),
+    ("FG_STATUS_WARNING", "BG_PAGE", 4.5, True),
     # Inactive components are exempt from the contrast rules (WCAG 1.4.3 / 1.4.11), so these are
     # reported for the record and never fail.
     ("FG_DISABLED", "BG_DISABLED", 3.0, False),
@@ -108,10 +135,11 @@ TEXT_PAIRS: tuple[Pair, ...] = (
     # selected text: the dark sheet uses FG_SELECTED on ACCENT_SEL, the light sheet ACCENT_SEL_TEXT
     ("FG_SELECTED", "ACCENT_SEL", 3.0, True, ("dark",)),
     ("ACCENT_SEL_TEXT", "ACCENT_SEL", 4.5, True, ("light",)),
-    # the title bar buttons draw FG_HINT; the close button flips to FG_SELECTED on hover
-    ("FG_HINT", "BG_TITLEBAR_MINIMIZE", 4.5, True),
-    ("FG_SELECTED", "BG_TITLEBAR_CLOSE", 4.5, True),
-    ("FG_HINT", "BG_TITLEBAR_CLOSE", 4.5, False),
+    # The title bar is the one blue band in both themes. Every glyph and label on it is white;
+    # the close button's red hover fill is the only other surface it lands on.
+    ("FG_TOPBAR", "BG_TOPBAR", 4.5, True),
+    ("FG_TOPBAR", "BG_TITLEBAR_MINIMIZE", 4.5, True),
+    ("FG_TOPBAR", "BG_TITLEBAR_CLOSE", 4.5, True),
     # hover/press fills carry the same text as their rest state
     ("FG_TEXT", "BG_BUTTON_ICON_2", 4.5, True),
     ("DANGER_FG", "DANGER_BG_2", 4.5, True),
@@ -133,6 +161,10 @@ NON_TEXT_PAIRS: tuple[Pair, ...] = (
     ("FOCUS_RING", "BG_WINDOW", 3.0, True),  # keyboard focus ring
     ("FOCUS_RING", "BG_LIST", 3.0, True),
     ("FOCUS_RING", "BG_SIDEBAR", 3.0, True),
+    # The paper and the rail are focus-ring surfaces too: controls sit directly on them (secondary
+    # buttons, chips, the navigation rail), so the ring has to stay visible on both.
+    ("FOCUS_RING", "BG_PAGE", 3.0, True),
+    ("FOCUS_RING", "BG_NAV", 3.0, True),
     ("BG_SCROLLBAR", "BG_LIST", 3.0, True),  # slim overlay handle, drawn only while scrolling
     ("DANGER_BORDER", "DANGER_BG", 3.0, False),
     ("DANGER_BORDER_2", "DANGER_BG", 3.0, False),
@@ -147,11 +179,20 @@ NON_TEXT_PAIRS: tuple[Pair, ...] = (
     ("BORDER_BUTTON_SECONDARY_2", "BG_BUTTON_SECONDARY_2", 3.0, False),
     ("BORDER_HOVER", "BG_LIST", 3.0, False),
     ("BORDER_HOVER", "BG_OPTION", 3.0, False),
+    ("BORDER_LAUNCH_FIELD", "BG_LIST", 3.0, False),
     ("BORDER_TABLE", "BG_LIST", 3.0, False),  # token currently unused by the sheets
     ("BORDER_SWATCH", "BG_OPTION", 3.0, False),
     ("BORDER_OVERLAY_CODE", "BG_OVERLAY_CODE", 3.0, False),
+    # The overlay card's frame: decoration around a surface that already separates itself from the
+    # scrim (the fill clears the dimmed page by 2.22:1), so 1.4.11 does not require a ratio here. It is
+    # paired so the token is checked and a future change has a number to compare against.
+    ("BORDER_OVERLAY_CARD", "BG_OVERLAY_CARD", 3.0, False),
     ("BG_SEPARATOR", "BG_WINDOW", 3.0, False),
     ("BG_SEPARATOR", "BG_SECTION", 3.0, False),
+    # The one hairline between the rail and the paper: decoration, not a control boundary, so 1.4.11
+    # does not require a ratio - it is recorded so a future change has a number to compare against.
+    ("BORDER_NAV", "BG_NAV", 3.0, False),
+    ("BORDER_NAV", "BG_PAGE", 3.0, False),
     ("BG_RAIL_DOT", "BG_WINDOW", 3.0, False),
 )
 
@@ -444,13 +485,29 @@ def check_text_overflow() -> int:
             QFontDatabase.addApplicationFont(str(path))
 
     from gui.main_window import MainWindow
+    from gui.widgets import ElidedLabel
 
     kinds = (QLabel, QPushButton, QComboBox, QRadioButton)
+    elided_noted = False
 
     def overflow_problems(scope, where: str) -> int:
+        nonlocal elided_noted
         found = 0
         for widget in _text_widgets(scope, (*kinds, QWidget)):
             if not isinstance(widget, kinds) or not widget.isVisible():
+                continue
+            if isinstance(widget, ElidedLabel):
+                # An ElidedLabel elides its value on purpose - that is the whole widget - and keeps
+                # the full string in text() and in its tooltip. Counting that as overflow made this
+                # check depend on the window being wider than its floor: the one-column instance
+                # grid lowered the floor from 1078px to 870px (measured with measure_min_width.py),
+                # and at this file's fixed 1000px render width the settings page's game-folder path
+                # now elides in de/fr/ru. That is the design, not a clipped label - a plain QLabel
+                # whose text does not fit still fails below. Every elision is reported, with its
+                # text, by tools/audit_window_widths.py at 1050/1400/1800px, so nothing is hidden.
+                if not elided_noted:
+                    print("  (ElidedLabel is skipped: it elides by design; see audit_window_widths.py)")
+                    elided_noted = True
                 continue
             text = widget.text() if not isinstance(widget, QComboBox) else widget.currentText()
             if not text or "\n" in text:
@@ -632,7 +689,7 @@ def _width_probe() -> int:
 
 PLACEHOLDER = re.compile(r"__([A-Z0-9_]+)__")
 # substituted by apply_theme(), not palette entries
-NON_COLOUR_PLACEHOLDERS = {"FONT", "CHECK", "DOWN_ARROW", "SPIN_UP", "SPIN_DOWN", "RADIUS_XS", "RADIUS_SM", "RADIUS_LG"}
+NON_COLOUR_PLACEHOLDERS = {"FONT", "CHECK", "CHEVRON_DOWN", "CHEVRON_DOWN_ACTIVE", "CHEVRON_DOWN_DISABLED", "RADIUS_XS", "RADIUS_SM", "RADIUS_LG"}
 
 def check_token_usage() -> int:
     """Every colour token must be reachable from a rule in the sheets.

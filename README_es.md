@@ -46,7 +46,7 @@ recursos de Modrinth y CurseForge, cargadores Fabric/Forge/NeoForge/Quilt, insta
 - **Aspecto personalizable** — color de acento (cualquier valor hexadecimal, ocho preajustes o el selector de color
   del sistema), fuente de la interfaz (todas las familias instaladas, las comunes fijadas arriba, filtrado al escribir),
   redondeo de esquinas (compacto / predeterminado / redondeado), tema (oscuro / claro / seguir el sistema)
-- **Diseño más claro** — un encabezado de página con una descripción de una línea en cada página, una única escala de
+- **Diseño más claro** — las páginas principales empiezan directamente con su contenido, sin encabezado, una única escala de
   espaciado en todas las páginas, iconos de lupa en los campos de búsqueda
 - **Interacción más discreta** — las barras de desplazamiento solo aparecen mientras el puntero está dentro de una lista,
   el contorno de foco se muestra solo para la navegación con teclado, un breve fundido al cambiar de página, se recuerda
@@ -166,5 +166,5 @@ cumple el requisito de distribución del código fuente de la GPL.
 
 ## Proyectos relacionados
 
-- [MinePick Launcher Classic](https://github.com/xltxdocs/MinePick_Launcher_Classic) — el predecesor archivado de este proyecto (GUI + CLI)
+- [MinePick Launcher Classic](https://github.com/XLTX-Git/MinePick_Launcher_Classic) — el predecesor archivado de este proyecto (GUI + CLI)
 - [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) — una edición revisada por un miembro de la comunidad

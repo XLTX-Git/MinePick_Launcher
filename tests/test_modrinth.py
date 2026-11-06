@@ -138,6 +138,8 @@ SEARCH_RAW = {
             "description": "渲染优化",
             "downloads": 123456,
             "icon_url": "https://cdn.modrinth.com/data/AANobbMI/icon.png",
+            "date_modified": "2026-10-01T12:00:00Z",
+            "categories": ["fabric", "optimization"],
         }
     ]
 }
@@ -150,7 +152,8 @@ def test_search_projects():
         params={
             "query": "sod",
             "limit": "20",
-            "index": "downloads",
+            "offset": "0",
+            "index": "relevance",
             "facets": '[["project_type:mod"]]',
         },
     ).mock(return_value=httpx.Response(200, json=SEARCH_RAW))
@@ -158,6 +161,34 @@ def test_search_projects():
     assert len(hits) == 1
     assert hits[0].slug == "sodium"
     assert hits[0].downloads == 123456
+    # The resource card's "updated" and "loader range" segments, parsed from the same search payload.
+    assert hits[0].updated == "2026-10-01T12:00:00Z"
+    assert hits[0].loaders == ["fabric"]  # "optimization" is a category, not a loader
+    # The row's source label and the "All" merge need the source on the hit itself.
+    assert hits[0].source == "modrinth"
+
+
+@pytest.mark.parametrize(
+    ("sort", "index"),
+    [
+        ("relevance", "relevance"),
+        ("downloads", "downloads"),
+        ("updated", "updated"),
+        ("newest", "newest"),
+    ],
+)
+def test_search_sort_mapping_and_paging(sort: str, index: str) -> None:
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"hits": [], "total_hits": 0})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    search_projects("x", limit=15, offset=30, sort=sort, client=client)
+    assert seen["index"] == index
+    assert seen["offset"] == "30"
+    assert seen["limit"] == "15"
 
 
 @respx.mock
@@ -166,6 +197,18 @@ def test_search_projects_empty():
         return_value=httpx.Response(200, json={"hits": []})
     )
     assert search_projects("nope") == []
+
+
+@respx.mock
+def test_search_reads_total_hits():
+    respx.get("https://api.modrinth.com/v2/search").mock(
+        return_value=httpx.Response(
+            200, json={"hits": [SEARCH_RAW["hits"][0]], "total_hits": 61}
+        )
+    )
+    hits = search_projects("sod", limit=1, offset=30)
+    assert hits.total == 61
+    assert len(hits) == 1
 
 
 def test_list_and_delete_installed_content(ws_tmp):
@@ -189,7 +232,8 @@ def test_search_projects_resourcepack_type():
         params={
             "query": "fresh",
             "limit": "20",
-            "index": "downloads",
+            "offset": "0",
+            "index": "relevance",
             "facets": '[["project_type:resourcepack"]]',
         },
     ).mock(return_value=httpx.Response(200, json={"hits": []}))

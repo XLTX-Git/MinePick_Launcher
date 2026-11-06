@@ -20,9 +20,11 @@
 import zipfile
 
 from launcher.memory import (
+    JAVA_32BIT_HEAP_LIMIT_GB,
     MAX_MEMORY_GB,
     MIN_MEMORY_GB,
     count_mods,
+    maximum_heap_gb,
     suggest_memory_gb,
     system_memory_gb,
 )
@@ -50,6 +52,29 @@ def test_suggest_is_conservative_when_memory_is_tight() -> None:
 def test_suggest_capped_by_total_and_max() -> None:
     huge = suggest_memory_gb(1000, total_gb=64, available_gb=64)
     assert huge <= MAX_MEMORY_GB
+
+
+def test_maximum_heap_follows_the_device_rule() -> None:
+    assert maximum_heap_gb(16) == 8.0
+    assert maximum_heap_gb(8) == 4.0
+    assert maximum_heap_gb(4) == 2.0
+    assert maximum_heap_gb(32) == 16.0
+
+
+def test_maximum_heap_rounds_physical_ram_to_the_expected_tier() -> None:
+    # Windows reports a "16 GB" machine as ~15.7 GB; truncating would say 7.5 GB.
+    assert maximum_heap_gb(15.73) == 8.0
+    assert maximum_heap_gb(7.8) == 4.0
+
+
+def test_maximum_heap_caps_32bit_java() -> None:
+    assert maximum_heap_gb(16, java_32bit=True) == JAVA_32BIT_HEAP_LIMIT_GB
+    assert maximum_heap_gb(4, java_32bit=True) <= JAVA_32BIT_HEAP_LIMIT_GB
+
+
+def test_maximum_heap_honours_a_higher_instance_floor() -> None:
+    assert maximum_heap_gb(8, minimum_gb=3.0) == 4.0
+    assert maximum_heap_gb(2, minimum_gb=1.5) == 1.5
 
 
 def test_count_mods_counts_jar_and_disabled(ws_tmp) -> None:

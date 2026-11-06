@@ -1,6 +1,6 @@
 # 发布到 GitHub（MinePick Launcher）
 
-本仓库为 **MinePick Launcher**：远端 `https://github.com/xltxdocs/MinePick_Launcher.git`，分支 `main`，当前版本 `0.4.1`。
+本仓库为 **MinePick Launcher**：远端 `https://github.com/XLTX-Git/MinePick_Launcher.git`，分支 `main`，当前版本 `0.4.1`。
 本产品线**只发布 GUI 版**，没有 CLI 可执行文件（既不构建 `MinePick_Launcher_cli.exe`，也不打包 `run_cli.py`）。
 以下命令均在 Windows 的 **CMD** 中执行；本机未安装 gh CLI，Release 在 GitHub 网页上创建。
 
@@ -14,7 +14,7 @@ git init
 git add .
 git commit -m "MinePick Launcher 首个版本"
 git branch -M main
-git remote add origin https://github.com/xltxdocs/MinePick_Launcher.git
+git remote add origin https://github.com/XLTX-Git/MinePick_Launcher.git
 git push -u origin main
 ```
 

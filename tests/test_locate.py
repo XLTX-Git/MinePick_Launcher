@@ -19,9 +19,11 @@ from pathlib import Path
 
 from launcher.java.locate import (
     JavaRuntime,
+    executable_bits,
     has_suitable_java,
     match_java,
     parse_java_major,
+    selected_java_bits,
 )
 
 
@@ -65,3 +67,42 @@ def test_has_suitable_java():
     assert has_suitable_java([_rt(21)], 17) is True  # 17+ uses >= matching
     assert has_suitable_java([_rt(17)], 21) is False
     assert has_suitable_java([_rt(21)], 21) is True
+
+
+def _write_pe(path: Path, machine: int) -> Path:
+    """A minimal PE header: MZ, e_lfanew at 0x3c, PE signature, then the machine word."""
+    blob = bytearray(0x100)
+    blob[0:2] = b"MZ"
+    blob[0x3C:0x40] = (0x80).to_bytes(4, "little")
+    blob[0x80:0x84] = b"PE\0\0"
+    blob[0x84:0x86] = machine.to_bytes(2, "little")
+    path.write_bytes(blob)
+    return path
+
+
+def test_executable_bits_reads_pe_machine(ws_tmp):
+    assert executable_bits(_write_pe(ws_tmp / "java32.exe", 0x014C)) == 32
+    assert executable_bits(_write_pe(ws_tmp / "java64.exe", 0x8664)) == 64
+    assert executable_bits(_write_pe(ws_tmp / "java_arm64.exe", 0xAA64)) == 64
+
+
+def test_executable_bits_reads_elf_class(ws_tmp):
+    elf = ws_tmp / "java"
+    elf.write_bytes(b"\x7fELF" + bytes([2]) + bytes(60))
+    assert executable_bits(elf) == 64
+    elf.write_bytes(b"\x7fELF" + bytes([1]) + bytes(60))
+    assert executable_bits(elf) == 32
+
+
+def test_executable_bits_is_none_for_unknown_or_missing(ws_tmp):
+    junk = ws_tmp / "not-an-exe"
+    junk.write_bytes(b"#! /bin/sh\necho hi\n")
+    assert executable_bits(junk) is None
+    assert executable_bits(ws_tmp / "missing.exe") is None
+
+
+def test_selected_java_bits_uses_the_configured_path(ws_tmp):
+    java32 = _write_pe(ws_tmp / "java32.exe", 0x014C)
+    java64 = _write_pe(ws_tmp / "java64.exe", 0x8664)
+    assert selected_java_bits(java32) == 32
+    assert selected_java_bits(java64) == 64

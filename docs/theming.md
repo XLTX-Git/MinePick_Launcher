@@ -27,7 +27,7 @@ gui/pages/settings_page.py       设置页控件（改动即保存，无保存�
 | `__ACCENT_TINT__` | 浅色主题下的淡绿悬停底 | 同上 |
 | `__FONT__` | 界面字体族（含 Segoe UI / 微软雅黑兜底） | `ui_font`（留空=微软雅黑 UI） |
 | `__RADIUS_XS__` / `__RADIUS_SM__` / `__RADIUS_LG__` | 小/中/大圆角 | `ui_radius`（compact / default / round） |
-| `__DOWN_ARROW__` / `__CHECK__` | 下拉箭头、复选框对勾 PNG 的绝对路径（QSS 的 `url()` 在打包后解析不了相对路径） | 固定资源 |
+| `__CHEVRON_DOWN__` / `__CHEVRON_DOWN_ACTIVE__` / `__CHEVRON_DOWN_DISABLED__` / `__CHECK__` | 下拉箭头三种状态（常态 / 悬停与键盘聚焦 / 禁用）的 Lucide SVG 与复选框对勾 PNG 的绝对路径（QSS 的 `url()` 在打包后解析不了相对路径） | 固定资源 |
 
 ## 三、可以调什么
 

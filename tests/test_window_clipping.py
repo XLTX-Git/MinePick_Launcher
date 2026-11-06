@@ -93,6 +93,10 @@ def window(app, monkeypatch, ws_tmp):
     built.close()
     built.deleteLater()
     app.processEvents()
+    # The suite's default language: the fixture switches the global tr() table to fr_fr, and a test
+    # that uses this fixture (rather than the parametrized one) used to leave every later file in
+    # French - the e2e assertions on Chinese status text then failed depending on file order.
+    i18n.set_language("zh_cn")
 
 
 @pytest.mark.parametrize("language", LANGUAGES)
@@ -116,13 +120,23 @@ def test_the_window_minimum_is_never_below_the_layout_requirement(app, monkeypat
         i18n.set_language("zh_cn")
 
 
-def test_the_widest_language_really_does_exceed_the_old_constant(window, app):
-    """Guard against a vacuous pass: fr_fr must demand more than the removed 1000px pin."""
+def test_the_layout_floor_is_a_real_requirement(window, app):
+    """Guard against a vacuous pass: the floor is a real layout number, not a stub.
+
+    This used to assert ``needed > 1000``, because the window carried a hardcoded 1000px minimum
+    while the layout needed 1164px in fr_fr. On 2026-11-01 the instance grid became one column
+    (the two-column pane was clipping its right column at 1644px), which took the floor down to
+    870px for the widest language (es_es) and 746px for zh_cn - measured with
+    tools/measure_min_width.py before (1078px in every language) and after. The old 1000px pin is
+    no longer a width this layout would clip at, so asserting it would be measuring a constant that
+    no longer exists. What still has to hold is that the floor is substantial: a window reporting a
+    0-ish hint would make the test below pass trivially.
+    """
     for index in range(len(NAV_KEYS)):
         window.sidebar.setCurrentRow(index)
         _settle(app, window)
     needed = window.minimumSizeHint().width()
-    assert needed > 1000, (
+    assert needed > 700, (
         f"the layout only asks for {needed}px, so this file could not tell the fixed build from the "
         f"clipped one - check that the window was shown before the hint was read"
     )

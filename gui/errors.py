@@ -15,20 +15,28 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Error severity display: fatal errors use a dialog, ordinary warnings only the status bar."""
+"""Error severity display: fatal errors use a dialog, ordinary warnings only the status bar.
+
+Both dialogs are the in-window card (``gui/inwindow_dialog.py``), not a system message box: every
+error the launcher reports is drawn inside its own window, in the same visual language as the crash
+diagnosis dialog. The severity still decides what the card looks like - ``critical`` gets the danger
+badge, the red scrim and the danger-coloured primary button, ``warning`` the warning badge and an
+outlined warning-coloured primary - so "this went wrong" and "this is worth knowing" stay
+distinguishable at a glance, exactly as ``QMessageBox.critical``/``warning`` did.
+"""
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox, QWidget
+from PySide6.QtWidgets import QWidget
 
-from gui import i18n
+from gui import i18n, inwindow_dialog
 
 
 def show_fatal(parent: QWidget | None, message: str) -> None:
     """Fatal error: dialog + status bar text. Returns None (the caller sets the status bar itself)."""
-    QMessageBox.critical(parent, i18n.tr("error.title"), message)
+    inwindow_dialog.critical(parent, i18n.tr("error.title"), message)
 
 
 def show_warning(parent: QWidget | None, message: str) -> None:
     """Ordinary warning: non-blocking prompt box."""
-    QMessageBox.warning(parent, i18n.tr("error.warning.title"), message)
+    inwindow_dialog.warning(parent, i18n.tr("error.warning.title"), message)

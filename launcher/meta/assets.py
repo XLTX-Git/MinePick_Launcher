@@ -25,6 +25,7 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from launcher.meta import sources
 from launcher.meta.manifest import _new_client
 from launcher.meta.version import AssetIndexInfo
 
@@ -64,7 +65,7 @@ def fetch_asset_index(
     if own:
         client = _new_client()
     try:
-        resp = client.get(info.url)
+        resp = sources.get(client, info.url, kind=sources.KIND_META)
         resp.raise_for_status()
         raw = resp.json()
     finally:

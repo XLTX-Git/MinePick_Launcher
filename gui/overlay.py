@@ -28,13 +28,21 @@ rescaled while the window is resized. Re-grabbing a visible overlay would captur
 the overlay itself, and hiding it around the grab flickers — freezing the backdrop
 is both cheaper and predictable. If grabbing fails, the overlay degrades to a plain
 scrim and never fails to open.
+
+The scrim that dims that snapshot follows the theme (SCRIM_ALPHA): one 35% black
+tint is calibrated for the light sheet's white card, and in the dark theme it left
+the card's fill indistinguishable from the page behind it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+
 from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QVBoxLayout, QWidget
+
+from gui import theme
 
 BLUR_DOWNSCALE = 8  # 1/8 scale + smooth upscale reads as a wide Gaussian blur
 FADE_MS = 200
@@ -49,11 +57,59 @@ CARD_RADIUS = 12
 CARD_MARGIN = 25  # keep the card clear of the window edges
 CARD_WIDTH = 460
 
-SCRIM = {
-    "normal": QColor(0, 0, 0, 90),  # ~35% black, matching the launcher's dialog tint
-    "warning": QColor(80, 0, 0, 140),
-    "error": QColor(80, 0, 0, 140),
+#: The tint each severity washes the window with. The *strength* is per theme: see SCRIM_ALPHA.
+SCRIM_TINT = {
+    "normal": (0, 0, 0),
+    "warning": (80, 0, 0),
+    "error": (80, 0, 0),
 }
+
+#: How much of that tint is painted, per theme and severity (QColor's 0-255 alpha).
+#:
+#: One tint used to serve both themes - 35% black. That is right for the light sheet, whose white card
+#: still clears the dimmed page by 2.59:1, but it left the dark card 1.15:1 from the same backdrop:
+#: the card's fill and the dimmed page read as one surface, and only the outline told them apart. Dark
+#: therefore dims harder, and its coloured severities harder still, so the card's raised fill
+#: (theme BG_OVERLAY_CARD) keeps a silhouette of its own. Light keeps the values it always had.
+SCRIM_ALPHA = {
+    "light": {"normal": 90, "warning": 140, "error": 140},
+    "dark": {"normal": 150, "warning": 180, "error": 180},
+}
+
+
+def scrim_colour(severity: str = "normal", theme_name: str | None = None) -> QColor:
+    """The scrim for one severity, in ``theme_name`` (default: the theme in force)."""
+    if severity not in SCRIM_TINT:
+        severity = "normal"
+    mode = theme_name or theme.current_theme()
+    alpha = SCRIM_ALPHA.get(mode, SCRIM_ALPHA["dark"])[severity]
+    return QColor(*SCRIM_TINT[severity], alpha)
+
+
+class _Scrim(Mapping[str, QColor]):
+    """``severity -> QColor``, resolved for the theme in force at paint time.
+
+    The scrim is composited in ``paintEvent`` over a snapshot of the window rather than declared in
+    the stylesheet, so the theme's token replacement cannot reach it. Resolving it on every lookup -
+    instead of caching one table per theme - is what lets an overlay that is already open follow a
+    theme switch. It stays mapping-shaped so every call site (``gui/inwindow_dialog.py`` imports this
+    table directly) keeps reading ``SCRIM[severity]`` exactly as before.
+    """
+
+    def __getitem__(self, severity: str) -> QColor:
+        if severity not in SCRIM_TINT:
+            # ``in`` is built on this: an unknown severity must not resolve to the normal scrim.
+            raise KeyError(severity)
+        return scrim_colour(severity)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(SCRIM_TINT)
+
+    def __len__(self) -> int:
+        return len(SCRIM_TINT)
+
+
+SCRIM = _Scrim()
 
 
 class BlurOverlay(QWidget):

@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import sys
 
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -68,6 +69,12 @@ def _unlock_token_vault() -> None:
         pass
     from PySide6.QtWidgets import QInputDialog, QLineEdit
 
+    # Deliberately the only QInputDialog left in the app, and deliberately still the native one: it
+    # runs *before* the main window exists (create_app() calls this, the window is built afterwards),
+    # and the in-window dialogs in gui/inwindow_dialog.py draw inside a window by definition - there is
+    # no window to draw in yet, so a "frameless card" here would be a window on the desktop with no
+    # backdrop behind it. The password prompt for unlocking the account vault is a pre-window modal on
+    # purpose; every dialog that belongs to a page uses the in-window card.
     for _attempt in range(3):
         text, ok = QInputDialog.getText(
             None,
@@ -80,6 +87,49 @@ def _unlock_token_vault() -> None:
         if secure.verify_password(text):
             secure.set_password(text)
             return
+
+
+class _ManifestRefreshBridge(QObject):
+    """Put a background manifest refresh into the versions list without moving what the user sees.
+
+    The refresh lands on a worker thread, so the manifest layer cannot touch widgets itself; the signal
+    is the thread hop. ``_apply`` saves the list's scroll offset around the page's own update (which
+    rebuilds its rows) and restores it afterwards: the list gains a newly released version without the
+    viewport jumping under the user. The rows are one line each - nothing is expanded or collapsed - so
+    the offset is the only thing that has to survive.
+
+    Only a page that already exists is updated: ``_LazyPages.peek`` never builds the lazy versions page,
+    so a user who never opened it pays nothing.
+    """
+
+    refreshed = Signal(object)
+
+    def __init__(self, window) -> None:
+        super().__init__()
+        self._window = window
+        self.refreshed.connect(self._apply)
+
+    def on_refresh(self, manifest) -> None:
+        """Called from the refresh thread: hop to the GUI thread and update the list there."""
+        self.refreshed.emit(manifest)
+
+    def _apply(self, manifest) -> None:
+        page = self._window.pages.peek("versions")
+        if page is None:
+            return
+        update = getattr(page, "_on_manifest", None)
+        if update is None:  # a future page shape: never break the refresh over this
+            return
+        list_widget = getattr(page, "list", None)
+        bar = list_widget.verticalScrollBar() if list_widget is not None else None
+        position = bar.value() if bar is not None else 0
+        try:
+            update(manifest)
+        finally:
+            # The page rebuilds its rows, which moves the viewport to the selected row; put the user's
+            # own position back, whatever the rebuild did.
+            if bar is not None:
+                bar.setValue(position)
 
 
 def create_app(argv: list[str] | None = None) -> QApplication:
@@ -106,13 +156,22 @@ def create_app(argv: list[str] | None = None) -> QApplication:
 
     apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
     # The wheel only scrolls page content; combo/spin/tab-bar wheel input is blocked
-    from gui.widgets import KeyboardFocusTracker, WheelBlocker
+    from gui.widgets import ComboArrowState, KeyboardFocusTracker, WheelBlocker
 
     app._wheel_blocker = WheelBlocker(app)  # keep a reference so the filter stays alive
     app.installEventFilter(app._wheel_blocker)
     # Keyboard users get a visible focus indicator; mouse clicks stay flat
     app._focus_tracker = KeyboardFocusTracker(app)
     app.installEventFilter(app._focus_tracker)
+    # Hover/disabled states for the combo chevron (subcontrol pseudo-classes do not work in Qt 6.11)
+    app._combo_arrow_state = ComboArrowState(app)
+    app.installEventFilter(app._combo_arrow_state)
+    # Combo popups are top-level Qt::Popup windows: the stylesheet can round the list inside one, but
+    # only a window attribute can make the square window around it transparent. This hook shapes every
+    # combo automatically, including the ones built later by the lazily created pages.
+    from gui import popup_shape
+
+    popup_shape.install(app)
     # Tooltips the pointer can travel into, that stay until dismissed (WCAG 1.4.13)
     from gui.tooltip import TooltipController
 
@@ -147,6 +206,23 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+    # A background manifest refresh must reach the versions page on the GUI thread, and must not move
+    # the list the user is reading; the bridge owns both halves of that, the manifest layer stays
+    # UI-free. Registered before the first page is built, so the very first refresh is delivered too.
+    from launcher.meta import manifest as manifest_mod
+    from launcher.net import http_cache
+
+    manifest_bridge = _ManifestRefreshBridge(window)
+    manifest_mod.add_refresh_listener(manifest_bridge.on_refresh)
+    # The instance/version icons use the real block textures when the user's own client jar or our
+    # cache has them. Fill only the missing four, after the window is already up, in a daemon thread:
+    # local jars first, then Mojang's asset index; the first paint never waits, an offline start
+    # keeps the drawn block, and the next start retries. The headless smoke run
+    # (MCLAUNCHER_GUI_AUTOQUIT_MS) skips it so a test never opens a socket.
+    if not auto_quit:
+        from launcher.meta.block_textures import start_prefetch
+
+        start_prefetch(paths.launcher_dir(), cfg.game_dir or paths.default_game_dir())
     # First run: the wizard is an overlay inside the main window, not a separate dialog
     if not cfg.wizard_done and not auto_quit:
         window.show_wizard()
@@ -187,8 +263,16 @@ def main() -> int:
             logging.getLogger(__name__).info(
                 "shutdown: cancelled %d download(s), drained=%s", cancelled, drained
             )
+        # The cache's own workers use the pooled client: let them finish (bounded) before it is closed,
+        # so no thread is left holding a socket of a closed pool.
+        manifest_mod.remove_refresh_listener(manifest_bridge.on_refresh)
+        manifest_mod.wait_for_background_refresh(1.0)
+        http_cache.wait_for_icon_refresh(1.0)
         QThreadPool.globalInstance().waitForDone(2500)
         QThreadPool.globalInstance().clear()
+        # One real close, here. Every call site's `finally: client.close()` is a no-op on the shared
+        # client, so the pool lives for the whole run and is torn down exactly once, after the work.
+        manifest_mod.reset_http_client()
 
     app.aboutToQuit.connect(_prepare_shutdown)
     return app.exec()

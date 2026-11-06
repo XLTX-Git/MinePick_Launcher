@@ -128,6 +128,35 @@ def render() -> str:
             "应用内的「关于」页展示同一份清单（按界面语言翻译）。"
         ),
         "",
+        (
+            "Minecraft block textures - used only as version icons - belong to Mojang. MinePick "
+            "Launcher does **not distribute** these images. The icon source order is: the user's own "
+            "``assets`` / ``client.jar`` → the user's local cache → fetched at runtime from "
+            "mcmod.cn's image host and cached in the user's configuration directory. Neither the "
+            "source tree nor the installer contains a Minecraft image."
+        ),
+        "",
+        (
+            "原版方块材质（仅用作版本图标）归 Mojang 所有；本项目不分发这些图片。图标的来源顺序为："
+            "用户本机的 ``assets`` / ``client.jar`` → 用户本机缓存 → 运行时从 mcmod.cn 的图床获取"
+            "并缓存到用户配置目录。源码与安装包都不包含任何 Minecraft 图片。"
+        ),
+        "",
+        (
+            "The names and logos of the mod loaders (Fabric, Forge, NeoForge, Quilt) belong to their "
+            "respective projects. MinePick Launcher does **not distribute** these logos: neither the "
+            "source tree nor the installer contains one. They are fetched at runtime from their official "
+            "websites and cached in the user's local configuration directory (NeoForge's mark comes from "
+            "the official NeoForged art repository on GitHub); when a logo cannot be fetched, the "
+            "interface shows its own drawn substitute icon."
+        ),
+        "",
+        (
+            "各模组加载器的名称与标志归其各自项目所有；本项目不在分发包内包含这些标志，仅在运行时从其"
+            "官方网站获取并缓存到用户本地配置目录，取不到时显示自绘的替代图标。NeoForge 的标志取自 "
+            "NeoForged 官方美术仓库。"
+        ),
+        "",
     ]
 
     def entry_block(entry: notices.Credit) -> list[str]:

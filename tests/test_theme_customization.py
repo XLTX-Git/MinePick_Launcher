@@ -83,11 +83,25 @@ def test_light_palette_keeps_text_readable() -> None:
 
 
 def test_font_stack_default_and_custom() -> None:
-    assert theme.DEFAULT_FONT in theme.font_stack(None)
+    stack = theme.font_stack(None)
+    assert theme.DEFAULT_FONT in stack
+    # Latin takes Segoe UI's narrower glyphs; YaHei stays behind it for the Chinese.
+    assert stack.startswith('"Segoe UI"')
+    assert stack.index("Segoe UI") < stack.index(theme.DEFAULT_FONT)
     assert theme.DEFAULT_FONT in theme.font_stack("")
     assert theme.font_stack("Consolas").startswith('"Consolas"')
+    # A user-picked family stays primary; Segoe UI follows it as the Latin fallback.
+    custom = theme.font_stack("Consolas")
+    assert custom.index("Consolas") < custom.index("Segoe UI")
     # fallbacks stay in place so unknown families still resolve
     assert "Segoe UI" in theme.font_stack("No Such Font 12345")
+
+
+def test_font_stack_keeps_the_non_chinese_fallbacks() -> None:
+    """Japanese and Korean have no glyphs in YaHei or Segoe UI: their faces must stay in the chain."""
+    stack = theme.font_stack(None)
+    for family in ("Malgun Gothic", "Yu Gothic UI", "Microsoft YaHei", "sans-serif"):
+        assert family in stack, family
 
 
 def test_stylesheets_use_placeholders_not_hardcoded_accent() -> None:

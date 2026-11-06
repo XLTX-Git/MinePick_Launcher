@@ -31,6 +31,16 @@ from launcher import paths
 # Default accent per theme; the tint steps below are derived from whichever base is in use
 DEFAULT_ACCENTS = {"dark": "#35a06a", "light": "#2f9e6f"}
 
+# The one page paper each theme paints behind its cards. It lives here rather than inline in
+# NEUTRAL_TOKENS because accent_palette() derives ACCENT_TEXT against the light value: accent-coloured
+# *text* directly on the paper is a different question from white text on an accent *fill*, and the fill
+# shade it used before measured 4.3-4.4:1 as text once the paper was blue-tinted.
+#
+# Dark's value is level 2 of the dark surface ladder described above NEUTRAL_TOKENS: one measurable
+# step above the window chrome and the rail, one below the cards. The light value is untouched - the
+# light theme's three levels (#f9fafc chrome / #f6f9fc paper / #ffffff cards) already separate.
+PAGE_PAPER = {"dark": "#0a1622", "light": "#f6f9fc"}
+
 # Corner radius presets: (extra small, small, large) in px
 RADIUS_SCALES = {
     "compact": (3, 4, 6),
@@ -39,9 +49,16 @@ RADIUS_SCALES = {
 }
 DEFAULT_RADIUS = "default"
 DEFAULT_FONT = "Microsoft YaHei UI"
-# 韩文(Hangul)与日文需要在链里各有一个覆盖字体:雅黑只有简体字形,Segoe UI 只有拉丁/西里尔,
-# 末尾的 sans-serif 在中文 Windows 上会映射回雅黑 —— 缺了这两项,韩语界面会整片显示成方块
-FONT_FALLBACKS = '"Segoe UI", "Malgun Gothic", "Yu Gothic UI", "Microsoft YaHei", sans-serif'
+# Latin first, on purpose: Microsoft YaHei UI's own Latin glyphs are markedly wider spaced than
+# Segoe UI's, so a stack that starts with YaHei sets every English word and digit in the wider face.
+# Measured on the same 15px line, the YaHei-first stack runs about one character wider than the
+# Segoe-first one. Segoe UI first gives the Latin text its own spacing while the CJK glyphs fall
+# back to YaHei, which is what the UI font is for here. The entries after it cover the scripts
+# Segoe UI does not: Hangul needs Malgun Gothic and Japanese needs Yu Gothic UI - YaHei has
+# Simplified Chinese only, and the trailing sans-serif maps back to YaHei on Chinese Windows, so
+# without those two the Korean and Japanese UI would be a wall of tofu.
+LATIN_FONT = "Segoe UI"
+FONT_FALLBACKS = '"Microsoft YaHei UI", "Malgun Gothic", "Yu Gothic UI", "Microsoft YaHei", sans-serif'
 
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
@@ -107,6 +124,21 @@ def readable_fill(accent: str, target: float = 4.5) -> str:
     return shade
 
 
+def readable_text_on(accent: str, *backgrounds: str, target: float = 4.5) -> str:
+    """Darken an accent until it reaches the WCAG AA contrast target as TEXT on every background.
+
+    ``readable_fill`` answers "white text on this fill"; this answers the other direction. The two are
+    not interchangeable: a fill chosen for white-on-it lands around 4.3-4.4:1 when the same shade is
+    used as text on a pale surface, which is exactly where the resource page's unselected chips sit.
+    """
+    shade = accent
+    for step in range(61):
+        if all(contrast_ratio(shade, background) >= target for background in backgrounds):
+            return shade
+        shade = _darken(accent, (step + 1) / 100)
+    return shade
+
+
 def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
     """All accent-derived colors used by the style sheets.
 
@@ -116,6 +148,7 @@ def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
     base = normalize_hex(accent) or DEFAULT_ACCENTS.get(theme, DEFAULT_ACCENTS["dark"])
     if theme == "light":
         button = readable_fill(base)
+        tint = _lighten(base, 0.90)
         return {
             "ACCENT": base,
             "ACCENT_BUTTON": button,
@@ -125,7 +158,11 @@ def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
             "ACCENT_SEL": _lighten(base, 0.68),  # a real step below ACCENT_SOFT (0.82), not a 2-point one
             "ACCENT_SEL_TEXT": _darken(base, 0.72),
             "ACCENT_SOFT": _lighten(base, 0.82),
-            "ACCENT_TINT": _lighten(base, 0.90),
+            "ACCENT_TINT": tint,
+            # Text drawn on the page paper itself (the resource chips): the page paper and the chips'
+            # tinted hover fill are both paler than white but not white, so this shade is derived
+            # against the two surfaces the label can actually land on.
+            "ACCENT_TEXT": readable_text_on(base, PAGE_PAPER["light"], tint),
             "FOCUS_RING": button,
         }
     button = readable_fill(base)
@@ -139,6 +176,8 @@ def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
         "ACCENT_SEL_TEXT": "#ffffff",
         "ACCENT_SOFT": _darken(base, 0.68),
         "ACCENT_TINT": _darken(base, 0.80),
+        # The dark sheet labels its chips with the pure accent, which is what this shade is there.
+        "ACCENT_TEXT": base,
         "FOCUS_RING": base,
     }
 
@@ -147,33 +186,119 @@ def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
 # Neutral / semantic palette: one entry per role, one value per theme. Together with
 # accent_palette() these are the only colours the QSS files may reference, through __TOKEN__
 # placeholders; both sheets are checked to hold no colour literals by tests/test_qss_tokens.py.
+#
+# The dark surfaces are a three-level ladder now (light already had three: #f9fafc chrome,
+# #f6f9fc paper, #ffffff cards). Before this, the window, the page and the rail were one value
+# (#0f141b) and the card nearly the same (#161d27, 1.09:1): one black with no depth.
+#
+#   level 1 (deepest)  BG_WINDOW = BG_NAV   #03080f   H 215  S 67%  L  3.5%   Y 0.0023
+#   level 2            BG_PAGE              #0a1622   H 210  S 55%  L  8.6%   Y 0.0075
+#   level 3 (lightest) BG_LIST              #122030   H 212  S 46%  L 12.9%   Y 0.0138
+#
+# window->page 1.10:1, page->card 1.11:1 (contrast_ratio; tests/test_dark_surface_layers.py holds
+# the band 1.10-1.20:1). Two constraints picked these values. First, every adjacent pair has to be a
+# measurable step: 1.10-1.15:1 reads as depth, and past 1.20:1 the levels read as separate patches
+# instead of one surface receding. Second, the card stays near the lightness it had - #122030 is 15%
+# above #161d27 in relative luminance - because raising it further would put it on top of every fill
+# painted above it (hover, section header, popup, outlined button, the pressed fill the previous
+# change calibrated), and re-deriving that whole band is a bigger change than this one. The price of
+# keeping the card low is that the deepest level has to be near black: #03080f measures 1.04:1 from
+# #000000, and the report keeps a zoomed edge comparison so that stays a decision.
+#
+# The three are cool blue on purpose, not slate. Hue sits at 210-215 and the blue channel is 12/24/30
+# levels above red; at these luminances a neutral slate reads as grey, which is exactly what the old
+# #0f141b looked like. HSL saturation is quoted as computed - it rises as lightness falls, so the
+# window's 67% is a consequence of its low L, and the hue plus the blue-minus-red chroma are what the
+# test checks alongside it.
 NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_BUTTON_ICON": {"dark": "#1c2531", "light": "#eef0f4"},
-    "BG_BUTTON_ICON_2": {"dark": "#161d27", "light": "#e2e6ec"},
+    # The dark value of the two ``_2`` tokens is BG_LIST's value: the pressed-state test uses that
+    # equality to prove the collapse the dedicated pressed token below was introduced for. Neither
+    # token is painted by the dark sheet any more.
+    "BG_BUTTON_ICON_2": {"dark": "#122030", "light": "#e2e6ec"},
+    # The pressed fill of an outlined control (secondary, warning, row actions, icon buttons). Dark
+    # cannot borrow the light recipe: in light the pressed fill steps *below* the surface, and in dark
+    # that surface is BG_LIST itself - BG_BUTTON_SECONDARY_2's dark value is #122030, BG_LIST to the
+    # byte, so the button vanished into the page exactly while it was being pressed. There is no
+    # headroom left below a near-black surface, so dark presses upwards instead: one step above the
+    # hover fill, 1.25:1 from the surface at rest and 1.17:1 from hover. The light sheet keeps
+    # BG_BUTTON_SECONDARY_2 / BG_BUTTON_ICON_2, and its own values do not move.
+    "BG_BUTTON_PRESSED": {"dark": "#26313f", "light": "#e2e6ec"},
     "BG_BUTTON_SECONDARY": {"dark": "#1c2531", "light": "#f1f3f6"},
-    "BG_BUTTON_SECONDARY_2": {"dark": "#161d27", "light": "#e2e6ec"},
+    "BG_BUTTON_SECONDARY_2": {"dark": "#122030", "light": "#e2e6ec"},
     "BG_DISABLED": {"dark": "#131a23", "light": "#f4f6f9"},
     "BG_DISABLED_2": {"dark": "#232c39", "light": "#d8dee6"},
     # dark rows hover with this; the light sheet uses ACCENT_TINT instead, so the light value
     # was a copy of the dark one that no rule could reach (FG_TEXT on it read 1.06:1).
     "BG_HOVER": {"dark": "#1c2531", "light": "#e6eaf0"},
-    "BG_LIST": {"dark": "#161d27", "light": "#ffffff"},
+    # Launch page fields and the settings page's disabled inputs keep their own recessed tone.
+    "BG_LAUNCH_FIELD_DISABLED": {"dark": "#232c39", "light": "#e9edf2"},
+    # Level 3 of the dark surface ladder (top of the table): the card, list and table-row fill. One
+    # measurable step above the page paper, and below the fills painted on top of it.
+    "BG_LIST": {"dark": "#122030", "light": "#ffffff"},
+    # Popup/menu/tooltip fill. It sits above the page, so it keeps the value it had; on a page card the
+    # step it makes to BG_LIST is 1.07:1, so a popup drawn on a card leans on its outline instead.
     "BG_LIST_2": {"dark": "#1c2531", "light": "#ffffff"},
+    # The sidebar rail: in light one step darker than the page paper; in dark it is level 1, the same
+    # value as the window chrome, so the rail and the window's own chrome share the deepest surface.
+    "BG_NAV": {"dark": "#03080f", "light": "#f3f6fd"},
     "BG_OPTION": {"dark": "#161d27", "light": "#f1f3f6"},
+    # The in-window overlay card is the one surface painted over a scrim instead of over the page
+    # (gui/overlay.py BlurOverlay, gui/inwindow_dialog.py). Its fill therefore has to separate it from
+    # the *scrimmed* backdrop, and BG_LIST cannot do that in dark: even on the new level-3 fill it is
+    # 1.21:1 from the dimmed page, and 1.28:1 is the ceiling for any scrim, because that is BG_LIST
+    # against pure black. The dark value is the raised surface that clears the 1.8:1 floor (2.31:1
+    # against the scrimmed page, 1.91:1 in the worst case - the red severity scrim over a page card);
+    # it is also the same cool blue as the surfaces underneath (H 214, blue 48 above red) rather than
+    # the grey-blue it used to be. The light sheet keeps painting BG_LIST, and the light value here is
+    # the same white for that reason.
+    "BG_OVERLAY_CARD": {"dark": "#384d68", "light": "#ffffff"},
     "BG_OVERLAY_CODE": {"dark": "#2a1a1e", "light": "#fdecea"},
+    # The one page paper: every page container, the content stack and each page-level scroll viewport
+    # paints this, so the three near-identical blues the pages used to invent are gone. It is level 2
+    # of the dark ladder; see PAGE_PAPER at the top of this module for why it lives there.
+    "BG_PAGE": PAGE_PAPER,
     "BG_RAIL_DOT": {"dark": "#33404f", "light": "#b6c1cd"},
     "BG_SCROLLBAR": {"dark": "#6d7f95", "light": "#8a96a3"},
     "BG_SECTION": {"dark": "#1c2531", "light": "#f1f3f6"},
     "BG_SEPARATOR": {"dark": "#27303d", "light": "#dfe4ea"},
     "BG_SIDEBAR": {"dark": "#1c2531", "light": "#e7ebf0"},
+    # The one blue band at the top of the window. Both themes use the same shade so the chrome
+    # reads as the launcher's frame rather than a theme surface; #1e6fd9 gives white text 4.85:1
+    # (the PCL blue #2078da only reaches 4.41:1 and would fail AA). The hover token is the same
+    # blue one step deeper, used behind the minimize glyph; close keeps its red.
+    "BG_TOPBAR": {"dark": "#1a4e8c", "light": "#1e6fd9"},
     "BG_TITLEBAR_CLOSE": {"dark": "#cf3f3f", "light": "#cf3f3f"},
-    "BG_TITLEBAR_MINIMIZE": {"dark": "#1c2531", "light": "#dfe4ea"},
-    "BG_WINDOW": {"dark": "#0f141b", "light": "#fafbfc"},
+    "BG_TITLEBAR_MINIMIZE": {"dark": "#1a63c4", "light": "#1a63c4"},
+    # Window chrome used below the title bar: the status bar and native dialogs. In light it is one
+    # step lighter than the page paper and one below the cards: near the cards, but never a second
+    # white surface. In dark it is level 1 - the deepest of the three surfaces, shared with BG_NAV.
+    "BG_WINDOW": {"dark": "#03080f", "light": "#f9fafc"},
     "BORDER_BUTTON_ICON": {"dark": "#27303d", "light": "#c9d2dc"},
     "BORDER_BUTTON_SECONDARY": {"dark": "#33404f", "light": "#b6c1cd"},
     "BORDER_BUTTON_SECONDARY_2": {"dark": "#232c39", "light": "#d8dee6"},
-    "BORDER_HOVER": {"dark": "#33404f", "light": "#a7b4c2"},
+    # The hover outline of every input, combo, spin box and outlined button. In dark this used to be
+    # the same value as BORDER_LAUNCH_FIELD (#33404f) and BORDER_BUTTON_SECONDARY, so `border-color:
+    # BORDER_HOVER` repainted the border in the colour it already had: hovering the settings page's
+    # Java path, the versions page's search field, the launch page's version field or the resources
+    # page's filters changed nothing at all, while the light sheet visibly firms the border up
+    # (#c5d5e8 -> #a7b4c2). The dark value is one step lighter so the step exists here too: 1.41:1 from
+    # BORDER_LAUNCH_FIELD (light: 1.41:1) and 2.26:1 against the BG_LIST it is drawn on (light: 2.11:1).
+    # It is also the resting outline of a checkbox/radio indicator, which reads more clearly for it
+    # (1.60:1 -> 2.26:1 on BG_LIST; the light sheet sits at 2.11:1 there).
+    "BORDER_HOVER": {"dark": "#46566a", "light": "#a7b4c2"},
+    "BORDER_LAUNCH_FIELD": {"dark": "#33404f", "light": "#c5d5e8"},
     "BORDER_LIST": {"dark": "#27303d", "light": "#c9d2dc"},
+    # The hairline between the sidebar rail and the page: decoration, not a control, so it is one quiet
+    # step below the rail rather than a visible frame.
+    "BORDER_NAV": {"dark": "#27303d", "light": "#dfe7f0"},
+    # The overlay card's outline. Once the card's fill carries the silhouette (see BG_OVERLAY_CARD),
+    # the frame only has to read as an edge on that fill, not carry the whole separation: BORDER_SWATCH
+    # (#3a4757) would sit 1.06:1 above the new dark fill, i.e. invisible, so dark steps up to 1.40:1
+    # on the fill (3.24:1 against the scrim). It is the cool-blue edge of that fill (H 213, blue 51
+    # above red). The light sheet keeps its quiet BORDER_BUTTON_ICON outline (1.70:1 against the
+    # scrim); the light value here repeats that colour for the same reason as the fill above.
+    "BORDER_OVERLAY_CARD": {"dark": "#4c637f", "light": "#c9d2dc"},
     "BORDER_OVERLAY_CODE": {"dark": "#e5787f", "light": "#e5787f"},
     "BORDER_SWATCH": {"dark": "#3a4757", "light": "#b6c1cd"},
     "BORDER_TABLE": {"dark": "#212a36", "light": "#dfe4ea"},
@@ -188,8 +313,13 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "FG_CARD_LATEST": {"dark": "#ffffff", "light": "#1f2a36"},
     "FG_DISABLED": {"dark": "#6b7c92", "light": "#9aa5b1"},
     "FG_DISABLED_2": {"dark": "#6b7c92", "light": "#78838f"},
-    "FG_EMPTY_STATE": {"dark": "#7b8ca3", "light": "#677585"},
+    # #677585 measured 4.46:1 on the new page paper - the empty-state labels sit directly on it, so the
+    # value moves one step darker (white cards are unaffected: 5.03:1 there, up from 4.71:1).
+    "FG_EMPTY_STATE": {"dark": "#7b8ca3", "light": "#647080"},
     "FG_HINT": {"dark": "#8fa2b8", "light": "#4f6070"},
+    # Launch page hero and quiet lines (verified cool version: #1f2328 body, #6b7280 hints).
+    "FG_LAUNCH": {"dark": "#e6ecf5", "light": "#1f2328"},
+    "FG_LAUNCH_HINT": {"dark": "#8fa2b8", "light": "#6b7280"},
     "FG_OPTION": {"dark": "#d8dee9", "light": "#26313d"},
     "FG_OPTION_2": {"dark": "#ffffff", "light": "#14503a"},
     "FG_OVERLAY_BODY": {"dark": "#d7e0ec", "light": "#1f2a36"},
@@ -199,6 +329,8 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "FG_SELECTED": {"dark": "#ffffff", "light": "#ffffff"},
     "FG_STATUS_WARNING": {"dark": "#e5c07b", "light": "#87691b"},
     "FG_TEXT": {"dark": "#e6ecf5", "light": "#1f2a36"},
+    # White text on the one blue title bar; see BG_TOPBAR for the 4.85:1 measurement.
+    "FG_TOPBAR": {"dark": "#ffffff", "light": "#ffffff"},
 }
 
 
@@ -276,9 +408,17 @@ def theme_qpalette(theme: str, accent: str | None = None) -> QPalette:
     return palette
 
 def font_stack(family: str | None = None) -> str:
-    """Font-family value for the QSS: the chosen family first, then safe fallbacks."""
-    name = (family or "").strip() or DEFAULT_FONT
-    return f'"{name}", {FONT_FALLBACKS}'
+    """Font-family value for the QSS: Segoe UI first for Latin, then the UI font and its fallbacks.
+
+    The default UI font (Microsoft YaHei UI) is the CJK face here, not the Latin one: its Latin
+    glyphs are wider than Segoe UI's, so Segoe UI takes the first slot and YaHei catches the
+    Chinese. A family the user picked explicitly keeps the first slot - they asked for it by name,
+    and Segoe UI follows as that choice's Latin fallback rather than replacing it.
+    """
+    name = (family or "").strip()
+    if name and name.casefold() != DEFAULT_FONT.casefold():
+        return f'"{name}", "{LATIN_FONT}", {FONT_FALLBACKS}'
+    return f'"{LATIN_FONT}", {FONT_FALLBACKS}'
 
 
 def system_theme() -> str:
@@ -307,6 +447,17 @@ def radius_scale(radius: str | None) -> tuple[int, int, int]:
 
 # The (application, theme, accent, font, radius, device scale) last handed to setStyleSheet.
 _last_applied: tuple[int, str, str, str, str, int] | None = None
+
+# The concrete theme behind the style currently in force. Most colour is read from the token table
+# below, but a few surfaces are painted rather than declared - the overlay scrim is composited in
+# paintEvent (gui/overlay.py) - and those need to know which theme they are painting for.
+_last_theme = "dark"
+
+
+def current_theme() -> str:
+    """The concrete theme last applied ("dark" before the first apply_theme call)."""
+    return _last_theme
+
 
 # The token table (role -> colour) behind the stylesheet currently in force. Widgets that must
 # style themselves - because the application stylesheet is not adopted for them on every
@@ -338,20 +489,6 @@ def device_scale(app: QApplication) -> int:
     screen = app.primaryScreen()
     ratio = float(screen.devicePixelRatio()) if screen is not None else 1.0
     return max(1, min(3, round(ratio)))
-
-
-def glyph_path(name: str, scale: int) -> str:
-    """Absolute path of the crispest glyph for this screen.
-
-    The small geometric glyphs (combo arrow, spin arrows, checkbox tick) ship as @2x/@3x bitmaps that
-    tools/gen_ui_assets.py *draws* at that size. The stylesheet keeps the logical box, so on a 200%
-    screen the @2x bitmap maps 1:1 onto the device grid instead of a 10x6 bitmap being stretched.
-    """
-    if scale > 1:
-        candidate = paths.resource_path(f"gui/resources/{name}@{scale}x.png")
-        if candidate.exists():
-            return candidate.as_posix()
-    return paths.resource_path(f"gui/resources/{name}.png").as_posix()
 
 
 _applying = False
@@ -395,7 +532,7 @@ def apply_theme(
     so without this guard a session that touches a few settings pays seconds per change - and the test
     suite, which drives those saves, spends minutes in it.
     """
-    global _last_applied, _last_tokens
+    global _last_applied, _last_tokens, _last_theme
     app = QApplication.instance()
     if app is None:
         return
@@ -409,14 +546,24 @@ def apply_theme(
     if not path.exists():
         return
     text = path.read_text(encoding="utf-8")
-    # url() in QSS cannot reliably resolve relative paths: replace with the image's absolute path when
-    # loading, choosing the bitmap that matches this screen's scaling (see glyph_path).
-    suffix = "_light" if theme == "light" else ""
-    # Rolled back at the user's request: pick the plain 1x bitmaps again. The @2x/@3x variants and their
-    # generator stay in the tree (tests/test_ui_assets.py still guards them), they are simply unused.
-    text = text.replace("__DOWN_ARROW__", paths.resource_path(f"gui/resources/down_arrow{suffix}.png").as_posix())
-    text = text.replace("__SPIN_UP__", paths.resource_path(f"gui/resources/spin_up{suffix}.png").as_posix())
-    text = text.replace("__SPIN_DOWN__", paths.resource_path(f"gui/resources/spin_down{suffix}.png").as_posix())
+    # url() in QSS cannot reliably resolve relative paths: replace the icon placeholders with the
+    # absolute path of the file that matches this theme. The combo chevron ships as one coloured SVG
+    # per state (normal / hover + keyboard focus / disabled) because a QSS image cannot be tinted; the
+    # active icon uses the default accent, since an SVG cannot follow the user's accent colour.
+    suffix = "-light" if theme == "light" else ""
+    icons = "gui/resources/icons/ui"
+    text = text.replace(
+        "__CHEVRON_DOWN_ACTIVE__",
+        paths.resource_path(f"{icons}/chevron-down{suffix}-active.svg").as_posix(),
+    )
+    text = text.replace(
+        "__CHEVRON_DOWN_DISABLED__",
+        paths.resource_path(f"{icons}/chevron-down{suffix}-disabled.svg").as_posix(),
+    )
+    text = text.replace(
+        "__CHEVRON_DOWN__",
+        paths.resource_path(f"{icons}/chevron-down{suffix}.svg").as_posix(),
+    )
     text = text.replace("__CHECK__", paths.resource_path("gui/resources/check.png").as_posix())
     text = text.replace("__FONT__", font_stack(font))
     palette = theme_palette(theme, accent)
@@ -433,6 +580,7 @@ def apply_theme(
     app.setPalette(theme_qpalette(theme, accent))
     # Publish the tokens before the sheet: a widget that reacts to StyleChange reads them there.
     _last_tokens = dict(palette)
+    _last_theme = theme
     # Clear the application sheet before installing the new one. Qt's cost for *replacing* it accumulates
     # within a process: in a clean run with one window, eight consecutive replacements took 0.06s, 0.25s,
     # 0.42s, 0.42s, 0.44s, 1.72s, 2.16s, and a real 1455-widget window paid 4.5-6.5s per dark/light switch

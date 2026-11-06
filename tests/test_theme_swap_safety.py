@@ -89,14 +89,20 @@ def test_window_buttons_carry_the_current_tokens(app):
         app.processEvents()
         button = window.title_bar.close_button
         dark_sheet = button.styleSheet()
+        dark_tokens = theme.current_tokens()
         assert dark_sheet, "the button should carry its own stylesheet"
-        assert theme.current_tokens()["FG_HINT"] in dark_sheet, "the dark hint colour should be in force"
+        # The title bar is the one chrome surface that is deliberately theme-invariant: both themes
+        # use the same blue and the same white glyph. What must still hold is that the sheet follows
+        # the tokens (a stale FG_HINT is the regression this test exists for).
+        assert dark_tokens["FG_TOPBAR"] in dark_sheet, "the top-bar text colour should be in force"
         assert theme.is_applying() is False
 
         theme.apply_theme("light", "#2f9e6f")
         app.processEvents()
         light_sheet = button.styleSheet()
-        assert theme.current_tokens()["FG_HINT"] in light_sheet, "the light hint colour should be in force"
-        assert light_sheet != dark_sheet, "a theme change must reach the button"
+        light_tokens = theme.current_tokens()
+        assert light_tokens["FG_TOPBAR"] in light_sheet, "the top-bar text colour should be in force"
+        assert light_sheet == dark_sheet, "the top bar is intentionally the same in both themes"
+        assert light_tokens["BG_WINDOW"] != dark_tokens["BG_WINDOW"], "the theme swap itself must have run"
     finally:
         window.close()

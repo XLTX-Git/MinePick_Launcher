@@ -20,9 +20,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -31,13 +33,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from launcher import __version__
 from launcher.i18n import describe_network_error, tr_core
+from launcher.meta import sources
 
 MANIFEST_URLS = (
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
     "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
 )
 USER_AGENT = f"MinePick-Launcher/{__version__}"
+#: How long the cached manifest is trusted without asking for a newer one. Kept at the historical
+#: hour; the point of the background refresh is that a start after that hour still paints at once.
 DEFAULT_MAX_AGE = 3600.0
+
+logger = logging.getLogger(__name__)
 
 
 class MetaError(Exception):
@@ -164,31 +171,78 @@ class _SharedHttpClient(httpx.Client):
         super().close()
 
 
+class _LazyTransport(httpx.BaseTransport):
+    """Build the real transport - and its TLS context - on the first request that needs it.
+
+    ``httpx`` builds that context eagerly, measured at ~316 ms on this machine, which is more than a
+    whole cached response costs. A start that only reads cached data must not pay it; the first real
+    request does, exactly like it had to before the cache existed.
+    """
+
+    def __init__(self, factory: Callable[[], httpx.BaseTransport]) -> None:
+        self._factory = factory
+        self._inner: httpx.BaseTransport | None = None
+        self._lock = threading.Lock()
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return self._built().handle_request(request)
+
+    def _built(self) -> httpx.BaseTransport:
+        if self._inner is None:
+            with self._lock:
+                if self._inner is None:
+                    self._inner = self._factory()
+        return self._inner
+
+    def close(self) -> None:
+        if self._inner is not None:
+            self._inner.close()
+
+
 _shared_client: httpx.Client | None = None
 _shared_client_lock = threading.Lock()
 
 
 def _new_client() -> httpx.Client:
-    """Return a shared reusable client (system CA + proxy injected).
+    """Return the process-wide shared client: one connection pool plus the on-disk response cache.
 
-    Callers may call close() safely - the shared pool survives. Call
-    reset_http_client() to actually rebuild it after proxy / API key changes.
+    One pool for every call site is what removes the 95-220 ms TLS handshake a fresh ``httpx.Client()``
+    paid per request; the caching transport is what makes a repeated JSON request cost a file read
+    instead of a round trip. ``close()`` is a no-op on this subclass, so the per-call cleanup the
+    callers already had (``finally: client.close()``) keeps the pool alive; the one real close happens
+    at shutdown through :func:`reset_http_client`.
     """
     global _shared_client
     if _shared_client is not None:
         return _shared_client
     with _shared_client_lock:
         if _shared_client is None:
-            _enable_system_ca()
-            kwargs: dict = {
-                "headers": {"User-Agent": USER_AGENT},
-                "timeout": 30.0,
-                "follow_redirects": True,
-            }
-            proxy = _proxy_url()
-            if proxy:
-                kwargs["proxies"] = {"http://": proxy, "https://": proxy}
-            _shared_client = _SharedHttpClient(**kwargs)
+            # Imported here, not at module scope: launcher.net.downloader imports this module, so a
+            # top-level import would be a cycle at package-import time.
+            from launcher.net import http_cache
+
+            def _build_transport() -> httpx.BaseTransport:
+                # The system CA store must be injected before the SSL context exists, and that context
+                # is exactly what this factory delays.
+                _enable_system_ca()
+                return httpx.HTTPTransport(
+                    proxy=_proxy_url(),
+                    trust_env=True,
+                    # Longer than httpx's 5 s default: a connection kept for a minute covers the
+                    # "search, read the list, search again" rhythm without a new handshake.
+                    limits=httpx.Limits(
+                        max_connections=32,
+                        max_keepalive_connections=16,
+                        keepalive_expiry=60.0,
+                    ),
+                )
+
+            _shared_client = _SharedHttpClient(
+                headers={"User-Agent": USER_AGENT},
+                timeout=30.0,
+                follow_redirects=True,
+                transport=http_cache.CachingTransport(_LazyTransport(_build_transport)),
+            )
         return _shared_client
 
 
@@ -202,28 +256,29 @@ def reset_http_client() -> None:
 
 
 def _fetch_first(client: httpx.Client, urls: tuple[str, ...]) -> dict:
-    last_error: Exception | None = None
-    for url in urls:
-        try:
-            resp = client.get(url)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPError as exc:
-            last_error = exc
-    raise MetaError(
-        tr_core("meta.manifest_fetch_failed", describe_network_error(last_error))
-    ) from last_error
+    """Fetch the manifest from the first address the source resolver offers.
+
+    The order (official, then the BMCLAPI mirrors in the ``auto`` setting) and the switching log
+    live in :mod:`launcher.meta.sources`; this function keeps its historical error message.
+    """
+    try:
+        return sources.fetch_json(client, urls, kind=sources.KIND_META)
+    except httpx.HTTPError as exc:
+        raise MetaError(
+            tr_core("meta.manifest_fetch_failed", describe_network_error(exc))
+        ) from exc
 
 
-def _read_cache(cache_path: Path, max_age: float) -> VersionManifest | None:
+def _read_cache_raw(cache_path: Path) -> tuple[dict, float] | None:
+    """The cached manifest body plus when it was fetched, whatever its age."""
     try:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
-        fetched_at = float(data.get("fetched_at", 0))
-        if time.time() - fetched_at < max_age:
-            return VersionManifest.model_validate(data["manifest"])
+        raw = data["manifest"]
+        if not isinstance(raw, dict):
+            return None
+        return raw, float(data.get("fetched_at", 0))
     except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return None
+        return None
 
 
 def _write_cache(cache_path: Path, raw: dict) -> None:
@@ -234,17 +289,138 @@ def _write_cache(cache_path: Path, raw: dict) -> None:
     tmp.replace(cache_path)
 
 
+# --- background refresh -------------------------------------------------------------------------
+#
+# The manifest is the first thing the versions page needs, and it is 278 KB. A start therefore paints
+# the copy from disk and revalidates it behind the paint: the request goes through the caching
+# transport, which sends If-None-Match / If-Modified-Since, so an unchanged manifest costs one 304
+# (~0.1 s measured) instead of a full download (~1.5 s). Only a *different* manifest touches the
+# listeners, which is what keeps a GUI from rebuilding its list for nothing.
+
+_refresh_lock = threading.Lock()
+_refreshing: set[Path] = set()
+_refresh_threads: list[threading.Thread] = []
+_listener_lock = threading.Lock()
+_refresh_listeners: list[Callable[[VersionManifest], None]] = []
+
+
+def add_refresh_listener(callback: Callable[[VersionManifest], None]) -> None:
+    """Register ``callback`` for a background refresh that brought a different manifest.
+
+    The callback runs on the refresh thread and only for a changed manifest - the blocking first fetch
+    is returned to the caller directly. A GUI listener must hop to its own thread; the launcher's
+    bridge does that with a Qt signal.
+    """
+    with _listener_lock:
+        if callback not in _refresh_listeners:
+            _refresh_listeners.append(callback)
+
+
+def remove_refresh_listener(callback: Callable[[VersionManifest], None]) -> None:
+    with _listener_lock:
+        try:
+            _refresh_listeners.remove(callback)
+        except ValueError:
+            pass
+
+
+def wait_for_background_refresh(timeout: float = 5.0) -> bool:
+    """Wait for the manifest refreshes this process started (tests and shutdown)."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        with _refresh_lock:
+            _refresh_threads[:] = [thread for thread in _refresh_threads if thread.is_alive()]
+            running = list(_refresh_threads)
+        if not running:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        running[0].join(min(remaining, 0.05))
+
+
+def _notify_refreshed(manifest: VersionManifest) -> None:
+    with _listener_lock:
+        listeners = list(_refresh_listeners)
+    for callback in listeners:
+        try:
+            callback(manifest)
+        except Exception:  # a listener may not break the refresh
+            logger.debug("版本清单刷新回调失败", exc_info=True)
+
+
+def _start_background_refresh(
+    cache_path: Path, previous_raw: dict, client: httpx.Client | None
+) -> None:
+    with _refresh_lock:
+        if cache_path in _refreshing:
+            return
+        _refreshing.add(cache_path)
+        thread = threading.Thread(
+            target=_refresh_manifest,
+            args=(cache_path, previous_raw, client),
+            name="manifest-refresh",
+            daemon=True,
+        )
+        _refresh_threads.append(thread)
+        thread.start()
+
+
+def _refresh_manifest(
+    cache_path: Path, previous_raw: dict, client: httpx.Client | None
+) -> None:
+    try:
+        own = client is None
+        active = client or _new_client()
+        try:
+            raw = sources.fetch_json(
+                active,
+                MANIFEST_URLS,
+                kind=sources.KIND_META,
+                context="version_manifest",
+                headers={"Cache-Control": "no-cache"},
+            )
+        finally:
+            if own:
+                active.close()
+        if not isinstance(raw, dict) or not raw.get("versions"):
+            return
+        _write_cache(cache_path, raw)
+        if raw != previous_raw:
+            _notify_refreshed(VersionManifest.model_validate(raw))
+    except (httpx.HTTPError, OSError, ValueError):
+        logger.debug("版本清单后台刷新失败", exc_info=True)
+    finally:
+        with _refresh_lock:
+            _refreshing.discard(cache_path)
+
+
 def fetch_manifest(
     cache_path: Path | None = None,
     max_age: float = DEFAULT_MAX_AGE,
     force: bool = False,
     client: httpx.Client | None = None,
 ) -> VersionManifest:
-    """Fetch the version manifest; when cache_path is provided, cache it by age (default 1 hour)."""
+    """Load the version manifest, cache-first.
+
+    With a cache file the copy on disk is returned immediately - whatever its age - and a stale copy
+    (older than ``max_age``) additionally starts one background conditional fetch. That fetch asks for
+    a fresh copy even when the response cache is still inside its own max-age window, so the server
+    answers 304 and the 278 KB body is not transferred again; only a changed manifest rewrites the
+    cache and tells the registered refresh listeners.
+    """
     if cache_path is not None and not force:
-        cached = _read_cache(cache_path, max_age)
+        cached = _read_cache_raw(cache_path)
         if cached is not None:
-            return cached
+            raw, fetched_at = cached
+            try:
+                manifest = VersionManifest.model_validate(raw)
+            except ValueError:
+                manifest = None
+            if manifest is not None:
+                if time.time() - fetched_at >= max_age:
+                    _start_background_refresh(cache_path, raw, client)
+                return manifest
     own = client is None
     if own:
         client = _new_client()

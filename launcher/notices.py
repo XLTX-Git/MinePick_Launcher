@@ -63,6 +63,7 @@ DEPENDENCIES: tuple[Credit, ...] = (
         "https://cryptography.io/",
     ),
     Credit("truststore", "about.credit.truststore", "MIT", "https://github.com/sethmlarson/truststore"),
+    Credit("Lucide", "about.credit.lucide", "ISC", "https://lucide.dev/"),
 )
 
 DEV_TOOLS: tuple[Credit, ...] = (
@@ -73,6 +74,10 @@ SERVICES: tuple[Credit, ...] = (
     Credit("Mojang & Microsoft", "about.credit.mojang", url="https://www.minecraft.net/"),
     Credit("Modrinth", "about.credit.modrinth", url="https://modrinth.com/"),
     Credit("CurseForge", "about.credit.curseforge", url="https://www.curseforge.com/minecraft"),
+    # A resource mirror service, not a code dependency and not a download source yet: the downloader
+    # does not call it today, so the description stays neutral ("a mirror service") rather than claiming
+    # this launcher downloads through it. If a download source is added later, the wording may say so.
+    Credit("BMCLAPI", "about.credit.bmclapi", url="https://github.com/bangbang93/BMCLAPI"),
     Credit("Fabric", "about.credit.fabric", url="https://fabricmc.net/"),
     Credit("Forge", "about.credit.forge", url="https://files.minecraftforge.net/"),
     Credit("NeoForge", "about.credit.neoforge", url="https://neoforged.net/"),
@@ -94,7 +99,7 @@ COMMUNITY: tuple[Credit, ...] = (
     Credit(
         "MinePick Launcher Classic",
         "about.credit.classic",
-        url="https://github.com/xltxdocs/MinePick_Launcher_Classic",
+        url="https://github.com/XLTX-Git/MinePick_Launcher_Classic",
     ),
     Credit(
         "TheDarkLord234",

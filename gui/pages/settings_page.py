@@ -15,12 +15,14 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Settings page: game directory, Java, memory, concurrency, version isolation, game language, launcher language."""
+"""Settings page: game folders, Java, memory, concurrency, version isolation, game language, launcher language."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontDatabase
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFontDatabase, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -35,17 +37,19 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
-from gui import i18n
+from gui import i18n, inwindow_dialog
 from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve_theme
 from gui.widgets import (
     AccessibilityPreferenceGroup,
-    NoWheelDoubleSpinBox,
+    ElidedLabel,
     NoWheelSpinBox,
-    build_page_header,
+    add_page_top_inset,
     set_app_status,
     style_form,
     style_page_layout,
@@ -56,6 +60,45 @@ tr = i18n.tr
 
 # One-click accent colours offered next to the hex field
 ACCENT_PRESETS = ("#35a06a", "#3b82f6", "#a855f7", "#e0703a", "#e05a5a", "#14b8a6", "#ec4899", "#f59e0b")
+
+# PCL's settings metrics scaled to this window, tightened one more step: this window is 1000px
+# wide, so the rows are a 32px control plus a 6px gutter (38px pitch), with a fixed 216px label
+# column. The column grew from 176px so the longest German/French/Russian labels wrap to at most
+# two lines and still fit the 32px row (measured: 30px for two lines at 12px) instead of pushing
+# the row taller. The sheet carries the colours and the radius.
+FIELD_HEIGHT = 32
+FIELD_LABEL_WIDTH = 216
+ROW_SPACING = 6
+
+
+def _wrap_checkbox_text(checkbox: QCheckBox, text: str, width: int) -> str:
+    """Insert the line breaks a QCheckBox cannot compute for itself.
+
+    QCheckBox draws its label on one line, so a long sentence - the encryption row is
+    ~900px in English - used to force the whole settings card wider than the viewport,
+    which pushed every field's right edge off-screen. QCheckBox does honour explicit
+    newlines (measured: its size hint grows in height and shrinks to the longest line),
+    so the label is laid out here at the card's text width and the resulting lines are
+    joined with ``\\n``. Languages whose sentence already fits are returned untouched.
+    """
+    if checkbox.fontMetrics().horizontalAdvance(text) <= width:
+        return text
+    layout = QTextLayout(text, checkbox.font())
+    option = QTextOption()
+    option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    layout.setTextOption(option)
+    layout.beginLayout()
+    lines: list[str] = []
+    while True:
+        line = layout.createLine()
+        if not line.isValid():
+            break
+        line.setLineWidth(width)
+        start = line.textStart()
+        lines.append(text[start : start + line.textLength()].rstrip())
+    layout.endLayout()
+    return "\n".join(line for line in lines if line)
+
 
 # Pinned to the top of the font list when installed
 COMMON_FONTS = (
@@ -115,29 +158,151 @@ class SettingsPage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.game_dir_edit = QLineEdit()
-        self.game_dir_edit.setPlaceholderText(tr("wizard.default_dir.hint"))  # 留空使用默认目录
-        self.browse_game = QPushButton(tr("settings.browse"))
-        self.browse_game.setObjectName("secondaryButton")
+        # Scopes the PCL-style sheet rules to this page only (see style_light.qss). The attribute is
+        # what lets a plain QWidget paint the gradient that rule names; without it Qt skips the
+        # background and the page stays the window's white - i.e. the flat look this mock-up removes.
+        self.setObjectName("settingsPage")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # Game folders: the settings page owned one path field until this round; the row is now the
+        # list of known folders, and `game_dir` remains the *current* one (see launcher/config.py).
+        self.folder_list = QWidget()
+        self.folder_rows_layout = QVBoxLayout(self.folder_list)
+        self.folder_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.folder_rows_layout.setSpacing(ROW_SPACING)
+        self.folder_hint = QLabel(tr("settings.folder.hint"))
+        self.folder_hint.setObjectName("hint")
+        self.folder_hint.setWordWrap(True)
+        # Why the current folder cannot change right now (a download / a launch is using it). Hidden
+        # until there is a reason: a permanent "you may switch" line would be noise.
+        self.folder_busy_label = QLabel("")
+        self.folder_busy_label.setObjectName("hint")
+        self.folder_busy_label.setWordWrap(True)
+        self.folder_busy_label.setVisible(False)
+        self.add_folder_button = QPushButton(tr("settings.folder.add"))
+        self.add_folder_button.setObjectName("secondaryButton")
+        self.add_folder_button.setFixedHeight(FIELD_HEIGHT)
+        self.add_folder_button.clicked.connect(self._browse_add_folder)
+        self.folder_box = QWidget()
+        folder_box_layout = QVBoxLayout(self.folder_box)
+        folder_box_layout.setContentsMargins(0, 0, 0, 0)
+        folder_box_layout.setSpacing(ROW_SPACING)
+        folder_box_layout.addWidget(self.folder_list)
+        folder_box_layout.addWidget(self.folder_hint)
+        folder_box_layout.addWidget(self.folder_busy_label)
+        folder_add_row = QHBoxLayout()
+        folder_add_row.setContentsMargins(0, 0, 0, 0)
+        folder_add_row.setSpacing(ROW_SPACING)
+        folder_add_row.addWidget(self.add_folder_button)
+        folder_add_row.addStretch(1)
+        folder_box_layout.addLayout(folder_add_row)
+        # The busy rule is re-evaluated while the page is visible: a download can finish (or a launch
+        # can end) while the user is sitting on this page, and a disabled button that never comes back
+        # would look broken. Nothing is polled while the page is hidden (the timer runs only between
+        # showEvent and hideEvent).
+        self._folder_rows: list[tuple[Path, bool, QPushButton, QPushButton]] = []
+        self._active_folder_path: Path | None = None
+        self._folder_busy_timer = QTimer(self)
+        self._folder_busy_timer.setInterval(1000)
+        self._folder_busy_timer.timeout.connect(self._update_folder_actions)
         self.java_path_edit = QLineEdit()
         self.java_path_edit.setAccessibleName(tr("settings.java"))  # WCAG 4.1.2
         self.browse_java = QPushButton(tr("settings.browse"))
         self.browse_java.setObjectName("secondaryButton")
-        self.memory_spin = NoWheelDoubleSpinBox()
-        self.memory_spin.setRange(0.5, 64.0)
-        self.memory_spin.setSingleStep(0.5)
-        self.memory_spin.setSuffix(" " + tr("unit.gb"))
+        # Memory: a slider plus a live read-out (PCL's shape). The slider is the control; the
+        # number is text, so a value stored outside the device range stays visible instead of
+        # being silently rounded into the slider's range.
+        self.memory_slider = QSlider(Qt.Orientation.Horizontal)
+        self.memory_slider.setObjectName("memorySlider")
+        self.memory_slider.setAccessibleName(tr("settings.memory"))
+        self.memory_slider.setSingleStep(1)
+        self.memory_slider.setPageStep(2)
+        # The handle is a 16px circle: give the widget room for it instead of letting the
+        # default 15px size hint clip it into an oval.
+        self.memory_slider.setFixedHeight(20)
+        self.memory_value_label = QLabel("")
+        self.memory_value_label.setObjectName("memoryValue")
+        self.memory_recommend_label = QLabel("")
+        self.memory_recommend_label.setObjectName("hint")
+        self.memory_warning_label = QLabel("")
+        self.memory_warning_label.setObjectName("hint")
+        self.memory_warning_label.setWordWrap(True)
+        self.memory_warning_label.setVisible(False)
+        self._memory_value = 4.0
+        self._memory_min_gb = 1.0
+        self._memory_max_gb = 8.0
+        self._memory_java_32bit = False
+        self._updating_memory_slider = False
+        memory_row = QWidget()
+        memory_row_layout = QHBoxLayout(memory_row)
+        memory_row_layout.setContentsMargins(0, 0, 0, 0)
+        memory_row_layout.setSpacing(12)
+        memory_row_layout.addWidget(self.memory_slider, 1)
+        memory_row_layout.addWidget(self.memory_value_label, 0)
+        memory_row.setFixedHeight(FIELD_HEIGHT)
+        self.memory_box = QWidget()
+        memory_box_layout = QVBoxLayout(self.memory_box)
+        memory_box_layout.setContentsMargins(0, 0, 0, 0)
+        memory_box_layout.setSpacing(4)
+        memory_box_layout.addWidget(memory_row)
+        memory_box_layout.addWidget(self.memory_recommend_label)
+        memory_box_layout.addWidget(self.memory_warning_label)
         self.memory_auto_check = QCheckBox(tr("settings.memory_auto"))
         self.memory_auto_check.toggled.connect(self._on_memory_auto_toggled)
-        self.memory_suggest_label = QLabel("")
-        self.memory_suggest_label.setObjectName("hint")
         self.concurrency_spin = NoWheelSpinBox()
         self.concurrency_spin.setRange(1, 32)
         self.download_segments_spin = NoWheelSpinBox()
         self.download_segments_spin.setRange(1, 16)
-        self.download_segments_spin.setSpecialValueText(tr("settings.download_segments.single"))
         self.download_segments_spin.setToolTip(tr("settings.download_segments.hint"))
-        self.isolation_check = QCheckBox(tr("settings.isolation"))
+        # WCAG 4.1.2: the spin sits in a box (field + hint), so QFormLayout no longer hands it the
+        # row label; name it explicitly like the game-directory / accent fields.
+        self.download_segments_spin.setAccessibleName(tr("settings.download_segments"))
+        self.download_segments_spin.setAccessibleDescription(
+            tr("settings.download_segments.single_hint")
+        )
+        # A numeric field shows a number, never a word: 1 stays "1", and the sentence that explains
+        # what 1 means is a 12px hint under the row instead of replacing the value.
+        self.download_segments_hint = QLabel(tr("settings.download_segments.single_hint"))
+        self.download_segments_hint.setObjectName("hint")
+        self.download_segments_hint.setWordWrap(True)
+        self.download_segments_box = QWidget()
+        segments_layout = QVBoxLayout(self.download_segments_box)
+        segments_layout.setContentsMargins(0, 0, 0, 0)
+        segments_layout.setSpacing(4)
+        segments_layout.addWidget(self.download_segments_spin)
+        segments_layout.addWidget(self.download_segments_hint)
+        # Version isolation is a fixed choice, so it is a dropdown like the other enumerated
+        # settings. It stays where the checkbox was (same tab position); the old sentence becomes
+        # the hint under the row instead of a checkbox label.
+        self.isolation_combo = QComboBox()
+        self.isolation_combo.addItem(tr("settings.isolation.combo.on"), True)
+        self.isolation_combo.addItem(tr("settings.isolation.combo.off"), False)
+        self.isolation_combo.setFixedHeight(FIELD_HEIGHT)
+        self.isolation_combo.setMinimumWidth(0)
+        self.isolation_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.isolation_combo.setAccessibleName(tr("settings.isolation.label"))
+        self.isolation_combo.setAccessibleDescription(tr("settings.isolation"))
+        self.isolation_hint = QLabel(tr("settings.isolation"))
+        self.isolation_hint.setObjectName("hint")
+        self.isolation_hint.setWordWrap(True)
+        self.isolation_label = QLabel(tr("settings.isolation.label"))
+        self.isolation_label.setObjectName("settingsFieldLabel")
+        self.isolation_label.setFixedWidth(FIELD_LABEL_WIDTH)
+        self.isolation_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.isolation_label.setWordWrap(True)
+        isolation_right = QWidget()
+        isolation_right_layout = QVBoxLayout(isolation_right)
+        isolation_right_layout.setContentsMargins(0, 0, 0, 0)
+        isolation_right_layout.setSpacing(4)
+        isolation_right_layout.addWidget(self.isolation_combo)
+        isolation_right_layout.addWidget(self.isolation_hint)
+        self.isolation_row = QWidget()
+        isolation_layout = QHBoxLayout(self.isolation_row)
+        isolation_layout.setContentsMargins(0, 0, 0, 0)
+        isolation_layout.setSpacing(16)
+        isolation_layout.addWidget(self.isolation_label)
+        isolation_layout.addWidget(isolation_right, 1)
         self.demo_check = QCheckBox(tr("launch.demo"))
         self.after_launch_combo = QComboBox()
         for code, label in (
@@ -161,7 +326,12 @@ class SettingsPage(QWidget):
         accessibility_layout.setSpacing(8)
         accessibility_layout.addWidget(self.accessibility_hint)
         accessibility_layout.addWidget(self.accessibility_group)
-        self.encrypt_check = QCheckBox(tr("settings.encrypt_tokens"))
+        self.encrypt_check = QCheckBox()
+        # This row also holds the password button: wrap the label at 500px so text + button
+        # together stay below the card width in German, where the sentence is the longest.
+        self.encrypt_check.setText(
+            _wrap_checkbox_text(self.encrypt_check, tr("settings.encrypt_tokens"), 500)
+        )
         self.encrypt_button = QPushButton(tr("settings.encrypt_set"))
         self.encrypt_button.setObjectName("secondaryButton")
         self.language_combo = QComboBox()
@@ -179,8 +349,30 @@ class SettingsPage(QWidget):
         self.speed_limit_spin = NoWheelSpinBox()
         self.speed_limit_spin.setRange(0, 1_048_576)
         self.speed_limit_spin.setSingleStep(100)
-        self.speed_limit_spin.setSuffix(" " + tr("unit.kb_s"))
-        self.speed_limit_spin.setSpecialValueText(tr("common.off"))
+        # Two independent download-source settings: versions/manifests and resource files each pick
+        # mirror-first / automatic / official-first. The values are launcher.meta.sources' mode codes;
+        # the hint under the rows explains what "automatic" really does.
+        self.source_meta_combo = QComboBox()
+        self.source_assets_combo = QComboBox()
+        for combo in (self.source_meta_combo, self.source_assets_combo):
+            for code, label in (
+                ("mirror", tr("settings.source.mirror")),
+                ("auto", tr("settings.source.auto")),
+                ("official", tr("settings.source.official")),
+            ):
+                combo.addItem(label, code)
+        self.source_meta_combo.setToolTip(tr("settings.source.meta.hint"))
+        self.source_meta_combo.setAccessibleName(tr("settings.source.meta"))
+        self.source_meta_combo.setAccessibleDescription(tr("settings.source.meta.hint"))
+        self.source_assets_combo.setToolTip(tr("settings.source.assets.hint"))
+        self.source_assets_combo.setAccessibleName(tr("settings.source.assets"))
+        self.source_assets_combo.setAccessibleDescription(tr("settings.source.assets.hint"))
+        self.source_hint = QLabel(tr("settings.source.auto.hint"))
+        self.source_hint.setObjectName("hint")
+        self.source_hint.setWordWrap(True)
+        # The number is the value; the unit lives in the row label ("KB/s, 0=unlimited"), the same
+        # way the memory row's label carries "GB".
+        # No special-value wording: 0 renders as "0" (the label already says 0 = unlimited).
         self.window_mode_combo = QComboBox()
         for code, label in (
             ("default", tr("settings.window_mode.default")),
@@ -251,28 +443,29 @@ class SettingsPage(QWidget):
 
         form = QFormLayout()
         style_form(form)
+        # PCL's settings row: a 32px field plus this 6px gap is the 38px row pitch. The label
+        # column is fixed in _apply_form_metrics() so every field starts on the same vertical line.
+        form.setVerticalSpacing(ROW_SPACING)
         # WCAG 4.1.2: a control added straight to a row *is* the row's field, so QFormLayout hands it the
-        # label text as its accessible name. Wrapping a control in a layout instead (the three rows
-        # below) breaks that association - the form sees a layout, not a field - which left the game
-        # directory and accent fields announced as unnamed edit boxes. The names are set explicitly
-        # rather than through a buddy, so they reach UIA on every platform and survive a row being
-        # restructured later.
-        self.game_dir_edit.setAccessibleName(tr("settings.game_dir"))  # WCAG 4.1.2
+        # label text as its accessible name. Wrapping a control in a layout instead (the accent row)
+        # breaks that association - the form sees a layout, not a field - which left the accent field
+        # announced as an unnamed edit box. The names are set explicitly rather than through a buddy,
+        # so they reach UIA on every platform and survive a row being restructured later. The folder
+        # rows are a container of buttons now; each button carries its folder's name explicitly.
         self.accent_edit.setAccessibleName(tr("settings.accent"))  # WCAG 4.1.2
-        game_row = QHBoxLayout()
-        game_row.addWidget(self.game_dir_edit, 1)
-        game_row.addWidget(self.browse_game)
         java_row = QHBoxLayout()
         java_row.addWidget(self.java_path_edit, 1)
         java_row.addWidget(self.browse_java)
-        form.addRow(tr("settings.game_dir"), game_row)
+        form.addRow(tr("settings.game_dir"), self.folder_box)
         form.addRow(tr("settings.java"), java_row)
-        form.addRow(tr("settings.memory"), self.memory_spin)
+        form.addRow(tr("settings.memory") + tr("unit.gb.label"), self.memory_box)
         form.addRow("", self.memory_auto_check)
-        form.addRow("", self.memory_suggest_label)
         form.addRow(tr("settings.concurrency"), self.concurrency_spin)
-        form.addRow(tr("settings.download_segments"), self.download_segments_spin)
+        form.addRow(tr("settings.download_segments"), self.download_segments_box)
         form.addRow(tr("settings.speed_limit"), self.speed_limit_spin)
+        form.addRow(tr("settings.source.meta"), self.source_meta_combo)
+        form.addRow(tr("settings.source.assets"), self.source_assets_combo)
+        form.addRow("", self.source_hint)
         form.addRow(tr("settings.proxy"), self.proxy_edit)
         form.addRow(tr("settings.cf_key"), self.cf_key_edit)
         form.addRow(tr("settings.window_mode"), self.window_mode_combo)
@@ -294,6 +487,7 @@ class SettingsPage(QWidget):
         form.addRow(tr("settings.game_language"), self.language_combo)
         form.addRow(tr("settings.ui_language"), self.ui_language_combo)
         form.addRow(tr("settings.after_launch"), self.after_launch_combo)
+        self._apply_form_metrics(form)
 
         encrypt_row = QHBoxLayout()
         encrypt_row.addWidget(self.encrypt_check, 1)
@@ -304,10 +498,14 @@ class SettingsPage(QWidget):
         buttons_row.addStretch(1)
 
         inner = QWidget()
+        inner.setObjectName("settingsCard")
         layout = QVBoxLayout(inner)
+        # The card's 16px inner padding and 12px block gap are layout values, not sheet values.
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
         layout.addLayout(form)
         layout.addWidget(self.accessibility_box)
-        layout.addWidget(self.isolation_check)
+        layout.addWidget(self.isolation_row)
         layout.addWidget(self.demo_check)
         layout.addWidget(self.trim_memory_check)
         layout.addWidget(self.analysis_check)
@@ -321,18 +519,43 @@ class SettingsPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(inner)
+        # Kept for the folder rows' tab order: they are created after every other control, so Qt's
+        # default chain would park them behind the page's last button (see _reload_folders).
+        self.page_scroll = scroll
         outer = QVBoxLayout(self)
         style_page_layout(outer)
-        outer.addWidget(build_page_header(tr("nav.settings"), tr("page.settings.desc")))
+        add_page_top_inset(outer)
         outer.addWidget(scroll)
 
-        self.browse_game.clicked.connect(self._browse_game)
         self.browse_java.clicked.connect(self._browse_java)
         self.encrypt_button.clicked.connect(self._change_password)
         self.open_data_dir_button.clicked.connect(self._open_data_dir)
         self.theme_combo.currentIndexChanged.connect(self._update_accent_swatch)
+        self._reserve_memory_value_width()
         self.load()
         self._connect_autosave()
+
+    def _reserve_memory_value_width(self) -> None:
+        """Give the memory read-out the width of its widest value, so the row never re-flows.
+
+        The read-out is text, so its width followed the number: dragging the slider from "4.0" to
+        "12.0" widened the row, which raised the page's minimum width and pushed the window wider.
+        Reserving the widest value the field can ever show (``CONFIG_MAX_HEAP_GB``, one decimal) and
+        right-aligning it means the digits change while the geometry does not. ``minimumWidth``, not
+        ``setFixedWidth``: a larger UI font or a higher DPI may still need more room, and a fixed
+        width would clip it.
+
+        Called after the page layout is assembled (so the scoped QSS font is the one being measured)
+        and before ``load()`` (so the first value already lands in a stable row).
+        """
+        from launcher.memory import CONFIG_MAX_HEAP_GB
+
+        label = self.memory_value_label
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        label.setText(f"{CONFIG_MAX_HEAP_GB:.1f}")
+        label.ensurePolished()
+        label.setMinimumWidth(label.sizeHint().width())
+        label.clear()
 
     def _connect_autosave(self) -> None:
         """There is no Save button: every control writes its value as soon as it changes.
@@ -351,12 +574,14 @@ class SettingsPage(QWidget):
             self.language_combo,
             self.after_launch_combo,
             self.window_mode_combo,
+            self.isolation_combo,
+            self.source_meta_combo,
+            self.source_assets_combo,
             self.font_combo,
         ):
             on_change(combo.currentIndexChanged)
         for check in (
             self.memory_auto_check,
-            self.isolation_check,
             self.demo_check,
             self.trim_memory_check,
             self.analysis_check,
@@ -365,14 +590,12 @@ class SettingsPage(QWidget):
             on_change(check.toggled)
         on_change(self.accessibility_group.changed)
         for spin in (
-            self.memory_spin,
             self.concurrency_spin,
             self.download_segments_spin,
             self.speed_limit_spin,
         ):
             on_change(spin.valueChanged)
         for edit in (
-            self.game_dir_edit,
             self.java_path_edit,
             self.proxy_edit,
             self.cf_key_edit,
@@ -383,17 +606,88 @@ class SettingsPage(QWidget):
         if font_line is not None:
             on_change(font_line.editingFinished)
         self.accent_default_button.clicked.connect(lambda *_: self.save())
+        # Drag updates the read-out on every step but writes once, on release; a keyboard step
+        # (not sliderDown) still saves immediately, like every other control on the page.
+        self.memory_slider.valueChanged.connect(self._on_memory_slider_changed)
+        self.memory_slider.sliderReleased.connect(self.save)
+        # A different Java can change the upper bound (a 32-bit JVM caps it at 1.5 GB).
+        self.java_path_edit.editingFinished.connect(self._refresh_memory_bounds)
+
+    def _apply_form_metrics(self, form: QFormLayout) -> None:
+        """PCL's settings metrics: fixed left-aligned label column, 32px fields, 38px row pitch.
+
+        Done after the rows exist because QFormLayout builds the label widget itself when a
+        plain string is passed. Rows whose field is a layout (Java path, accent) are measured
+        through the layout's child widgets; the browse button and the three spin boxes get the same
+        height as a text field.
+        """
+        fields = (
+            self.java_path_edit,
+            self.proxy_edit,
+            self.cf_key_edit,
+            self.accent_edit,
+            self.concurrency_spin,
+            self.download_segments_spin,
+            self.speed_limit_spin,
+            self.source_meta_combo,
+            self.source_assets_combo,
+            self.window_mode_combo,
+            self.theme_combo,
+            self.radius_combo,
+            self.font_combo,
+            self.language_combo,
+            self.ui_language_combo,
+            self.after_launch_combo,
+        )
+        for widget in fields:
+            widget.setFixedHeight(FIELD_HEIGHT)
+            # The path text otherwise becomes the card's minimum width, which is wider than
+            # the window at the 930px floor; the field may shrink and scroll its text instead.
+            widget.setMinimumWidth(0)
+            widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.add_folder_button.setFixedHeight(FIELD_HEIGHT)
+        self.add_folder_button.setMinimumWidth(0)
+        self.browse_java.setFixedHeight(FIELD_HEIGHT)
+        self.browse_java.setMinimumWidth(0)
+        for row in range(form.rowCount()):
+            label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            if label_item is not None and label_item.widget() is not None:
+                label = label_item.widget()
+                label.setObjectName("settingsFieldLabel")
+                label.setFixedWidth(FIELD_LABEL_WIDTH)
+                label.setAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
+                label.setWordWrap(True)
+            field_item = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+            if field_item is not None and field_item.layout() is not None:
+                layout = field_item.layout()
+                for index in range(layout.count()):
+                    child = layout.itemAt(index).widget()
+                    is_field = isinstance(child, (QLineEdit, QComboBox))
+                    is_browse = child is self.browse_java
+                    if is_field or is_browse:
+                        child.setFixedHeight(FIELD_HEIGHT)
+        # The folder list is several rows tall: its label reads as the row's heading, so it sits at the
+        # top instead of floating in the middle of the list. Row 0 is the game-directory row.
+        folder_label = form.itemAt(0, QFormLayout.ItemRole.LabelRole)
+        if folder_label is not None and folder_label.widget() is not None:
+            folder_label.widget().setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            )
 
     def load(self) -> None:
         cfg, _ = config.load()
-        self.game_dir_edit.setText(str(cfg.game_dir) if cfg.game_dir else "")
+        self._reload_folders(cfg)
         self.java_path_edit.setText(str(cfg.java_path) if cfg.java_path else "")
-        self.memory_spin.setValue(cfg.memory_gb)
+        self.java_path_edit.setCursorPosition(0)
+        self._memory_value = float(cfg.memory_gb)
+        self._refresh_memory_bounds()
         self.memory_auto_check.setChecked(cfg.memory_auto)
-        self._refresh_memory_suggestion()
         self.concurrency_spin.setValue(cfg.max_concurrent_downloads)
         self.download_segments_spin.setValue(cfg.download_segments)
-        self.isolation_check.setChecked(cfg.default_isolation)
+        isolation_index = self.isolation_combo.findData(bool(cfg.default_isolation))
+        self.isolation_combo.setCurrentIndex(max(isolation_index, 0))
         self.demo_check.setChecked(cfg.demo_mode)
         idx = self.after_launch_combo.findData(cfg.after_launch_behavior)
         self.after_launch_combo.setCurrentIndex(max(idx, 0))
@@ -408,6 +702,10 @@ class SettingsPage(QWidget):
         index2 = self.ui_language_combo.findData(cfg.ui_language)
         self.ui_language_combo.setCurrentIndex(max(index2, 0))
         self.speed_limit_spin.setValue(cfg.download_speed_limit_kb)
+        index_source_meta = self.source_meta_combo.findData(cfg.download_source_meta)
+        self.source_meta_combo.setCurrentIndex(max(index_source_meta, 0))
+        index_source_assets = self.source_assets_combo.findData(cfg.download_source_assets)
+        self.source_assets_combo.setCurrentIndex(max(index_source_assets, 0))
         index3 = self.window_mode_combo.findData(cfg.window_start_mode)
         self.window_mode_combo.setCurrentIndex(max(index3, 0))
         index4 = self.theme_combo.findData(cfg.theme)
@@ -470,13 +768,12 @@ class SettingsPage(QWidget):
                 self.encrypt_check.setChecked(True)  # keep it enabled
                 return
             cfg, cfg_path = config.load()
-        cfg.game_dir = self.game_dir_edit.text().strip() or None
         cfg.java_path = self.java_path_edit.text().strip() or None
-        cfg.memory_gb = self.memory_spin.value()
+        cfg.memory_gb = float(self._memory_value)
         cfg.memory_auto = self.memory_auto_check.isChecked()
         cfg.max_concurrent_downloads = self.concurrency_spin.value()
         cfg.download_segments = self.download_segments_spin.value()
-        cfg.default_isolation = self.isolation_check.isChecked()
+        cfg.default_isolation = bool(self.isolation_combo.currentData())
         cfg.demo_mode = self.demo_check.isChecked()
         cfg.after_launch_behavior = self.after_launch_combo.currentData() or "keep"
         cfg.trim_memory_on_launch = self.trim_memory_check.isChecked()
@@ -485,6 +782,8 @@ class SettingsPage(QWidget):
         cfg.game_language = self.language_combo.currentData()
         cfg.ui_language = self.ui_language_combo.currentData()
         cfg.download_speed_limit_kb = self.speed_limit_spin.value()
+        cfg.download_source_meta = self.source_meta_combo.currentData() or "auto"
+        cfg.download_source_assets = self.source_assets_combo.currentData() or "auto"
         cfg.http_proxy = self.proxy_edit.text().strip()
         cfg.curseforge_api_key = self.cf_key_edit.text().strip()
         cfg.window_start_mode = self.window_mode_combo.currentData()
@@ -516,22 +815,93 @@ class SettingsPage(QWidget):
         self.settings_changed.emit()
 
     def _on_memory_auto_toggled(self, checked: bool) -> None:
-        self.memory_spin.setEnabled(not checked)
-        if checked:
-            self._refresh_memory_suggestion()
+        """Auto mode owns the value; the slider and its read-out go quiet, not away."""
+        self.memory_slider.setEnabled(not checked)
+        self.memory_value_label.setEnabled(not checked)
 
-    def _refresh_memory_suggestion(self) -> None:
-        """Show the suggested heap size for the current game directory."""
+    def _refresh_memory_bounds(self) -> None:
+        """Recompute the device range (and the 32-bit ceiling) and clamp the thumb, not the value.
+
+        ``_memory_value`` is deliberately left alone when it sits outside ``[min, max]``: the
+        config may hold a larger heap from another machine, and opening this page must not
+        rewrite it. The thumb parks at the nearest end and a grey line says what was stored.
+        """
+        from launcher.java.locate import selected_java_bits
+        from launcher.memory import HEAP_STEP_GB, MIN_HEAP_GB, maximum_heap_gb, system_memory_gb
+
+        total_gb, _available = system_memory_gb()
+        self._memory_java_32bit = (
+            selected_java_bits(self.java_path_edit.text().strip() or None) == 32
+        )
+        self._memory_min_gb = MIN_HEAP_GB
+        self._memory_max_gb = maximum_heap_gb(
+            total_gb,
+            java_32bit=self._memory_java_32bit,
+            minimum_gb=self._memory_min_gb,
+        )
+        ticks = max(1, round((self._memory_max_gb - self._memory_min_gb) / HEAP_STEP_GB))
+        self._updating_memory_slider = True
         try:
-            from launcher.memory import count_mods, suggest_memory_gb
+            self.memory_slider.setRange(0, ticks)
+            self._position_memory_slider()
+        finally:
+            self._updating_memory_slider = False
+        self._update_memory_labels()
 
-            cfg, _ = config.load()
-            game_dir = cfg.game_dir or paths.default_game_dir()
-            mod_count = count_mods(game_dir / "mods")
-            suggestion = suggest_memory_gb(mod_count)
-            self.memory_suggest_label.setText(tr("settings.memory_suggest", f"{suggestion:.1f}"))
-        except OSError:  # probe failures are non-fatal
-            self.memory_suggest_label.setText("")
+    def _position_memory_slider(self) -> None:
+        """Park the thumb at the closest legal step to the stored value (guarded against save)."""
+        from launcher.memory import HEAP_STEP_GB
+
+        tick = round((self._memory_value - self._memory_min_gb) / HEAP_STEP_GB)
+        tick = max(0, min(int(tick), self.memory_slider.maximum()))
+        self._updating_memory_slider = True
+        try:
+            self.memory_slider.setValue(tick)
+        finally:
+            self._updating_memory_slider = False
+
+    def _on_memory_slider_changed(self, tick: int) -> None:
+        """Live read-out while dragging; save once on release or immediately for a key step."""
+        if self._updating_memory_slider:
+            return
+        from launcher.memory import HEAP_STEP_GB
+
+        self._memory_value = round(
+            self._memory_min_gb + tick * HEAP_STEP_GB, 2
+        )
+        self._update_memory_labels()
+        if not self.memory_slider.isSliderDown():
+            self.save()
+
+    def _update_memory_labels(self) -> None:
+        """Paint the GB read-out, the device recommendation and any non-blocking warning."""
+        # The field shows the number only; "GB" is in the row label. The accessible description
+        # still says the unit out loud, because a screen reader has no label column to lean on.
+        value_text = f"{self._memory_value:.1f}"
+        self.memory_value_label.setText(value_text)
+        self.memory_recommend_label.setText(
+            tr("settings.memory_recommend", f"{self._memory_max_gb:g}")
+        )
+        warnings: list[str] = []
+        if self._memory_java_32bit:
+            from launcher.memory import JAVA_32BIT_HEAP_LIMIT_GB
+
+            cap = min(self._memory_max_gb, JAVA_32BIT_HEAP_LIMIT_GB)
+            warnings.append(tr("settings.memory_java32", f"{cap:g}"))
+        if self._memory_value > self._memory_max_gb + 1e-9:
+            warnings.append(
+                tr(
+                    "settings.memory_over_limit",
+                    f"{self._memory_value:g}",
+                    f"{self._memory_max_gb:g}",
+                )
+            )
+        self.memory_warning_label.setText("\n".join(warnings))
+        self.memory_warning_label.setVisible(bool(warnings))
+        description = value_text + " " + tr("unit.gb") + " · " + self.memory_recommend_label.text()
+        if warnings:
+            description += " · " + " ".join(warnings)
+        self.memory_slider.setAccessibleDescription(description)
 
     def _update_encrypt_button(self) -> None:
         cfg, _ = config.load()
@@ -541,21 +911,19 @@ class SettingsPage(QWidget):
             self.encrypt_button.setText(tr("settings.encrypt_set"))
 
     def _prompt_new_password(self) -> str | None:
-        from PySide6.QtWidgets import QInputDialog, QLineEdit
-
-        first, ok = QInputDialog.getText(
+        first, ok = inwindow_dialog.get_text(
             self,
             tr("settings.encrypt_set"),
             tr("settings.encrypt.password.prompt"),
-            QLineEdit.EchoMode.Password,
+            password=True,
         )
         if not ok or not first:
             return None
-        second, ok2 = QInputDialog.getText(
+        second, ok2 = inwindow_dialog.get_text(
             self,
             tr("settings.encrypt_set"),
             tr("settings.encrypt.password.confirm"),
-            QLineEdit.EchoMode.Password,
+            password=True,
         )
         if not ok2 or first != second:
             set_app_status(self, tr("settings.encrypt.password.mismatch"))
@@ -563,13 +931,11 @@ class SettingsPage(QWidget):
         return first
 
     def _prompt_current_password(self) -> str | None:
-        from PySide6.QtWidgets import QInputDialog, QLineEdit
-
-        text, ok = QInputDialog.getText(
+        text, ok = inwindow_dialog.get_text(
             self,
             tr("settings.encrypt_change"),
             tr("settings.encrypt.current.prompt"),
-            QLineEdit.EchoMode.Password,
+            password=True,
         )
         if not ok or not text:
             return None
@@ -657,14 +1023,224 @@ class SettingsPage(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
         set_app_status(self, tr("settings.msg.data_dir_opened", str(target)))
 
-    def _browse_game(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, tr("settings.game_dir"), str(paths.default_game_dir()))
+    # ---------- game folders ----------
+
+    def _reload_folders(self, cfg=None) -> None:
+        """Draw one row per known folder: path, 「设为当前」 and 「移除」.
+
+        ``effective_game_folders`` also supplies the implicit env/platform folder of a config that has
+        never stored one, so the list is never empty and the last row's 移除 is disabled rather than
+        the page starting without any folder to show.
+        """
+        if cfg is None:
+            cfg, _ = config.load()
+        folders = cfg.effective_game_folders()
+        self._active_folder_path = cfg.game_dir
+        while self.folder_rows_layout.count():
+            item = self.folder_rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                # Reparent before the deferred delete: a widget that is only removed from the layout
+                # stays visible at its old geometry until the event loop runs the DeferredDelete, and
+                # a page rebuilt while hidden then paints the stale rows under the new ones.
+                widget.setParent(None)
+                widget.deleteLater()
+        self._folder_rows = []
+        for folder in folders:
+            row = QWidget(self.folder_list)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(ROW_SPACING)
+            is_current = bool(folder.is_default)
+            path_label = ElidedLabel(str(folder.path), elide_mode=Qt.TextElideMode.ElideMiddle)
+            # A path is text, not a control: selecting it with the mouse stays possible, but it must
+            # not become a Tab stop of its own (the keyboard walkthrough records every ClickFocus
+            # widget, and a stop with no focus rule would be a dead end in the page's tab chain).
+            path_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            # The bullet is the visible "this is the current folder" mark; the button beside it is
+            # disabled and says 「当前」, so the state is readable with the mouse and a screen reader.
+            # A bullet, not U+2713: the tick is missing from some of the CJK fonts the theme uses and
+            # rendered as a tofu box in the offscreen shots (measured).
+            path_label.setText(("\u25cf  " if is_current else "") + str(folder.path))
+            path_label.setToolTip(str(folder.path))
+            path_label.setAccessibleName(tr("settings.folder.a11y.path", folder.display_name()))
+            make_current = QPushButton(
+                tr("settings.folder.current") if is_current else tr("settings.folder.make_current")
+            )
+            make_current.setObjectName("secondaryButton")
+            make_current.setFixedHeight(FIELD_HEIGHT)
+            make_current.setAccessibleName(
+                tr("settings.folder.a11y.make_current", folder.display_name())
+            )
+            remove = QPushButton(tr("settings.folder.remove"))
+            remove.setObjectName("secondaryButton")
+            remove.setFixedHeight(FIELD_HEIGHT)
+            remove.setAccessibleName(tr("settings.folder.a11y.remove", folder.display_name()))
+            make_current.clicked.connect(
+                lambda *_, path=folder.path: self._set_current_folder(path)
+            )
+            remove.clicked.connect(lambda *_, path=folder.path: self._remove_folder(path))
+            row_layout.addWidget(path_label, 1)
+            row_layout.addWidget(make_current)
+            row_layout.addWidget(remove)
+            self.folder_rows_layout.addWidget(row)
+            self._folder_rows.append((folder.path, is_current, make_current, remove))
+        # The rows were built after every other control on the page, so Qt's focus chain would put
+        # their buttons behind the last control at the bottom of the form - a keyboard user would tab
+        # past the whole page to reach the folder they can see at the top. Anchor the chain after the
+        # scroll container instead: rows first (visual order), then 「添加文件夹…」, then the form.
+        # One setTabOrder call moves one widget, so the row buttons are chained one by one.
+        previous = self.page_scroll
+        for _path, _is_current, make_current, remove in self._folder_rows:
+            QWidget.setTabOrder(previous, make_current)
+            QWidget.setTabOrder(make_current, remove)
+            previous = remove
+        self._update_folder_actions()
+
+    def _folder_switch_block_reason(self) -> str:
+        """Why the current folder cannot change right now ('' when it can).
+
+        Two things make the switch unsafe: a download that is writing into the current folder's
+        ``versions/`` / ``libraries/`` / ``assets/``, and a launch (or a running game) that is reading
+        it. The download question is the launcher's one process-wide counter - the same integer the
+        quit confirmation reads - so every download path (versions, resources, Java, updates) is
+        covered by one check. The launch question is the launch button's own state: it is disabled for
+        the whole pre-launch + run worker and re-enabled only when that worker returns.
+        """
+        from launcher.net import downloader
+
+        active_downloads = downloader.active_download_count()
+        if active_downloads > 0:
+            return tr("settings.folder.busy.download", active_downloads)
+        window = self.window()
+        pages = getattr(window, "pages", None)
+        peek = getattr(pages, "peek", None)
+        if callable(peek):
+            launch_page = peek("launch")
+            launch_button = getattr(launch_page, "launch_button", None)
+            if launch_button is not None and not launch_button.isEnabled():
+                return tr("settings.folder.busy.launch")
+        return ""
+
+    def _update_folder_actions(self) -> None:
+        """Apply the busy rule to every row and state the reason under the list."""
+        reason = self._folder_switch_block_reason()
+        self.folder_busy_label.setText(reason)
+        self.folder_busy_label.setVisible(bool(reason))
+        multiple = len(self._folder_rows) > 1
+        for path, is_current, make_current, remove in self._folder_rows:
+            make_current.setEnabled(not is_current and not reason)
+            make_current.setToolTip(reason or str(path))
+            # Removing a non-current folder does not switch anything, so it stays available while a
+            # download runs; removing the current one would, and is refused for the same reason.
+            remove.setEnabled(multiple and not (reason and is_current))
+            remove.setToolTip(
+                tr("settings.folder.keep_one") if not multiple else (reason or str(path))
+            )
+
+    def _add_folder(self, path) -> bool:
+        """Add a chosen path (duplicates are reported, not duplicated). Returns whether it was added."""
+        text = str(path or "").strip()
+        if not text:
+            return False
+        cfg, cfg_path = config.load()
+        folder, created = cfg.add_game_folder(text)
+        if not created:
+            set_app_status(
+                self, tr("settings.folder.duplicate", str(folder.path)), "warning"
+            )
+            return False
+        config.save(cfg, cfg_path)
+        self._reload_folders(cfg)
+        set_app_status(self, tr("settings.folder.added", folder.display_name()))
+        return True
+
+    def _browse_add_folder(self) -> None:
+        start = str(self._active_folder_path or paths.default_game_dir())
+        chosen = QFileDialog.getExistingDirectory(self, tr("settings.game_dir"), start)
         if chosen:
-            self.game_dir_edit.setText(chosen)
-            self.save()  # picking a folder is a change: no Save button to press
+            self._add_folder(chosen)
+
+    def _set_current_folder(self, path) -> bool:
+        """Switch the current folder; refused while a download or a launch is using it."""
+        reason = self._folder_switch_block_reason()
+        if reason:
+            set_app_status(self, reason, "warning")
+            return False
+        cfg, cfg_path = config.load()
+        if not cfg.set_active_game_folder(path):
+            set_app_status(self, tr("settings.folder.missing"), "warning")
+            return False
+        config.save(cfg, cfg_path)
+        folder = cfg.active_folder()
+        name = folder.display_name() if folder is not None else str(path)
+        self._reload_folders(cfg)
+        # Every page that resolves the game directory has to re-read it now: the instances list, the
+        # versions page's "installed" column, the resources page's folder, the launch page's profiles.
+        self.settings_changed.emit()
+        set_app_status(self, tr("settings.folder.switched", name))
+        return True
+
+    def _remove_folder(self, path) -> bool:
+        """Ask, then remove one folder; the last one and the busy case are refused."""
+        if len(self._folder_rows) <= 1:
+            set_app_status(self, tr("settings.folder.keep_one"), "warning")
+            return False
+        cfg, _ = config.load()
+        folder = cfg.folder_for(path)
+        if folder is None:
+            set_app_status(self, tr("settings.folder.missing"), "warning")
+            return False
+        reason = self._folder_switch_block_reason()
+        if reason and folder.is_default:
+            set_app_status(self, reason, "warning")
+            return False
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("settings.folder.remove.title"),
+            tr(
+                "settings.folder.remove.message",
+                folder.display_name(),
+                str(folder.path),
+            ),
+            accept_text=tr("settings.folder.remove.confirm"),
+            reject_text=tr("dialog.cancel"),
+            # The safe answer is the default one: Enter must not remove a folder by accident.
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="warning",
+        )
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
+            return False
+        cfg, cfg_path = config.load()
+        target = cfg.folder_for(path)
+        if target is None:
+            set_app_status(self, tr("settings.folder.missing"), "warning")
+            return False
+        removed_current = bool(target.is_default)
+        if not cfg.remove_game_folder(path):
+            set_app_status(self, tr("settings.folder.keep_one"), "warning")
+            return False
+        config.save(cfg, cfg_path)
+        self._reload_folders(cfg)
+        set_app_status(self, tr("settings.folder.removed", folder.display_name()))
+        if removed_current:
+            # The promoted folder is where every page now reads from.
+            self.settings_changed.emit()
+        return True
+
+    def showEvent(self, event) -> None:
+        """Re-evaluate the busy rule whenever the page (re)appears, then keep watching it."""
+        super().showEvent(event)
+        self._update_folder_actions()
+        self._folder_busy_timer.start()
+
+    def hideEvent(self, event) -> None:
+        self._folder_busy_timer.stop()
+        super().hideEvent(event)
 
     def _browse_java(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(self, "Java")
         if chosen:
             self.java_path_edit.setText(chosen)
             self.save()
+            self._refresh_memory_bounds()

@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from launcher import paths
 
@@ -33,6 +34,12 @@ CONFIG_FILENAME = "config.json"
 # built-in onboarding; it only decides whether this launcher asks first.
 ACCESSIBILITY_PREFERENCE_DEFAULT = "auto"
 ACCESSIBILITY_PREFERENCE_CHOICES = ("auto", "always_on", "never")
+
+# Download source preference, one setting per endpoint family (launcher.meta.sources owns the
+# meaning of the values and the mirror addresses). "mirror" = mirrors only, "auto" = Mojang first
+# with a mirror fallback, "official" = Mojang only (a failure is reported, never silently mirrored).
+DOWNLOAD_SOURCE_DEFAULT = "auto"
+DOWNLOAD_SOURCE_CHOICES = ("mirror", "auto", "official")
 
 # Common game languages (code, display name); en_us is built into the game, the rest are the game's bundled language packs
 GAME_LANGUAGES: list[tuple[str, str]] = [
@@ -54,12 +61,125 @@ GAME_LANGUAGES: list[tuple[str, str]] = [
 ]
 
 
-class LauncherConfig(BaseModel):
-    """User-editable launcher config. Unknown fields are dropped with a warning on load."""
+def folder_display_name(path: Path | str) -> str:
+    """The label a folder gets by default: its own directory name (the whole path if it has none)."""
+    text = str(path or "").strip()
+    if not text:
+        return ""
+    name = Path(text).name
+    return name or text
+
+
+class GameFolder(BaseModel):
+    """One Minecraft game folder: its own ``versions/``, ``mods/``, ``resourcepacks/``, ...
+
+    ``name`` is the display label (defaulting to the folder's own name) and ``is_default`` marks the
+    folder every page reads right now. ``LauncherConfig.game_dir`` mirrors that folder's path - see
+    :meth:`LauncherConfig.active_folder` for why both exist.
+    """
 
     model_config = ConfigDict(validate_assignment=True)
 
-    game_dir: Path | None = Field(default=None, description="Minecraft game directory; None means use the default rule")
+    path: Path
+    name: str = ""
+    is_default: bool = False
+
+    def display_name(self) -> str:
+        """The label to show: the user's name, or the directory's own name when it is empty."""
+        return self.name.strip() or folder_display_name(self.path)
+
+
+def _folder_key(path: Path | str) -> str:
+    """Identity of a folder for lookups: the OS's own comparison rule, not the display string.
+
+    Windows paths are case-insensitive and accept both separators, so ``D:\\MC`` and ``d:/mc`` are
+    one folder. The value is *only* used for comparison - the stored/displayed path is left exactly
+    as the user gave it (resolving it would leak the machine's absolute path into the screenshots and
+    would rewrite a deliberately relative config value).
+    """
+    text = os.path.expanduser(str(path or "")).strip()
+    if not text:
+        return ""
+    return os.path.normcase(os.path.abspath(text)).rstrip("\\/")
+
+
+def _folder_from_entry(entry: object) -> GameFolder | None:
+    """Best-effort coercion of one stored folder entry; unreadable entries are dropped, not fatal."""
+    if isinstance(entry, GameFolder):
+        if not str(entry.path).strip():
+            return None
+        return GameFolder(path=entry.path, name=entry.name, is_default=entry.is_default)
+    if isinstance(entry, dict):
+        if not str(entry.get("path") or "").strip():
+            return None
+        try:
+            return GameFolder(**entry)
+        except ValidationError:
+            return None
+    if isinstance(entry, (str, Path)):
+        if not str(entry).strip():
+            return None
+        try:
+            return GameFolder(path=entry)
+        except ValidationError:
+            return None
+    return None
+
+
+def _normalized_folders(entries: object) -> list[GameFolder]:
+    """Folders in insertion order, de-duplicated by path, with the entries a config can hold."""
+    if not isinstance(entries, (list, tuple)):
+        return []
+    folders: list[GameFolder] = []
+    seen: set[str] = set()
+    for entry in entries:
+        folder = _folder_from_entry(entry)
+        if folder is None:
+            continue
+        key = _folder_key(folder.path)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        folders.append(folder)
+    return folders
+
+
+def _active_of(folders: list[GameFolder], game_dir: object = None) -> GameFolder | None:
+    """Which folder is current: the one ``game_dir`` names, else the flagged one, else the first."""
+    key = _folder_key(game_dir) if game_dir else ""
+    if key:
+        for folder in folders:
+            if _folder_key(folder.path) == key:
+                return folder
+    for folder in folders:
+        if folder.is_default:
+            return folder
+    return folders[0] if folders else None
+
+
+class LauncherConfig(BaseModel):
+    """User-editable launcher config. Unknown fields are dropped with a warning on load.
+
+    Multiple game folders are stored in ``game_folders``; ``game_dir`` is kept as the **current**
+    folder's path so every existing reader (instances, mods, resources, versions, the CLI and the
+    tests) keeps addressing exactly one directory. The two are kept in sync on load and on save; a
+    config written before the folder list existed (only ``game_dir``) is migrated to a one-item list
+    without changing the directory any reader resolves.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    game_dir: Path | None = Field(
+        default=None,
+        description=(
+            "Minecraft game directory; None means use the default rule. This is the *current* folder "
+            "and mirrors the matching game_folders entry"
+        ),
+    )
+    game_folders: list[GameFolder] = Field(
+        default_factory=list,
+        description="Registered game folders; game_dir is the path of the current one",
+    )
     java_path: Path | None = Field(default=None, description="Java executable; None means auto-detect")
     memory_gb: float = Field(default=4.0, gt=0, le=64, description="Allocated memory (GB)")
     memory_auto: bool = Field(
@@ -68,6 +188,13 @@ class LauncherConfig(BaseModel):
     )
     max_concurrent_downloads: int = Field(default=4, ge=1, le=32, description="Download concurrency")
     selected_account: str | None = Field(default=None, description="Account id selected by default")
+    selected_instance: str = Field(
+        default="",
+        description=(
+            "Instance id (the versions/<id> folder name) the launch page starts on; empty keeps the "
+            "historical behaviour of showing the first installed profile"
+        ),
+    )
     auto_install_java: bool = Field(default=False, description="Auto-download Java from Adoptium when missing")
     msa_client_id: str | None = Field(
         default=None,
@@ -125,6 +252,20 @@ class LauncherConfig(BaseModel):
         description=(
             "Shards per file: 1 = one stream per file (the historical behaviour); above 1 splits each "
             "file into that many parallel Range requests when the server supports it"
+        ),
+    )
+    download_source_meta: str = Field(
+        default=DOWNLOAD_SOURCE_DEFAULT,
+        description=(
+            "Download source for versions and manifests (version manifest/JSON, client.jar, "
+            "libraries, asset index): mirror / auto / official; see launcher.meta.sources"
+        ),
+    )
+    download_source_assets: str = Field(
+        default=DOWNLOAD_SOURCE_DEFAULT,
+        description=(
+            "Download source for resource files (assets objects under "
+            "resources.download.minecraft.net): mirror / auto / official"
         ),
     )
     window_start_mode: str = Field(
@@ -201,6 +342,230 @@ class LauncherConfig(BaseModel):
         )
         return ACCESSIBILITY_PREFERENCE_DEFAULT
 
+    @field_validator("download_source_meta", "download_source_assets", mode="before")
+    @classmethod
+    def _normalize_download_source(cls, value: object) -> str:
+        """Keep hand-edited configs loadable: an unknown source preference means ``auto``."""
+        normalized = value.strip().lower() if isinstance(value, str) else value
+        if normalized in DOWNLOAD_SOURCE_CHOICES:
+            return str(normalized)
+        logging.getLogger(__name__).warning(
+            "Invalid download source %r; falling back to %r", value, DOWNLOAD_SOURCE_DEFAULT
+        )
+        return DOWNLOAD_SOURCE_DEFAULT
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_game_folders(cls, data: object) -> object:
+        """Turn a pre-folder config into a one-item list, and keep ``game_dir`` equal to the current one.
+
+        This runs for every construction, i.e. both for the stored JSON and for the keyword form the
+        tests, the tools and the CLI use (``LauncherConfig(game_dir=...)``), so the two representations
+        cannot drift apart. The migration never resolves or rewrites a path: the stored string is kept
+        exactly as it was, so a config that names a relative/demo directory keeps naming it.
+        """
+        if not isinstance(data, dict):
+            return data
+        raw = dict(data)
+        folders = _normalized_folders(raw.get("game_folders"))
+        legacy = raw.get("game_dir")
+        legacy_text = str(legacy).strip() if legacy is not None else ""
+        legacy_key = _folder_key(legacy_text) if legacy_text else ""
+        if not folders and legacy_text:
+            # The historical config: exactly one folder, and it is the current one.
+            folders = [
+                GameFolder(
+                    path=Path(legacy_text),
+                    name=folder_display_name(legacy_text),
+                    is_default=True,
+                )
+            ]
+        elif legacy_text and all(_folder_key(folder.path) != legacy_key for folder in folders):
+            # Only `game_dir` was changed (the wizard and older code write it directly): that path is
+            # still the folder the user is using, so it joins the list instead of being overwritten.
+            folders.append(
+                GameFolder(
+                    path=Path(legacy_text),
+                    name=folder_display_name(legacy_text),
+                    is_default=True,
+                )
+            )
+        active = _active_of(folders, legacy_text)
+        for folder in folders:
+            if not folder.name.strip():
+                folder.name = folder_display_name(folder.path)
+            folder.is_default = folder is active
+        raw["game_folders"] = folders
+        if active is not None:
+            raw["game_dir"] = active.path
+        return raw
+
+    # ---------- game folders ----------
+    #
+    # Every reader in the launcher (instances, mods, resources, versions, the CLI) keeps using
+    # `cfg.game_dir`, which is why the list never replaces it: `game_dir` is the *current* folder.
+    # These helpers are the only code that changes the two fields together.
+
+    def folder_for(self, path: Path | str) -> GameFolder | None:
+        """The registered folder at ``path`` (same comparison rule the OS uses), or None."""
+        key = _folder_key(path)
+        if not key:
+            return None
+        for folder in self.game_folders:
+            if _folder_key(folder.path) == key:
+                return folder
+        return None
+
+    def active_folder(self) -> GameFolder | None:
+        """The folder every page reads right now: the one ``game_dir`` names, else the flagged one."""
+        if self.game_dir:
+            found = self.folder_for(self.game_dir)
+            if found is not None:
+                return found
+        for folder in self.game_folders:
+            if folder.is_default:
+                return folder
+        return self.game_folders[0] if self.game_folders else None
+
+    def effective_game_folders(self) -> list[GameFolder]:
+        """The folder rows the UI shows, including the implicit default folder of a fresh config.
+
+        A config that has never stored a folder (no ``game_dir``, no list) still has one folder in
+        effect - the environment/platform default - and the settings page has to show it, otherwise
+        the list would start empty and the first added folder would silently become the current one.
+        The returned copies carry exactly one ``is_default``; the config itself is not modified.
+        """
+        folders = _normalized_folders(self.game_folders)
+        if not folders:
+            target = Path(self.game_dir) if self.game_dir else paths.default_game_dir()
+            return [
+                GameFolder(
+                    path=target,
+                    name=folder_display_name(target),
+                    is_default=True,
+                )
+            ]
+        active = _active_of(folders, self.game_dir)
+        for folder in folders:
+            if not folder.name.strip():
+                folder.name = folder_display_name(folder.path)
+            folder.is_default = folder is active
+        return folders
+
+    def add_game_folder(self, path: Path | str, name: str = "") -> tuple[GameFolder, bool]:
+        """Register a folder; return ``(folder, created)``. The same path is never added twice."""
+        text = str(path or "").strip()
+        if not text:
+            raise ValueError("a game folder needs a path")
+        folders = self.effective_game_folders()
+        for folder in folders:
+            if _folder_key(folder.path) == _folder_key(text):
+                return folder, False
+        target = Path(text)
+        folder = GameFolder(path=target, name=(name or "").strip() or folder_display_name(target))
+        folders.append(folder)
+        # Adding never switches the current folder: the user picks it with 「设为当前」.
+        active = _active_of(folders, self.game_dir)
+        for entry in folders:
+            entry.is_default = entry is active
+        self.game_folders = folders
+        if active is not None:
+            self.game_dir = active.path
+        return folder, True
+
+    def remove_game_folder(self, path: Path | str) -> bool:
+        """Drop one folder; False when it is unknown or it is the last one (one folder always stays).
+
+        Removing the current folder promotes the first remaining one, which is the only case where a
+        removal changes what the pages read.
+        """
+        folders = self.effective_game_folders()
+        target = None
+        key = _folder_key(path)
+        for folder in folders:
+            if _folder_key(folder.path) == key:
+                target = folder
+                break
+        if target is None or len(folders) <= 1:
+            return False
+        was_active = target.is_default
+        folders.remove(target)
+        if was_active:
+            folders[0].is_default = True
+        self.game_folders = folders
+        if was_active:
+            self.game_dir = folders[0].path
+        return True
+
+    def set_active_game_folder(self, path: Path | str) -> bool:
+        """Make an existing folder the current one (False when the path is not registered)."""
+        folders = self.effective_game_folders()
+        key = _folder_key(path)
+        target = next(
+            (folder for folder in folders if _folder_key(folder.path) == key), None
+        )
+        if target is None:
+            return False
+        for folder in folders:
+            folder.is_default = folder is target
+        self.game_folders = folders
+        self.game_dir = target.path
+        return True
+
+    def rename_game_folder(self, path: Path | str, name: str) -> bool:
+        """Rename the display label of a registered folder (empty falls back to the directory name)."""
+        folders = self.effective_game_folders()
+        key = _folder_key(path)
+        target = next(
+            (folder for folder in folders if _folder_key(folder.path) == key), None
+        )
+        if target is None:
+            return False
+        target.name = (name or "").strip() or folder_display_name(target.path)
+        self.game_folders = folders
+        return True
+
+    def sync_game_folders(self) -> None:
+        """Make ``game_dir`` and the list agree before the config is written.
+
+        Kept deliberately conservative for a config that has never named a folder: with neither a
+        ``game_dir`` nor a list, nothing is written, so the environment/platform default rule keeps
+        applying exactly as it always did.
+        """
+        if not self.game_dir and not self.game_folders:
+            return
+        folders = self.effective_game_folders()
+        if not folders:
+            return
+        active = _active_of(folders, self.game_dir)
+        if active is None:
+            return
+        for folder in folders:
+            folder.is_default = folder is active
+        self.game_folders = folders
+        self.game_dir = active.path
+
+
+def same_game_folder(left: Path | str | None, right: Path | str | None) -> bool:
+    """Whether two paths name the same game folder (the OS's comparison rule, not string equality)."""
+    return _folder_key(left) == _folder_key(right)
+
+
+def active_game_dir(config: LauncherConfig | None = None) -> Path:
+    """The folder every instance/mod/resource read resolves against.
+
+    ``game_dir`` is the current folder's path, so this is the same directory those readers already
+    use; it exists so new code has one name for the concept and can fall back to the platform default
+    exactly like they do.
+    """
+    cfg = config if config is not None else load()[0]
+    folder = cfg.active_folder()
+    if folder is not None:
+        return Path(folder.path)
+    if cfg.game_dir:
+        return Path(cfg.game_dir)
+    return paths.default_game_dir()
+
 
 def default_config_path() -> Path:
     return paths.launcher_dir() / CONFIG_FILENAME
@@ -243,6 +608,9 @@ def load(path: Path | None = None) -> tuple[LauncherConfig, Path]:
 def save(config: LauncherConfig, path: Path | None = None) -> Path:
     """Write the config back (temp file + atomic replace)."""
     config_path = path or default_config_path()
+    # A caller may have changed `game_dir` directly (the wizard still does): before the file is
+    # written, that path joins the folder list and the list's current marker follows it.
+    config.sync_game_folders()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     payload = config.model_dump(mode="json")
     tmp = config_path.with_name(config_path.name + ".tmp")

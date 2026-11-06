@@ -46,6 +46,7 @@ from launcher.meta.version import (
     VersionJson,
     load_version_json,
     required_java_major,
+    version_json_path,
 )
 from launcher.net.downloader import (
     Downloader,
@@ -105,13 +106,13 @@ def _library_task(resolved: ResolvedLibrary, libraries_dir: Path) -> DownloadTas
 
 
 def list_installed_versions(game_dir: Path) -> list[str]:
-    """List installed version/profile ids (versions/<id>/ exists and contains <id>.json)."""
+    """List installed version/profile ids (versions/<id>/ with any resolvable version JSON)."""
     versions_dir = paths.GamePaths(game_dir).versions_dir
     if not versions_dir.exists():
         return []
     out: list[str] = []
     for entry in versions_dir.iterdir():
-        if entry.is_dir() and (entry / (entry.name + ".json")).exists():
+        if entry.is_dir() and version_json_path(entry) is not None:
             out.append(entry.name)
     return sorted(out)
 
@@ -125,8 +126,8 @@ def find_version_dependents(game_dir: Path, version_id: str) -> list[str]:
     for entry in versions_dir.iterdir():
         if not entry.is_dir() or entry.name == version_id:
             continue
-        json_file = entry / (entry.name + ".json")
-        if not json_file.exists():
+        json_file = version_json_path(entry)
+        if json_file is None:
             continue
         try:
             raw = json.loads(json_file.read_text(encoding="utf-8"))

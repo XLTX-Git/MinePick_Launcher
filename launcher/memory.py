@@ -32,6 +32,14 @@ from pathlib import Path
 MAX_MEMORY_GB = 16.0
 MIN_MEMORY_GB = 0.5
 
+#: The settings page never offers less than 1 GB: below that even vanilla Minecraft struggles.
+MIN_HEAP_GB = 1.0
+#: A 32-bit JVM cannot address much more than this, whatever the machine has.
+JAVA_32BIT_HEAP_LIMIT_GB = 1.5
+#: Slider granularity, and the ceiling the config schema itself accepts.
+HEAP_STEP_GB = 0.5
+CONFIG_MAX_HEAP_GB = 64.0
+
 
 def count_mods(mods_dir: Path) -> int:
     """Count mod files in a directory (enabled *.jar and disabled *.jar.disabled)."""
@@ -115,4 +123,39 @@ def suggest_memory_gb(
     ram_give = max(ram_give, minimum)
     ram_give = min(ram_give, total_gb * 0.75, MAX_MEMORY_GB)
     return round(ram_give * 2) / 2
+
+
+def maximum_heap_gb(
+    total_gb: float | None = None,
+    *,
+    java_32bit: bool = False,
+    minimum_gb: float = MIN_HEAP_GB,
+) -> float:
+    """Largest heap the settings page should offer on this machine, in 0.5 GB steps.
+
+    The rule is PCL's: give the JVM at most half of the physical RAM, but leave the
+    OS at least 2 GB and never go below ``minimum_gb``. On a 16 GB machine that is
+    8 GB, on 8 GB it is 4 GB and on 4 GB it is 2 GB.
+
+    ``total_gb`` is optional so a caller (and a test) can state the machine instead
+    of probing it. ``minimum_gb`` exists for an instance that pins more than the
+    default 1 GB floor; a 32-bit JVM still caps the result at 1.5 GB unless that
+    instance minimum is itself higher.
+
+    The raw half-RAM value is rounded to the nearest 0.5 GB rather than truncated:
+    Windows reports a "16 GB" machine as ~15.7 GB, and truncating would turn the
+    documented 8 GB recommendation into 7.5 GB on every such machine.
+    """
+    if total_gb is None or total_gb <= 0:
+        total_gb, _available = system_memory_gb()
+    minimum = max(MIN_HEAP_GB, float(minimum_gb))
+    # Leave the OS 2 GB, but never let that ceiling fall below the requested floor.
+    os_reserve_limit = max(float(total_gb) - 2.0, minimum)
+    limit = min(float(total_gb) * 0.5, os_reserve_limit)
+    limit = max(limit, minimum)
+    if java_32bit:
+        limit = min(limit, max(JAVA_32BIT_HEAP_LIMIT_GB, minimum))
+    limit = min(limit, CONFIG_MAX_HEAP_GB)
+    limit = round(limit / HEAP_STEP_GB) * HEAP_STEP_GB
+    return max(limit, minimum)
 

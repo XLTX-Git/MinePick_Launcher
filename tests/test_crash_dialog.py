@@ -140,7 +140,7 @@ def test_a_stale_blur_setting_cannot_turn_the_blur_off(app, ws_tmp, monkeypatch)
 
 
 def test_launch_instance_buttons_navigate(app, ws_tmp, monkeypatch):
-    """实例选择 jumps to the instances page; 实例设置 opens that profile's settings tab."""
+    """实例选择 opens the card grid on the current instance; 实例设置 opens its settings tab."""
     import json
 
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_nav"))
@@ -164,12 +164,15 @@ def test_launch_instance_buttons_navigate(app, ws_tmp, monkeypatch):
     try:
         window = MainWindow()
         launch = window.pages["launch"]
-        launch.version_combo.setEditText(version_id)
+        launch.set_version_id(version_id)
         instances = window.pages["instances"]
 
         launch.select_instance_button.click()
         app.processEvents()
         assert window.stack.currentWidget() is instances
+        # 实例选择 now lands on the grid, scrolled to the current card - not on its detail page.
+        assert instances.current_view() is instances.view_stack.widget(0)
+        assert instances._current_name() == version_id
         assert instances.detail.instance_id == version_id
 
         launch.instance_settings_button.click()
@@ -245,7 +248,7 @@ def test_diagnostics_tab_shows_the_recorded_code(app, ws_tmp, monkeypatch):
     try:
         window = MainWindow()
         page = window.pages["instances"]
-        page.list.setCurrentRow(0)
+        assert page.select_instance(version_id)
         app.processEvents()
         detail = page.detail
         detail.set_tab(TAB_DIAGNOSIS)

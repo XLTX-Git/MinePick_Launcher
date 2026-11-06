@@ -4,7 +4,7 @@
 
 > This document is also available in [Simplified Chinese](github_release.md).
 
-This repository is **MinePick Launcher**: remote `https://github.com/xltxdocs/MinePick_Launcher.git`, branch `main`, current version `0.4.1`.
+This repository is **MinePick Launcher**: remote `https://github.com/XLTX-Git/MinePick_Launcher.git`, branch `main`, current version `0.4.1`.
 This line ships a **GUI build only** — there is no CLI executable (no `MinePick_Launcher_cli.exe` is built, and `run_cli.py` is not packaged).
 Every command below is run in **CMD** on Windows; the gh CLI is not installed, so the Release is created on the GitHub web page.
 
@@ -18,7 +18,7 @@ git init
 git add .
 git commit -m "MinePick Launcher 首个版本"
 git branch -M main
-git remote add origin https://github.com/xltxdocs/MinePick_Launcher.git
+git remote add origin https://github.com/XLTX-Git/MinePick_Launcher.git
 git push -u origin main
 ```
 

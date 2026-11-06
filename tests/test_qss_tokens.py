@@ -46,9 +46,9 @@ PLACEHOLDER = re.compile(r"__([A-Za-z0-9_]+)__")
 NON_COLOUR_PLACEHOLDERS = {
     "FONT",
     "CHECK",
-    "DOWN_ARROW",
-    "SPIN_UP",
-    "SPIN_DOWN",
+    "CHEVRON_DOWN",
+    "CHEVRON_DOWN_ACTIVE",
+    "CHEVRON_DOWN_DISABLED",
     "RADIUS_XS",
     "RADIUS_SM",
     "RADIUS_LG",

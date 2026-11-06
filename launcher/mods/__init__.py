@@ -32,6 +32,7 @@ from launcher.mods.models import (
     ModInfo,
     ModSearchHit,
     ModVersion,
+    SearchHits,
 )
 from launcher.mods.modpacks import ModpackInfo, install_modpack
 from launcher.mods.modrinth import (
@@ -62,6 +63,7 @@ __all__ = [
     "ModVersion",
     "ModpackInfo",
     "ModsError",
+    "SearchHits",
     "delete_installed_content",
     "fetch_project",
     "fetch_versions",

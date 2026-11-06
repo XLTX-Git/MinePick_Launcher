@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Shared HTTP client tests: reuse, safe close, reset."""
+"""Shared HTTP client tests: reuse, safe close, reset, and the transport underneath."""
 
 from launcher.meta.manifest import _new_client, reset_http_client
 
@@ -26,6 +26,20 @@ def test_new_client_returns_same_shared_instance() -> None:
     assert a is b
     a.close()  # no-op close keeps the shared pool alive
     assert a is _new_client()
+
+
+def test_the_shared_client_carries_the_disk_cache_transport() -> None:
+    """Every JSON request through the shared client goes through the cache, not around it."""
+    from launcher.net.http_cache import CachingTransport
+
+    assert isinstance(_new_client()._transport, CachingTransport)
+
+
+def test_the_mods_helpers_use_the_one_client() -> None:
+    """Modrinth, CurseForge and the version APIs must share one pool, not build their own."""
+    from launcher.mods import modrinth
+
+    assert modrinth._client() is _new_client()
 
 
 def test_reset_builds_fresh_client() -> None:

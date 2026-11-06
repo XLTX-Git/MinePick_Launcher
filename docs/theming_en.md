@@ -31,7 +31,7 @@ The stylesheet itself **contains no final colours**: colours, fonts and corner r
 | `__ACCENT_TINT__` | pale green hover background in the light theme | as above |
 | `__FONT__` | interface font family (with Segoe UI / Microsoft YaHei fallbacks) | `ui_font` (empty = Microsoft YaHei UI) |
 | `__RADIUS_XS__` / `__RADIUS_SM__` / `__RADIUS_LG__` | small / medium / large corner radius | `ui_radius` (compact / default / round) |
-| `__DOWN_ARROW__` / `__CHECK__` | absolute paths to the dropdown-arrow and checkbox-tick PNGs (QSS `url()` cannot resolve relative paths once packaged) | fixed resources |
+| `__CHEVRON_DOWN__` / `__CHEVRON_DOWN_ACTIVE__` / `__CHEVRON_DOWN_DISABLED__` / `__CHECK__` | absolute paths to the Lucide SVG chevron in its three states (normal / hover and keyboard focus / disabled) and the checkbox-tick PNG (QSS `url()` cannot resolve relative paths once packaged) | fixed resources |
 
 ## 3. What you can customise
 

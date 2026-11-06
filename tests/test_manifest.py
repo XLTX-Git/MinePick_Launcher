@@ -16,11 +16,12 @@
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
 import json
+import time
 
 import httpx
 import respx
 
-from launcher.meta.manifest import fetch_manifest
+from launcher.meta.manifest import fetch_manifest, wait_for_background_refresh
 
 MANIFEST_RAW = {
     "latest": {"release": "1.21.8", "snapshot": "25w01a"},
@@ -68,15 +69,21 @@ def test_force_refresh(ws_tmp):
 
 
 @respx.mock
-def test_expired_cache_refetches(ws_tmp):
+def test_an_expired_cache_is_shown_at_once_and_refreshed_behind_it(ws_tmp):
+    """The page paints the copy it has; the stale copy is revalidated in the background."""
     respx.get(PISTON).mock(return_value=httpx.Response(200, json=MANIFEST_RAW))
     cache = ws_tmp / "version_manifest.json"
     cache.write_text(
         json.dumps({"fetched_at": 0, "manifest": {"latest": {}, "versions": []}}),
         encoding="utf-8",
     )
+    started = time.monotonic()
     m = fetch_manifest(cache_path=cache)
-    assert m.latest["release"] == "1.21.8"
+    assert time.monotonic() - started < 0.5, "the first paint must not wait for the refresh"
+    assert m.latest == {}  # what was on disk
+    assert wait_for_background_refresh(5.0)
+    refreshed = json.loads(cache.read_text(encoding="utf-8"))
+    assert refreshed["manifest"]["latest"]["release"] == "1.21.8"
 
 
 @respx.mock

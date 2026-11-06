@@ -69,11 +69,13 @@ class _WindowButton(QPushButton):
             # settings page saving, for instance. on_theme_applied() does this once the swap is done.
             return
         tokens = theme.current_tokens()
-        hint = tokens.get("FG_HINT", "palette(mid)")
-        sheet = f"QPushButton {{ background: transparent; border: none; color: {hint}; }}"
+        # The bar is the one blue band in both themes; its own text is white. The fallback is only
+        # for the instant before the first apply_theme call.
+        topbar_text = tokens.get("FG_TOPBAR", "#ffffff")
+        sheet = f"QPushButton {{ background: transparent; border: none; color: {topbar_text}; }}"
         fill = tokens.get(self._hover_token)
         if fill:
-            text = tokens.get(self._hover_text_token, hint)
+            text = tokens.get(self._hover_text_token, topbar_text)
             sheet += f" QPushButton:hover {{ background: {fill}; color: {text}; }}"
         if sheet == self.styleSheet():
             return  # nothing to do: and installing an identical sheet would bounce a StyleChange back
@@ -96,6 +98,9 @@ class TitleBar(QWidget):
         self._drag_offset: QPoint | None = None
 
         self.setObjectName("titleBar")
+        # A plain QWidget does not paint a QSS background unless asked to: without this the bar
+        # stayed the window chrome colour and every rule in the sheet was silently ignored.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(BAR_HEIGHT)
 
         title_label = QLabel(title)
@@ -119,7 +124,7 @@ class TitleBar(QWidget):
             glyph,
             name,
             "BG_TITLEBAR_MINIMIZE" if is_minimize else "BG_TITLEBAR_CLOSE",
-            "FG_TEXT" if is_minimize else "FG_SELECTED",
+            "FG_TOPBAR",
         )
         button.setFixedSize(36, 26)
         button.setCursor(Qt.CursorShape.PointingHandCursor)

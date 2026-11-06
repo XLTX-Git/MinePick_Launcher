@@ -671,21 +671,22 @@ def set_app_status(widget, text: str, level: str | None = None) -> None:
         return
 
 
-def build_page_header(title: str, subtitle: str) -> QWidget:
-    """Page header: a big title plus one line describing what the page is for."""
-    box = QWidget()
-    box.setObjectName("pageHeader")
-    layout = QVBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 2)
-    layout.setSpacing(1)
-    title_label = QLabel(title)
-    title_label.setObjectName("pageTitle")
-    subtitle_label = QLabel(subtitle)
-    subtitle_label.setObjectName("pageSubtitle")
-    subtitle_label.setWordWrap(True)
-    layout.addWidget(title_label)
-    layout.addWidget(subtitle_label)
-    return box
+#: The air above the first block of a page, now that pages no longer draw a title block.
+PAGE_TOP_INSET = 16
+#: Distance between the instance-detail header and the first block below it (second-level page).
+PAGE_HEADER_GAP = 16
+
+
+def add_page_top_inset(layout) -> None:
+    """Start a page's content exactly ``PAGE_TOP_INSET`` px below its top edge.
+
+    Every top-level page used to open with the shared page header (name + one-line description).
+    That block is gone, so the page now owns its top air directly. Changing the layout's top
+    margin - rather than inserting a spacer widget - keeps the page's left/right/bottom inset and
+    its 8px/12px block rhythm untouched, and gives every page the same measured 16px.
+    """
+    margins = layout.contentsMargins()
+    layout.setContentsMargins(margins.left(), PAGE_TOP_INSET, margins.right(), margins.bottom())
 
 
 def style_page_layout(layout) -> None:
@@ -1129,3 +1130,48 @@ class NumericTableItem(QTableWidgetItem):
         if isinstance(other, NumericTableItem):
             return self._value < other._value
         return super().__lt__(other)
+
+
+class ComboArrowState(QObject):
+    """Mirrors hover/disabled onto combo properties the stylesheet can select.
+
+    Qt 6.11 does not evaluate ``:hover`` / ``:disabled`` written in front of the ``::down-arrow``
+    subcontrol: a ``QComboBox:disabled::down-arrow`` rule paints its image on *every* combo (it is not
+    state-filtered) and a ``:hover`` rule never turns on. Attribute selectors are evaluated at polish
+    time, so this filter keeps two dynamic properties on each combo and the sheet selects those. The
+    keyboard-focus state arrives the same way through ``KeyboardFocusTracker``'s ``keyboardFocus``.
+
+    Passive: it never consumes an event, and a failing restyle is swallowed the way every event filter
+    in this module swallows one - an exception here would escape into Qt's dispatch.
+    """
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+
+    @staticmethod
+    def _set(widget: QComboBox, name: str, value: bool) -> None:
+        try:
+            if bool(widget.property(name)) == value:
+                return
+            widget.setProperty(name, value)
+            style = widget.style()
+            if style is not None:
+                style.unpolish(widget)
+                style.polish(widget)
+        except Exception:  # noqa: BLE001 - see the class docstring
+            return
+
+    def eventFilter(self, obj, event) -> bool:
+        if not isinstance(obj, QComboBox):
+            return False
+        kind = event.type()
+        if kind == QEvent.Type.Show:
+            self._set(obj, "comboDisabled", not obj.isEnabled())
+            self._set(obj, "comboHover", obj.underMouse())
+        elif kind == QEvent.Type.EnabledChange:
+            self._set(obj, "comboDisabled", not obj.isEnabled())
+        elif kind == QEvent.Type.Enter:
+            self._set(obj, "comboHover", True)
+        elif kind == QEvent.Type.Leave:
+            self._set(obj, "comboHover", False)
+        return False

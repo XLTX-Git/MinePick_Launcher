@@ -18,8 +18,10 @@
 """Unit tests for launcher/mods/curseforge.py: search parsing, key priority, file filtering."""
 
 import httpx
+import pytest
 
 from launcher.mods import curseforge as cf
+from launcher.mods.loaders import ModsError
 from launcher.mods.models import ModSearchHit
 
 
@@ -46,6 +48,12 @@ def test_search_parses_hits() -> None:
                 "summary": "A modern rendering engine",
                 "downloadCount": 142812847,
                 "logo": {"thumbnailUrl": "https://x/thumb.png"},
+                "dateModified": "2026-10-01T12:00:00Z",
+                "latestFilesIndexes": [
+                    {"modLoader": 4},  # Fabric
+                    {"modLoader": 6},  # NeoForge
+                    {"modLoader": 4},  # duplicate: the row lists each loader once
+                ],
             }
         ]
     }
@@ -57,6 +65,10 @@ def test_search_parses_hits() -> None:
     assert h.title == "Sodium"
     assert h.downloads == 142812847
     assert h.icon_url == "https://x/thumb.png"
+    # The card's "when was it updated" + "which loaders" segments come from these two fields.
+    assert h.updated == "2026-10-01T12:00:00Z"
+    assert h.loaders == ["fabric", "neoforge"]
+    assert h.source == "curseforge"
 
 
 def test_search_params_include_filters() -> None:
@@ -67,10 +79,73 @@ def test_search_params_include_filters() -> None:
         return httpx.Response(200, json={"data": []})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    cf.search_projects("x", limit=5, kind="resourcepack", game_version="1.20.1", client=client)
+    cf.search_projects(
+        "x",
+        limit=5,
+        sort="downloads",
+        kind="resourcepack",
+        game_version="1.20.1",
+        client=client,
+    )
     assert seen["classId"] == "12"
     assert seen["gameVersion"] == "1.20.1"
     assert seen["sortField"] == "TotalDownloads"
+    assert seen["sortOrder"] == "desc"
+
+
+@pytest.mark.parametrize(
+    ("sort", "sort_field"),
+    [
+        ("relevance", None),  # no field: the API's own match order (see SORT_FIELDS)
+        ("downloads", "TotalDownloads"),
+        ("updated", "LastUpdated"),
+        ("newest", "ReleasedDate"),
+    ],
+)
+def test_search_sort_mapping_and_offset(sort: str, sort_field: str | None) -> None:
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"data": [], "pagination": {"totalCount": 0}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cf.search_projects("x", limit=15, offset=30, sort=sort, client=client)
+    assert seen["index"] == "30"
+    assert seen["pageSize"] == "15"
+    assert seen.get("sortField") == sort_field
+    assert ("sortOrder" in seen) is (sort_field is not None)
+
+
+def test_search_reads_total_count_and_source() -> None:
+    payload = {
+        "data": [{"id": 1, "name": "A", "summary": "", "downloadCount": 1}],
+        "pagination": {"index": 15, "pageSize": 15, "resultCount": 1, "totalCount": 61},
+    }
+    hits = cf.search_projects("x", limit=15, offset=15, client=_client(payload))
+    assert hits.total == 61
+    assert len(hits) == 1
+    assert hits[0].source == "curseforge"
+
+
+@pytest.mark.parametrize(
+    ("status", "needle"),
+    [(429, "API Key"), (403, "API Key"), (401, "API Key")],
+)
+def test_search_auth_and_rate_limit_point_at_the_key_setting(
+    status: int, needle: str
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ModsError) as excinfo:
+        cf.search_projects("x", client=client)
+    message = str(excinfo.value)
+    # The message must name the fix, not just the status code: a user with a revoked or exhausted
+    # key needs to know to enter their own key in Settings.
+    assert needle in message
+    assert "设置" in message or "Settings" in message
 
 
 def test_list_files_keeps_release_only() -> None:

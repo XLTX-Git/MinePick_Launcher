@@ -35,6 +35,7 @@ from launcher import paths as launcher_paths
 from launcher.i18n import describe_network_error, tr_core
 from launcher.instances import create_instance, default_instance_name, validate_name
 from launcher.meta.manifest import _new_client
+from launcher.meta.version import version_json_path
 from launcher.mods.installer import install_loader
 from launcher.mods.loaders import ModsError, list_loader_versions
 from launcher.mods.models import LoaderVersion
@@ -93,7 +94,7 @@ def _ensure_loader_profile(
     """Ensure the loader profile is installed; if missing, install it automatically with the official installer. Return the profile id."""
     profile_id = _profile_id(loader, loader_version, minecraft)
     gp = launcher_paths.GamePaths(game_dir)
-    if (gp.version_dir(profile_id) / (profile_id + ".json")).exists():
+    if version_json_path(gp.version_dir(profile_id)) is not None:
         return profile_id
     versions = list_loader_versions(loader, minecraft)
     chosen: LoaderVersion | None = next(
