@@ -156,6 +156,9 @@ def page(app, monkeypatch, ws_tmp):
             versions=_versions(), latest={"release": "rel-1", "snapshot": "26.4-snapshot-6"}
         )
     )
+    # The page opens with all four folds closed (that is its contract); these tests drive rows, so
+    # the release fold is opened through the same public call the header uses.
+    built.expand_group("release")
     app.processEvents()
     yield built
     built.close()
@@ -181,7 +184,8 @@ def _open_step(page, app, version_id: str):
 
 def test_back_returns_to_the_same_filter_and_scroll_position(page, app) -> None:
     list_widget = page.list
-    assert list_widget.count() == 28
+    # Four fold headers plus the 25 release rows the fixture opened.
+    assert list_widget.count() == 29
     page.list.setCurrentRow(7)
     app.processEvents()
     scroll_range = list_widget.verticalScrollBar().maximum()
@@ -200,7 +204,7 @@ def test_back_returns_to_the_same_filter_and_scroll_position(page, app) -> None:
 
     assert page.stack.currentWidget() is page._list_step
     assert page.list is list_widget, "the list itself must survive the step"
-    assert page.list.count() == 28
+    assert page.list.count() == 29
     assert page.list.verticalScrollBar().value() == kept_scroll
     assert page.list.currentRow() == kept_row
 

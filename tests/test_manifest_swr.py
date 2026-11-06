@@ -189,6 +189,8 @@ def page(app, monkeypatch, ws_tmp):
     built._on_manifest(
         SimpleNamespace(versions=_versions(), latest={"release": "rel-1", "snapshot": "rel-25"})
     )
+    # The page starts with every fold closed; this test scrolls rows, so open the release fold.
+    built.expand_group("release")
     app.processEvents()
     yield built
     built.close()
@@ -211,7 +213,8 @@ def test_the_versions_list_updates_without_moving_the_scroll(page, app) -> None:
     from gui.main import _ManifestRefreshBridge
 
     list_widget = page.list
-    assert list_widget.count() == 25
+    # Four fold headers plus the 25 release rows the fixture opened.
+    assert list_widget.count() == 29
     page.list.setCurrentRow(7)
     app.processEvents()
     scroll_range = list_widget.verticalScrollBar().maximum()
@@ -237,6 +240,9 @@ def test_the_versions_list_updates_without_moving_the_scroll(page, app) -> None:
     bridge._apply(newer)
     app.processEvents()
 
-    assert list_widget.count() == 26
+    # The new version is a snapshot and the release fold is the only one open, so the built rows do
+    # not change; the manifest total does, which is what proves the refresh reached the page.
+    assert page.group_total("snapshot") == 1
+    assert list_widget.count() == 29
     assert page._selected_id() == selected
     assert list_widget.verticalScrollBar().value() == 40

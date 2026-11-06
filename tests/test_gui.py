@@ -1296,8 +1296,13 @@ def test_after_launch_hide_and_exit(app, monkeypatch, ws_tmp):
             app.processEvents()
 
 
-def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
-    """The versions page categorizes by release/snapshot/april-fools/legacy, and is not limited by the 500-row cap."""
+def test_versions_page_categories_folds_and_full_list(app, monkeypatch, ws_tmp):
+    """The versions page folds by release/snapshot/legacy/April Fools, and builds rows in batches.
+
+    The old shape was category chips over one flat list of every version. The folds carry the same
+    categories now, so this test pins the partition (the counts add up to the manifest), the default
+    state (four headers, zero row widgets), the 50-row batch, and the flat search result.
+    """
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_cat"))
     from types import SimpleNamespace
 
@@ -1326,7 +1331,7 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
                 type="release",
                 url="https://x/",
                 time="",
-                release_time="2023-06-07",
+                release_time="2023-06-07T12:00:00+00:00",
             )
             for i in range(550)
         ]
@@ -1338,59 +1343,68 @@ def test_versions_page_categories_and_full_list(app, monkeypatch, ws_tmp):
         page._on_manifest(
             SimpleNamespace(versions=versions, latest={"release": "release-0", "snapshot": "25w14a"})
         )
-        # all listed, no 500-row cap
-        assert page.list.count() == 553
-        # latest version cards
-        assert page.latest_labels["release"].text() == "release-0"
-        assert page.latest_labels["snapshot"].text() == "25w14a"
-        assert page.latest_buttons["release"].isEnabled()
-        assert page.latest_buttons["snapshot"].isEnabled()
-        # every version is a dense card row, and its name has room for 20 English characters
-        assert len(page.rows) == 553
+        app.processEvents()
+        # The partition is complete: one fold per version, and the counts add up to the manifest.
+        assert page.group_counts() == {"release": 550, "snapshot": 1, "legacy": 1, "april": 1}
+        # Latest version shortcuts
+        assert page.latest_cards["release"].version_id == "release-0"
+        assert page.latest_cards["snapshot"].version_id == "25w14a"
+        assert page.latest_cards["release"].isEnabled()
+        assert page.latest_cards["snapshot"].isEnabled()
+        assert "发布于" in page.latest_cards["release"]._meta_text()
+        # Four fold headers, no rows built while every fold is closed.
+        assert page.list.count() == 4
+        assert page.rows == []
+        assert page.expanded_groups() == []
+        # The category chips are gone with the flat list; the folds carry the categories now.
+        assert not hasattr(page, "tabs")
+        assert not hasattr(page, "tab_group")
+        # Opening one fold builds one 50-row batch, not the 550 versions behind it.
+        page.expand_group("release")
+        app.processEvents()
+        assert len(page.rows) == 50
+        assert page.list.count() == 4 + 50 + 1  # headers + rows + "load more"
+        # every version is still a dense card row, and its name has room for 20 English characters
         assert page.rows[0].text_width() >= page.fontMetrics().horizontalAdvance("W" * 20)
         # the type tag shows the Chinese name per category
+        assert page.type_of("24w14potato") == ""
+        page.expand_group("april")
+        app.processEvents()
         assert page.type_of("24w14potato") == "愚人节版本"
+        assert page.type_of("25w14a") == ""
+        page.expand_group("snapshot")
+        app.processEvents()
         assert page.type_of("25w14a") == "快照版"
-        assert page.type_of("release-0") == "正式版"
+        page.expand_group("legacy")
+        app.processEvents()
         assert page.type_of("b1.7.3") == "远古版 Beta"
         # the date is humanized, not the raw ISO stamp the manifest carries
         assert page.date_of("24w14potato").startswith("2024")
         assert "2024-04-01" not in page.date_of("24w14potato")
-        # category tabs: all/release/snapshot/april-fools/legacy
-        tabs = page.tabs
-        assert len(tabs) == 5
-        assert [t.text() for t in tabs] == [
-            "全部类型", "正式版", "快照版", "愚人节版本", "远古版"
-        ]
-
-        def set_filter(data):
-            for t in tabs:
-                if t.property("filter") == data:
-                    t.setChecked(True)
-            page._refilter()
-
-        def ids():
-            return page.version_ids()
-
-        set_filter("april_fools")
-        assert ids() == ["24w14potato"]
-        set_filter("release")
-        assert page.list.count() == 550
-        set_filter("snapshot")
-        assert ids() == ["25w14a"]
-        set_filter("legacy")
-        assert ids() == ["b1.7.3"]
-        # search box: combines with the tab condition (debounced in the UI, apply directly here)
-        set_filter(None)
+        # "load more" adds the next 50 only
+        page.load_more("release")
+        app.processEvents()
+        assert len(page.rows) == 50 + 50 + 3  # release + the three single-row folds
+        # search: one flat result list, no fold headers, and a count
         page.search_edit.setText("potato")
         page._refilter()
-        assert ids() == ["24w14potato"]
+        app.processEvents()
+        assert page.version_ids() == ["24w14potato"]
+        assert page.list.count() == 1
+        assert "1 个结果" in page.result_count.text()
+        # a broad query is batched the same way, and says how many it found in total
         page.search_edit.setText("release-")
         page._refilter()
-        assert page.list.count() == 550
+        app.processEvents()
+        assert page.list.count() == 50 + 1  # one batch + "load more"
+        assert "550 个结果" in page.result_count.text()
+        # clearing returns to the fold view (the folds the searches opened stay open)
         page.search_edit.clear()
         page._refilter()
-        assert page.list.count() == 553
+        app.processEvents()
+        assert page.list.count() == 4 + 100 + 3 + 1
+        assert page.result_count.isVisible() is False
+        assert page.group_counts()["release"] == 550
     finally:
         if window is not None:
             window.close()
