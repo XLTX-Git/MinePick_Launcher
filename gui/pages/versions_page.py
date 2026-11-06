@@ -24,21 +24,39 @@ import logging
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QEvent, QLocale, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtCore import (
+    QDate,
+    QDateTime,
+    QEvent,
+    QLocale,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QButtonGroup,
     QCheckBox,
     QDialog,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -93,6 +111,57 @@ _TYPE_LABELS = {
     "old_beta": "versions.type.old_beta",
     "old_alpha": "versions.type.old_alpha",
 }
+
+#: The four folds of the version list, in the order PCL's page shows them. They partition the whole
+#: manifest: a version is in exactly one of them, and the counts therefore add up to the total.
+_GROUP_ORDER = ("release", "snapshot", "legacy", "april")
+_GROUP_TITLE_KEYS = {
+    "release": "versions.type.release",
+    "snapshot": "versions.type.snapshot",
+    "legacy": "versions.filter.legacy",
+    "april": "versions.group.april",
+}
+#: Rows one fold builds at a time. The snapshot fold alone holds ~800 manifest entries; building them
+#: all for a fold the user has not asked for is the cost this page is shaped to avoid.
+_GROUP_BATCH = 50
+
+
+def _group_of(version) -> str:
+    """Which fold a manifest entry belongs to.
+
+    The three type-driven folds read the manifest's own ``type`` field. April Fools versions are typed
+    ``snapshot`` (or, for the old ``2.0``, ``release``) by Mojang, so the April check comes first and
+    reuses the launcher's existing category rule - ``block_textures.icon_category`` - instead of a
+    second list of ids living here.
+    """
+    if block_textures.icon_category(version.id, version.type) == "april_fools":
+        return "april"
+    if version.type in ("old_beta", "old_alpha"):
+        return "legacy"
+    if version.type == "snapshot":
+        return "snapshot"
+    return "release"
+
+
+def human_datetime(release_time: str) -> str:
+    """The stamp the latest-version card shows: ``2025/12/9 20:00`` in the interface's local time.
+
+    The manifest writes UTC ("2025-12-09T12:00:00+00:00"). The page shows the user's own clock, the
+    same way every other download date on the page does, with the numeric month/day the brief asks for
+    (the long form belongs to the row's date line, not to this compact meta line).
+    """
+    text = (release_time or "").strip()
+    if len(text) < 16:
+        return ""
+    stamp = QDateTime.fromString(text, Qt.DateFormat.ISODate)
+    if not stamp.isValid():
+        return ""
+    stamp = stamp.toLocalTime()
+    date = stamp.date()
+    return (
+        f"{date.year()}/{date.month()}/{date.day()} "
+        f"{stamp.time().hour():02d}:{stamp.time().minute():02d}"
+    )
 
 
 def _ui_locale() -> QLocale:
@@ -192,6 +261,7 @@ class _VersionRow(QWidget):
         *,
         on_select,
         on_install,
+        highlight: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -200,6 +270,8 @@ class _VersionRow(QWidget):
         self.date_text = date_text
         self.status_text = status_text
         self.installed = installed
+        #: The search term this row was built for; the painted name highlights every occurrence.
+        self.highlight = (highlight or "").strip()
         self._on_select = on_select
         self._on_install = on_install
         self._selected = False
@@ -321,6 +393,41 @@ class _VersionRow(QWidget):
 
     # ---------- painting ----------
 
+    def _paint_match_highlights(
+        self,
+        painter: QPainter,
+        tokens: dict[str, str],
+        name: str,
+        metrics: QFontMetrics,
+        text_left: int,
+    ) -> None:
+        """Tint the part of the visible name the search term matched.
+
+        The row is the same card it always was; the only addition is a flat accent wash behind the
+        matched characters, built from the same ``ACCENT`` token the selection border uses. It is
+        painted before the text, and only over an occurrence that survived elision, so the highlight
+        can never point at a character the card does not show.
+        """
+        needle = self.highlight.lower()
+        if not needle:
+            return
+        haystack = name.lower()
+        spans: list[tuple[int, int]] = []
+        start = haystack.find(needle)
+        while start >= 0:
+            spans.append((start, start + len(needle)))
+            start = haystack.find(needle, start + len(needle))
+        if not spans:
+            return
+        tint = QColor(tokens.get("ACCENT", "#2f9e6f"))
+        tint.setAlpha(56)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(tint)
+        for start, end in spans:
+            left = text_left + metrics.horizontalAdvance(name[:start])
+            matched = metrics.horizontalAdvance(name[start:end])
+            painter.drawRoundedRect(QRectF(left - 1, 16, matched + 2, 20), 3, 3)
+
     def paintEvent(self, event) -> None:
         tokens = paint_utils._tokens()
         painter = QPainter(self)
@@ -358,10 +465,11 @@ class _VersionRow(QWidget):
         tag_width = min(width, tag_metrics.horizontalAdvance(self.type_label) + 12)
 
         name_rect = QRectF(text_left, 15, max(0, width), 22)
-        painter.setFont(name_font)
-        painter.setPen(text_color)
         name = name_metrics.elidedText(self.version_id, Qt.TextElideMode.ElideRight, max(0, width))
         name_width = name_metrics.horizontalAdvance(name)
+        self._paint_match_highlights(painter, tokens, name, name_metrics, text_left)
+        painter.setFont(name_font)
+        painter.setPen(text_color)
         painter.drawText(
             name_rect,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
@@ -445,6 +553,459 @@ class _VersionRow(QWidget):
         )
 
 
+class _GroupHeader(QPushButton):
+    """One fold: a full-row card with the category name, its count and a chevron.
+
+    The card is the control (PCL's "带计数的折叠分组": the whole row toggles), not a label with a small
+    button beside it. It is a ``QPushButton`` subclass so Space/Enter, the focus chain and the
+    ``keyboardFocus`` mark come for free; the painting is this class's own, the way the version rows
+    paint themselves, because the count has to sit next to the elided title.
+    """
+
+    HEIGHT = 44
+    #: The list slot is the card plus the 8px gap below it (same convention as ``_VersionRow``).
+    SLOT_HEIGHT = HEIGHT + 8
+    RADIUS = 8
+    PADDING = 14
+    CHEVRON = 9
+
+    def __init__(
+        self,
+        group_key: str,
+        title: str,
+        count: int,
+        expanded: bool,
+        *,
+        on_toggle,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.group_key = group_key
+        self.title = title
+        self.count = count
+        self._expanded = expanded
+        self._on_toggle = on_toggle
+        self._hover = False
+        self.setObjectName("versionGroupHeader")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFixedHeight(self.SLOT_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setAccessibleName("")
+        self.clicked.connect(lambda: self._on_toggle(self.group_key))
+        self._sync_accessibility()
+
+    # ---------- data ----------
+
+    def expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool) -> None:
+        if self._expanded == expanded:
+            return
+        self._expanded = expanded
+        self._sync_accessibility()
+        self.update()
+
+    def set_count(self, count: int) -> None:
+        self.count = count
+        self._sync_accessibility()
+        self.update()
+
+    def _sync_accessibility(self) -> None:
+        state = tr("versions.group.expanded" if self._expanded else "versions.group.collapsed")
+        self.setAccessibleName(f"{self.title} ({self.count}) · {state}")
+        self.setToolTip(f"{self.title} ({self.count})")
+
+    # ---------- geometry ----------
+
+    def sizeHint(self) -> QSize:
+        return QSize(600, self.SLOT_HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(220, self.SLOT_HEIGHT)
+
+    # ---------- interaction ----------
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        self.update()
+
+    # ---------- painting ----------
+
+    def paintEvent(self, event) -> None:
+        tokens = paint_utils._tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0.5, 0.5, self.width() - 1.0, self.HEIGHT - 1.0)
+        background = QColor(tokens.get("BG_LIST", "#ffffff"))
+        border = QColor(tokens.get("BORDER_TABLE", "#dfe4ea"))
+        if self._hover:
+            background = QColor(tokens.get("ACCENT_TINT", background.name()))
+            border = QColor(tokens.get("BORDER_HOVER", border.name()))
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            border = QColor(tokens.get("FOCUS_RING", border.name()))
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(background)
+        painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        text_color = QColor(tokens.get("FG_TEXT", "#1f2a36"))
+        hint_color = QColor(tokens.get("FG_HINT", "#4f6070"))
+        title_font = QFont(self.font())
+        title_font.setPixelSize(15)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        title_metrics = QFontMetrics(title_font)
+        count_font = QFont(self.font())
+        count_font.setPixelSize(12)
+        count_metrics = QFontMetrics(count_font)
+        count_text = f"({self.count})"
+        chevron_left = self.width() - self.PADDING - self.CHEVRON
+        count_width = count_metrics.horizontalAdvance(count_text)
+        title_width = max(
+            0,
+            chevron_left - 12 - count_width - 8 - self.PADDING,
+        )
+        title = title_metrics.elidedText(
+            self.title, Qt.TextElideMode.ElideRight, int(title_width)
+        )
+        painter.setFont(title_font)
+        painter.setPen(text_color)
+        painter.drawText(
+            QRectF(self.PADDING, 0, title_width, self.HEIGHT),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            title,
+        )
+        title_used = title_metrics.horizontalAdvance(title)
+        painter.setFont(count_font)
+        painter.setPen(hint_color)
+        painter.drawText(
+            QRectF(
+                self.PADDING + title_used + 8,
+                1,
+                max(0, count_width),
+                self.HEIGHT,
+            ),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            count_text,
+        )
+        self._paint_chevron(painter, hint_color, chevron_left)
+
+    def _paint_chevron(self, painter: QPainter, color: QColor, left: float) -> None:
+        """A 9px chevron: right when folded, down when open - the one visual that says "fold"."""
+        middle = self.HEIGHT / 2.0
+        pen = QPen(color, 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        path = QPainterPath()
+        if self._expanded:
+            x, y = left + self.CHEVRON / 2.0, middle - 2.0
+            path.moveTo(x - 4.0, y)
+            path.lineTo(x, y + 4.0)
+            path.lineTo(x + 4.0, y)
+        else:
+            x, y = left, middle
+            path.moveTo(x, y - 4.0)
+            path.lineTo(x + 4.0, y)
+            path.lineTo(x, y + 4.0)
+        painter.drawPath(path)
+
+
+class _LoadMoreRow(QPushButton):
+    """The one way another batch of a fold is built: a quiet full-row button under its rows."""
+
+    HEIGHT = 40
+    SLOT_HEIGHT = HEIGHT + 8
+    RADIUS = 8
+    PADDING = 14
+
+    def __init__(self, text: str, *, on_load, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = text
+        self._hover = False
+        self.setObjectName("versionLoadMore")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFixedHeight(self.SLOT_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setAccessibleName(text)
+        self.setToolTip(text)
+        self.clicked.connect(on_load)
+
+    def sizeHint(self) -> QSize:
+        return QSize(600, self.SLOT_HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(160, self.SLOT_HEIGHT)
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        tokens = paint_utils._tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0.5, 0.5, self.width() - 1.0, self.HEIGHT - 1.0)
+        background = QColor(tokens.get("BG_SECTION", "#f1f3f6"))
+        border = QColor(tokens.get("BORDER_TABLE", "#dfe4ea"))
+        if self._hover:
+            border = QColor(tokens.get("BORDER_HOVER", border.name()))
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            border = QColor(tokens.get("FOCUS_RING", border.name()))
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(background)
+        painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        font = QFont(self.font())
+        font.setPixelSize(12)
+        metrics = QFontMetrics(font)
+        painter.setFont(font)
+        painter.setPen(QColor(tokens.get("FG_HINT", "#4f6070")))
+        text = metrics.elidedText(
+            self._text, Qt.TextElideMode.ElideRight, max(0, self.width() - self.PADDING * 2)
+        )
+        painter.drawText(
+            QRectF(0, 0, self.width(), self.HEIGHT),
+            int(Qt.AlignmentFlag.AlignCenter),
+            text,
+        )
+
+
+class _LatestCard(QPushButton):
+    """The latest release / latest snapshot shortcut: block icon, version and its publication stamp.
+
+    The whole card is the control, like the fold headers: clicking it opens the install step for that
+    version, which is exactly what the same version's row button does. It is a shortcut, not a second
+    install path - it calls ``_install_latest``, the page's one entry into ``begin_install``.
+    """
+
+    HEIGHT = 64
+    RADIUS = 8
+    PADDING = 12
+    ICON = 40
+    GAP = 12
+    CHEVRON = 8
+
+    def __init__(
+        self,
+        kind: str,
+        kind_label: str,
+        *,
+        on_click,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.kind = kind
+        self.kind_label = kind_label
+        self.version_id = ""
+        self.version_type = kind
+        self.datetime_text = ""
+        self._icon = QPixmap()
+        self._hover = False
+        self.setObjectName("versionLatestCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFixedHeight(self.HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.clicked.connect(on_click)
+        self.set_version("", kind, "", QPixmap())
+
+    # ---------- data ----------
+
+    def icon(self) -> QPixmap:
+        return self._icon
+
+    def set_version(
+        self,
+        version_id: str,
+        version_type: str,
+        datetime_text: str,
+        icon: QPixmap,
+    ) -> None:
+        self.version_id = (version_id or "").strip()
+        self.version_type = version_type or self.kind
+        self.datetime_text = datetime_text or ""
+        self._icon = icon if icon is not None else QPixmap()
+        self.setEnabled(bool(self.version_id))
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor
+            if self.version_id
+            else Qt.CursorShape.ArrowCursor
+        )
+        if self.version_id:
+            meta = self._meta_text()
+            self.setAccessibleName(
+                " · ".join(part for part in (self.kind_label, self.version_id, meta) if part)
+            )
+            self.setToolTip(self.accessibleName())
+        else:
+            self.setAccessibleName(self.kind_label)
+            self.setToolTip(self.kind_label)
+        self.update()
+
+    def _meta_text(self) -> str:
+        if not self.version_id:
+            return tr("versions.latest.empty")
+        if self.datetime_text:
+            return f"{self.kind_label} · {tr('versions.latest.published', self.datetime_text)}"
+        return self.kind_label
+
+    # ---------- geometry ----------
+
+    def sizeHint(self) -> QSize:
+        return QSize(600, self.HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(260, self.HEIGHT)
+
+    # ---------- interaction ----------
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        self.update()
+
+    # ---------- painting ----------
+
+    def paintEvent(self, event) -> None:
+        tokens = paint_utils._tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0.5, 0.5, self.width() - 1.0, self.HEIGHT - 1.0)
+        background = QColor(tokens.get("BG_LIST", "#ffffff"))
+        border = QColor(tokens.get("BORDER_TABLE", "#dfe4ea"))
+        if self._hover and self.isEnabled():
+            background = QColor(tokens.get("ACCENT_TINT", background.name()))
+            border = QColor(tokens.get("BORDER_HOVER", border.name()))
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            border = QColor(tokens.get("FOCUS_RING", border.name()))
+        painter.setPen(QPen(border, 1.0))
+        painter.setBrush(background)
+        painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        icon_rect = QRectF(
+            self.PADDING,
+            (self.HEIGHT - self.ICON) / 2.0,
+            self.ICON,
+            self.ICON,
+        )
+        if not self._icon.isNull():
+            painter.drawPixmap(icon_rect.toRect(), self._icon)
+
+        text_left = self.PADDING + self.ICON + self.GAP
+        text_right = self.width() - self.PADDING - self.CHEVRON - 12
+        width = max(0, text_right - text_left)
+        if width <= 0:
+            painter.end()
+            return
+
+        text_color = QColor(tokens.get("FG_TEXT", "#1f2a36"))
+        hint_color = QColor(tokens.get("FG_HINT", "#4f6070"))
+        if not self.isEnabled():
+            text_color = QColor(tokens.get("FG_DISABLED", text_color.name()))
+            hint_color = QColor(tokens.get("FG_DISABLED", hint_color.name()))
+        name_font = QFont(self.font())
+        name_font.setPixelSize(15)
+        name_font.setWeight(QFont.Weight.DemiBold)
+        name_metrics = QFontMetrics(name_font)
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(12)
+        meta_metrics = QFontMetrics(meta_font)
+
+        name = name_metrics.elidedText(
+            self.version_id or tr("versions.latest.none"),
+            Qt.TextElideMode.ElideRight,
+            width,
+        )
+        painter.setFont(name_font)
+        painter.setPen(text_color)
+        painter.drawText(
+            QRectF(text_left, 15, width, 22),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            name,
+        )
+        meta = meta_metrics.elidedText(self._meta_text(), Qt.TextElideMode.ElideRight, width)
+        painter.setFont(meta_font)
+        painter.setPen(hint_color)
+        painter.drawText(
+            QRectF(text_left, 37, width, 18),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            meta,
+        )
+        if self.isEnabled():
+            self._paint_chevron(painter, hint_color)
+
+    def _paint_chevron(self, painter: QPainter, color: QColor) -> None:
+        """A right-pointing chevron: this row opens a step, it does not fold."""
+        x = self.width() - self.PADDING - self.CHEVRON
+        middle = self.HEIGHT / 2.0
+        pen = QPen(color, 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        path = QPainterPath()
+        path.moveTo(x, middle - 4.0)
+        path.lineTo(x + 4.0, middle)
+        path.lineTo(x, middle + 4.0)
+        painter.drawPath(path)
+
+
 class _VersionList(QListWidget):
     """QListWidget whose item widgets always span the viewport.
 
@@ -491,31 +1052,36 @@ class VersionsPage(QWidget):
         self._probe_generation = 0
         self._list_scroll = 0
         self._list_row = -1
+        # The four folds. Every manifest version lands in exactly one bucket; the buckets are sorted
+        # newest first on every rebuild, and only a bucket the user opened builds row widgets.
+        self._buckets: dict[str, list[tuple[object, str]]] = {
+            key: [] for key in _GROUP_ORDER
+        }
+        self._expanded: set[str] = set()
+        self._shown: dict[str, int] = {key: 0 for key in _GROUP_ORDER}
+        #: The header widgets of the current build (recreated on every rebuild), keyed by fold.
+        self._headers: dict[str, _GroupHeader] = {}
+        #: The header items, so a batch can be inserted directly under its fold without re-laying the
+        #: whole list (the header is the anchor the index is computed from).
+        self._header_items: dict[str, QListWidgetItem] = {}
+        #: The "load more" rows of the current build, so focus can stay on the control that asked.
+        self._load_more_rows: dict[str | None, _LoadMoreRow] = {}
+        self._load_more_items: dict[str | None, QListWidgetItem] = {}
+        #: Search mode builds a flat list, also in batches; ``_search_total`` is the number of matches
+        #: in the whole manifest (what the "N 个结果" line counts), not the number of rows built.
+        self._search_total = 0
+        self._search_shown = 0
+        self._search_needle = ""
+        #: Folds a search had to open because it found a version inside them (shown in the result
+        #: line). A closing search closes only these - a fold the user opened by hand stays open.
+        self._auto_groups: list[str] = []
+        self._auto_opened: set[str] = set()
+        #: Icons of the two latest versions, so the install step opened from a card still has one.
+        self._latest_icons: dict[str, QPixmap] = {}
         # The step replaces this container, so the list and every filter widget live inside it.
         self._list_step = QWidget()
         self._list_step.setObjectName("versionsListStep")
 
-        # Category chips: all / release / snapshot / april fools / legacy
-        self.tab_group = QButtonGroup(self)
-        self.tab_group.setExclusive(True)
-        self.tabs: list[QPushButton] = []
-        for label, data in (
-            ("versions.all_types", None),
-            ("versions.type.release", "release"),
-            ("versions.type.snapshot", "snapshot"),
-            ("versions.type.april", "april_fools"),
-            ("versions.filter.legacy", "legacy"),
-        ):
-            btn = QPushButton(tr(label))
-            btn.setCheckable(True)
-            btn.setObjectName("resourceChip")
-            btn.setFixedHeight(32)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setAccessibleName(tr(label))
-            btn.setProperty("filter", data)
-            self.tab_group.addButton(btn)
-            self.tabs.append(btn)
-        self.tabs[0].setChecked(True)
         self.search_edit = QLineEdit()
         add_search_icon(self.search_edit)
         self.search_edit.setPlaceholderText(tr("versions.search.placeholder"))
@@ -525,9 +1091,8 @@ class VersionsPage(QWidget):
         self.refresh_button = QPushButton(tr("versions.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
         self.refresh_button.setFixedHeight(32)
-        # Latest version cards: latest release / latest snapshot
-        self.latest_labels: dict[str, QLabel] = {}
-        self.latest_buttons: dict[str, QPushButton] = {}
+        # Latest version shortcuts: the latest release and the latest snapshot, one full-row card each.
+        self.latest_cards: dict[str, _LatestCard] = {}
         self.list = _VersionList()
         self.list.setObjectName("versionList")
         # WCAG 4.1.2: the list is a keyboard stop with no text of its own. Built from the column
@@ -542,10 +1107,21 @@ class VersionsPage(QWidget):
                 )
             )
         )
-        self.list.setUniformItemSizes(True)
+        # Fold headers are 52px, version rows 76px: item sizes are no longer uniform. Batched layout
+        # is what keeps a list of hundreds of item widgets fast anyway: measured on the live manifest,
+        # one more 50-row batch stays at ~60ms from 100 to 742 rows, while the default layout grew to
+        # seconds once ~450 rows existed (Qt re-lays out every item on each insertion).
+        self.list.setUniformItemSizes(False)
+        self.list.setLayoutMode(QListView.LayoutMode.Batched)
+        self.list.setBatchSize(_GROUP_BATCH)
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         apply_no_focus_outline(self.list)
+        # The search summary, right above the list: "N 个结果 · 已展开：快照版". Hidden when the box is
+        # empty (the page then says "共 N 个版本" on the hint line below the list, as it always did).
+        self.result_count = QLabel("")
+        self.result_count.setObjectName("hint")
+        self.result_count.setVisible(False)
         self.info_label = QLabel(tr("versions.info.default"))
         self.info_label.setObjectName("hint")
         self.install_button = QPushButton(tr("versions.install"))
@@ -578,54 +1154,30 @@ class VersionsPage(QWidget):
         top.addWidget(self.search_edit, 1)
         top.addWidget(self.refresh_button)
 
-        tabs_row = QHBoxLayout()
-        tabs_row.setSpacing(8)
-        for btn in self.tabs:
-            tabs_row.addWidget(btn)
-        tabs_row.addStretch(1)
-
-        latest_row = QHBoxLayout()
-        latest_row.setSpacing(8)
+        # Two stacked full-row shortcuts (the brief's "one line each"): a block, the version number and
+        # the kind plus its publication stamp. Clicking one opens the same install step a row's button
+        # opens; there is no second install path.
+        latest_column = QVBoxLayout()
+        latest_column.setSpacing(8)
         for kind, key in (
             ("release", "versions.latest.release"),
             ("snapshot", "versions.latest.snapshot"),
         ):
-            card = QFrame()
-            card.setObjectName("latestCard")
-            card_layout = QHBoxLayout(card)
-            card_layout.setContentsMargins(12, 8, 12, 8)
-            card_layout.setSpacing(16)
-            text_column = QVBoxLayout()
-            text_column.setSpacing(0)
-            kind_label = QLabel(tr(key))
-            kind_label.setObjectName("latestKind")
-            version_label = QLabel(tr("versions.latest.none"))
-            version_label.setObjectName("latestVersion")
-            text_column.addWidget(kind_label)
-            text_column.addWidget(version_label)
-            install_btn = QPushButton(tr("versions.install.short"))
-            # A card shortcut installs like a row does, so it wears the row's secondary button: the
-            # page keeps exactly one primary action (the install of the selected version below).
-            install_btn.setObjectName("rowInstall")
-            install_btn.setFixedHeight(32)
-            install_btn.setEnabled(False)
-            install_btn.setAccessibleName(tr("versions.install.short") + " · " + tr(key))
-            install_btn.clicked.connect(
-                lambda _checked=False, k=kind: self._install_latest(k)
+            card = _LatestCard(
+                kind,
+                tr(key),
+                on_click=lambda _checked=False, k=kind: self._install_latest(k),
+                parent=self._list_step,
             )
-            card_layout.addLayout(text_column)
-            card_layout.addWidget(install_btn)
-            self.latest_labels[kind] = version_label
-            self.latest_buttons[kind] = install_btn
-            latest_row.addWidget(card)
-        latest_row.addStretch(1)
+            self.latest_cards[kind] = card
+            latest_column.addWidget(card)
 
         layout = QVBoxLayout(self._list_step)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.addLayout(top)
-        layout.addLayout(tabs_row)
-        layout.addLayout(latest_row)
+        layout.addLayout(latest_column)
+        layout.addWidget(self.result_count)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.info_label)
         buttons = QHBoxLayout()
@@ -655,7 +1207,6 @@ class VersionsPage(QWidget):
         outer.addWidget(self.stack)
 
         self.refresh_button.clicked.connect(self.refresh)
-        self.tab_group.buttonClicked.connect(lambda *_a: self._refilter())
         # Debounce: re-filter only after 200ms of typing inactivity
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -732,18 +1283,266 @@ class VersionsPage(QWidget):
         set_app_status(self, tr("versions.msg.fetched", len(manifest.versions)))
         self._refilter()
 
+    def _manifest_version(self, version_id: str):
+        """One manifest entry by id, answering for both ``VersionManifest`` and the test doubles."""
+        if not version_id or self.manifest is None:
+            return None
+        find = getattr(self.manifest, "find", None)
+        if callable(find):
+            return find(version_id)
+        return next(
+            (v for v in getattr(self.manifest, "versions", []) if v.id == version_id),
+            None,
+        )
+
     def _update_latest_cards(self) -> None:
+        """Fill the two shortcuts from ``manifest.latest`` (and the version it names, for the stamp)."""
         latest = getattr(self.manifest, "latest", None) or {}
+        self._latest_icons = {}
+        game_dir = self._game_dir()
+        cache_root = block_textures.texture_cache_root(paths.launcher_dir())
         for kind in ("release", "snapshot"):
             version_id = (latest.get(kind) or "").strip()
-            self.latest_labels[kind].setText(version_id or tr("versions.latest.none"))
-            self.latest_buttons[kind].setEnabled(bool(version_id))
+            version = self._manifest_version(version_id)
+            if version is None:
+                # The id can be absent from the version array (or the array can be stale): the
+                # shortcut still names what the manifest says is latest, just without a stamp/icon.
+                icon = (
+                    self._row_icon(version_id, kind, False, game_dir, cache_root)
+                    if version_id
+                    else QPixmap()
+                )
+                self._latest_icons[version_id] = icon
+                self.latest_cards[kind].set_version(version_id, kind, "", icon)
+                continue
+            icon = self._row_icon(
+                version.id, version.type, version.id in self._installed, game_dir, cache_root
+            )
+            self._latest_icons[version.id] = icon
+            self.latest_cards[kind].set_version(
+                version.id,
+                version.type,
+                human_datetime(version.release_time),
+                icon,
+            )
 
     def _install_latest(self, kind: str) -> None:
         latest = getattr(self.manifest, "latest", None) or {}
         version_id = (latest.get(kind) or "").strip()
         if version_id:
             self.begin_install(version_id)
+
+    # ---------- the four folds: state and public reads ----------
+
+    def group_of(self, version_id: str) -> str:
+        """Which fold a version id belongs to (empty when the manifest does not hold it)."""
+        version = self._manifest_version(version_id)
+        return _group_of(version) if version is not None else ""
+
+    def group_counts(self) -> dict[str, int]:
+        """The count each fold header shows: every manifest version, regardless of the search box."""
+        return {key: len(self._buckets.get(key, [])) for key in _GROUP_ORDER}
+
+    def group_total(self, key: str) -> int:
+        return len(self._buckets.get(key, []))
+
+    def expanded_groups(self) -> list[str]:
+        return [key for key in _GROUP_ORDER if key in self._expanded]
+
+    def is_group_expanded(self, key: str) -> bool:
+        return key in self._expanded
+
+    def group_headers(self) -> dict[str, _GroupHeader]:
+        return dict(self._headers)
+
+    def toggle_group(self, key: str) -> None:
+        """Open or close one fold (the header's click; also the keyboard's Space/Enter)."""
+        if key not in self._buckets:
+            return
+        if key in self._expanded:
+            self._expanded.discard(key)
+            self._shown[key] = 0
+        else:
+            self._expanded.add(key)
+            self._shown[key] = _GROUP_BATCH
+        self._refilter()
+        # A rebuild replaces the header widget the keyboard was standing on; put focus back on the
+        # same fold, where the next Tab/arrow step continues from.
+        header = self._headers.get(key)
+        if header is not None:
+            header.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def expand_group(self, key: str) -> None:
+        """Open a fold with its first batch of rows (idempotent; used by tests and begin_install)."""
+        if key not in self._buckets:
+            return
+        if key not in self._expanded:
+            self._expanded.add(key)
+            self._shown[key] = _GROUP_BATCH
+            self._refilter()
+        elif self._shown.get(key, 0) < _GROUP_BATCH:
+            self._shown[key] = min(_GROUP_BATCH, len(self._buckets[key]))
+            self._refilter()
+
+    def collapse_group(self, key: str) -> None:
+        if key in self._expanded:
+            self._expanded.discard(key)
+            self._shown[key] = 0
+            self._refilter()
+
+    def load_more(self, key: str | None = None) -> None:
+        """Build another 50 rows of one fold (``None`` = the flat search list).
+
+        The batch is inserted where it belongs instead of rebuilding the list, which leaves every
+        existing card, its selection and the scroll offset untouched. With the list's batched layout
+        mode a 50-row batch measured ~60ms from 100 to 742 rows; rebuilding the list at 742 rows
+        measured ~850ms, and per-item insertion without the batched layout reached seconds.
+        """
+        if key is None:
+            if not self._search_needle or self._search_total <= self._search_shown:
+                return
+            old = self._search_shown
+            new = min(self._search_total, old + _GROUP_BATCH)
+            self._search_shown = new
+            self._append_search_batch(old, new)
+            focus = self._load_more_rows.get(None)
+        else:
+            if self._search_needle or key not in self._buckets:
+                return
+            total = len(self._buckets[key])
+            old = self._shown.get(key, 0)
+            if old >= total:
+                return
+            new = min(total, old + _GROUP_BATCH)
+            self._shown[key] = new
+            self._append_group_batch(key, old, new)
+            focus = self._load_more_rows.get(key)
+        if focus is not None:
+            focus.setFocus(Qt.FocusReason.OtherFocusReason)
+        elif self.rows:
+            # No batch left: the control disappears, so continue on the last row it revealed.
+            self.rows[-1].install.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _drop_load_more(self, key: str | None) -> None:
+        """Remove one fold's "load more" item before its replacement is inserted."""
+        item = self._load_more_items.pop(key, None)
+        self._load_more_rows.pop(key, None)
+        if item is None:
+            return
+        row = self.list.row(item)
+        if row >= 0:
+            self.list.takeItem(row)
+
+    def _append_group_batch(self, key: str, old: int, new: int) -> None:
+        """Insert rows ``old:new`` of a fold right after its header (before its load-more row)."""
+        header = self._header_items.get(key)
+        if header is None:
+            return
+        index = self.list.row(header) + 1 + old
+        game_dir = self._game_dir()
+        cache_root = block_textures.texture_cache_root(paths.launcher_dir())
+        created: list[tuple[QListWidgetItem, _VersionRow]] = []
+        for version, category in self._buckets.get(key, [])[old:new]:
+            created.append(
+                self._make_row_item(version, category, "", game_dir, cache_root)
+            )
+        # One batch, one layout pass: inserting and installing 50 items one call at a time re-laid the
+        # list after every step (measured 111ms for the second batch, 236ms for the fifth). Blocking
+        # updates and signals for the duration, plus the list's batched layout mode, keeps a batch at
+        # ~60ms whatever is already built.
+        self.list.blockSignals(True)
+        self.list.setUpdatesEnabled(False)
+        try:
+            self._drop_load_more(key)
+            insert_at = index
+            for item, _row in created:
+                self.list.insertItem(insert_at, item)
+                insert_at += 1
+            for item, row in created:
+                self.list.setItemWidget(item, row)
+                row.setVisible(True)
+                self.rows.append(row)
+            if new < len(self._buckets.get(key, [])):
+                item, row = self._new_load_more_item(key, add=False)
+                self.list.insertItem(index + len(created), item)
+                self.list.setItemWidget(item, row)
+                row.setVisible(True)
+        finally:
+            self.list.setUpdatesEnabled(True)
+            self.list.blockSignals(False)
+        self._sync_row_selection(self._selected_id())
+        QTimer.singleShot(0, self.list.sync_item_widths)
+
+    def _append_search_batch(self, old: int, new: int) -> None:
+        """Append the next ``old:new`` matches to the flat search list."""
+        matches = self._search_matches(self._search_needle)
+        game_dir = self._game_dir()
+        cache_root = block_textures.texture_cache_root(paths.launcher_dir())
+        created: list[tuple[QListWidgetItem, _VersionRow]] = []
+        for version, category in matches[old:new]:
+            created.append(
+                self._make_row_item(
+                    version, category, self._search_needle, game_dir, cache_root
+                )
+            )
+        self.list.blockSignals(True)
+        self.list.setUpdatesEnabled(False)
+        try:
+            self._drop_load_more(None)
+            for item, _row in created:
+                self.list.addItem(item)
+            for item, row in created:
+                self.list.setItemWidget(item, row)
+                row.setVisible(True)
+                self.rows.append(row)
+            if new < self._search_total:
+                self._new_load_more_item(None)
+        finally:
+            self.list.setUpdatesEnabled(True)
+            self.list.blockSignals(False)
+        self._sync_row_selection(self._selected_id())
+        QTimer.singleShot(0, self.list.sync_item_widths)
+
+    def _ensure_version_visible(self, version_id: str) -> None:
+        """Open the fold (and build enough rows) that holds ``version_id``, so its row exists.
+
+        The latest cards name versions that may sit in a fold the user has never opened. Entering the
+        install step from one of them must behave like entering it from a row - including the row's
+        inline progress once the download starts - so the fold is opened here, with only the batches
+        needed to reach that row.
+        """
+        needle = self.search_edit.text().strip().lower()
+        if needle:
+            matches = self._search_matches(needle)
+            index = next(
+                (i for i, (version, _c) in enumerate(matches) if version.id == version_id),
+                -1,
+            )
+            if index < 0:
+                return
+            if index >= self._search_shown:
+                self._search_shown = (index // _GROUP_BATCH + 1) * _GROUP_BATCH
+                self._rebuild(needle)
+            return
+        group = self.group_of(version_id)
+        if not group:
+            return
+        items = self._buckets[group]
+        index = next(
+            (i for i, (version, _c) in enumerate(items) if version.id == version_id), -1
+        )
+        if index < 0:
+            return
+        changed = False
+        if group not in self._expanded:
+            self._expanded.add(group)
+            self._shown[group] = _GROUP_BATCH
+            changed = True
+        elif index >= self._shown.get(group, 0):
+            self._shown[group] = (index // _GROUP_BATCH + 1) * _GROUP_BATCH
+            changed = True
+        if changed:
+            self._rebuild("")
 
     def _on_row_install(self, version_id: str) -> None:
         """Row install: open the install step for this version.
@@ -771,6 +1570,9 @@ class VersionsPage(QWidget):
         self._pending_version_id = version_id
         self._pending_loader = None
         self._pending_display_name = ""
+        # A shortcut card can name a version inside a closed fold; open exactly enough of it that the
+        # row exists, so the download's inline progress has a row to land on when the step returns.
+        self._ensure_version_visible(version_id)
         self._list_scroll = self.list.verticalScrollBar().value()
         self._list_row = self.list.currentRow()
         index = self._row_index(version_id)
@@ -779,7 +1581,7 @@ class VersionsPage(QWidget):
         row = self._row_for(version_id)
         self.step.prepare(
             version_id,
-            row.icon() if row is not None else None,
+            row.icon() if row is not None else self._latest_icons.get(version_id),
             editable=version_id not in self._installed,
             name=version_id,
             taken=self._display_names(),
@@ -964,97 +1766,275 @@ class VersionsPage(QWidget):
         except (InstancesError, OSError):
             _log.warning("versions: could not store the instance name for %s", target, exc_info=True)
 
+    # ---------- the list: four folds, or one flat search result ----------
+
+    def _build_buckets(self) -> None:
+        """Sort the whole manifest into the four folds, newest first inside each one."""
+        buckets: dict[str, list[tuple[object, str]]] = {key: [] for key in _GROUP_ORDER}
+        for version in self.manifest.versions:
+            buckets[_group_of(version)].append(
+                (version, version_category(version.id, version.type))
+            )
+        for key in _GROUP_ORDER:
+            buckets[key].sort(
+                key=lambda pair: pair[0].release_time or "", reverse=True
+            )
+        self._buckets = buckets
+
     def _refilter(self) -> None:
+        """Rebuild the list for the current search box: folds when empty, flat results when not."""
         if self.manifest is None:
             return
-        checked = self.tab_group.checkedButton()
-        want = checked.property("filter") if checked is not None else None
-        needle = self.search_edit.text().strip().lower()
-        shown = []
-        for v in self.manifest.versions:
-            category = version_category(v.id, v.type)
-            if want is None:
-                ok = True
-            elif want == "legacy":
-                ok = category in ("old_beta", "old_alpha")
-            else:
-                ok = want == category
-            if ok and (not needle or needle in v.id.lower()):
-                shown.append((v, category))
-        # 所有分类(含「全部类型」)一律按发布时间倒序:最新在最前;release_time 是 ISO 字符串,
-        # 直接按字符串降序即可,缺时间的排在最后
-        shown.sort(key=lambda pair: pair[0].release_time or "", reverse=True)
-        self._populate(shown)
-        self.info_label.setText(tr("versions.msg.shown", len(shown)))
+        self._build_buckets()
+        self._rebuild(self.search_edit.text().strip().lower())
+        self._update_result_line()
 
-    def _populate(self, shown: list[tuple[object, str]]) -> None:
-        """Fill the dense list with one card per version, in the order ``_refilter`` decided.
+    def _search_matches(self, needle: str) -> list[tuple[object, str]]:
+        """Every version whose id contains ``needle``, newest first across all four folds."""
+        matches = [
+            (version, category)
+            for key in _GROUP_ORDER
+            for version, category in self._buckets.get(key, [])
+            if needle in version.id.lower()
+        ]
+        matches.sort(key=lambda pair: pair[0].release_time or "", reverse=True)
+        return matches
 
-        Items are all added before any item widget is installed. Interleaving the two makes
-        ``addItem`` re-lay-out every widget already in the list, which measured quadratic: 400 rows
-        took 5.9s interleaved against 0.1s batched on this page. The manifest holds ~1000 versions, so
-        the batched shape is what keeps a refresh (and every search keystroke) responsive. Signals are
-        blocked while the list is rebuilt so a half-filled list never reports a selection.
+    def _rebuild(self, needle: str) -> None:
+        """Build the items the current mode needs, and nothing else.
+
+        In fold mode a closed fold contributes one 52px header item and no rows at all - that is what
+        keeps ~800 snapshots free until somebody opens the fold. An open fold contributes at most its
+        built batch (50 rows plus, while more remain, one "load more" item). Search mode builds a flat
+        batch of matches instead. Every count the header shows is read from the full bucket, never from
+        the rows that were built.
+
+        Items are all added before any item widget is installed, for the reason the old ``_populate``
+        documented: interleaving the two makes ``addItem`` re-lay-out every widget already in the list,
+        which measured quadratic on this page. Signals are blocked while the list is rebuilt so a
+        half-filled list never reports a selection.
         """
         current = self._selected_id()
+        scroll = self.list.verticalScrollBar().value()
+        if needle != self._search_needle:
+            # A new query (or leaving search) is a new list: start it at the top. A rebuild of the
+            # same mode - expand, collapse, load more, a refresh - keeps the user's position.
+            scroll = 0
+        self._search_needle = needle
+        self._auto_groups = []
+        if needle:
+            # The first search builds its first batch; a later keystroke keeps however many batches
+            # the user has already asked for. Clearing the box resets the batch for the next search.
+            if self._search_shown <= 0:
+                self._search_shown = _GROUP_BATCH
+            # A hit inside a fold opens that fold (the flat result list below still carries every
+            # hit): the fold's state is what makes the auto-expansion real, and the result line names
+            # the folds it had to open. Clearing the box closes exactly those again.
+            for key in _GROUP_ORDER:
+                if any(needle in version.id.lower() for version, _c in self._buckets.get(key, [])):
+                    self._auto_groups.append(key)
+                    if key not in self._expanded:
+                        self._expanded.add(key)
+                        self._auto_opened.add(key)
+                    if self._shown.get(key, 0) < _GROUP_BATCH:
+                        self._shown[key] = _GROUP_BATCH
+        else:
+            # Clearing the box returns to the fold view: close only the folds this search opened.
+            for key in self._auto_opened:
+                self._expanded.discard(key)
+                self._shown[key] = 0
+            self._auto_opened.clear()
+            self._search_shown = 0
+
         # Drop the Python references before clear(): clear() would otherwise let the row list point at
         # C++ widgets that are being destroyed, and the selection handler walks it.
         self.rows = []
         self._meta = {}
+        self._headers = {}
+        self._header_items = {}
+        self._load_more_rows = {}
+        self._load_more_items = {}
+        game_dir = self._game_dir()
+        cache_root = block_textures.texture_cache_root(paths.launcher_dir())
+        pending: list[tuple[QListWidgetItem, QWidget]] = []
         self.list.blockSignals(True)
         self.list.setUpdatesEnabled(False)
         try:
             self.list.clear()
-            for v, category in shown:
-                type_label = tr(_TYPE_LABELS.get(category, "versions.type.release"))
-                date_text = human_date(v.release_time)
-                status_text = (
-                    tr("versions.status.installed")
-                    if v.id in self._installed
-                    else tr("versions.status.not_installed")
-                )
-                self._meta[v.id] = (type_label, date_text, status_text)
-                # The item's own text is the accessible/testable representation; the card paints the
-                # human-readable form on top of it.
-                item = QListWidgetItem(
-                    " · ".join(part for part in (v.id, type_label, date_text) if part)
-                )
-                item.setData(Qt.UserRole, v.id)
-                item.setSizeHint(QSize(0, _VersionRow.SLOT_HEIGHT))
-                self.list.addItem(item)
-            game_dir = self._game_dir()
-            cache_root = block_textures.texture_cache_root(paths.launcher_dir())
-            for index, (v, category) in enumerate(shown):
-                type_label, date_text, status_text = self._meta[v.id]
-                installed = v.id in self._installed
-                # The same install path the module always used: the row's button calls it by id.
-                row = _VersionRow(
-                    v.id,
-                    type_label,
-                    date_text,
-                    status_text,
-                    installed,
-                    self._row_icon(v.id, v.type, installed, game_dir, cache_root),
-                    on_select=lambda row_index=index: self.list.setCurrentRow(row_index),
-                    on_install=lambda version_id=v.id: self._on_row_install(version_id),
-                )
-                self.list.setItemWidget(self.list.item(index), row)
-                self.rows.append(row)
+            if needle:
+                matches = self._search_matches(needle)
+                self._search_total = len(matches)
+                for version, category in matches[: self._search_shown]:
+                    pending.append(
+                        self._new_row_item(version, category, needle, game_dir, cache_root)
+                    )
+                if len(matches) > self._search_shown:
+                    pending.append(self._new_load_more_item(None))
+            else:
+                self._search_total = 0
+                for key in _GROUP_ORDER:
+                    pending.append(self._new_header_item(key))
+                    if key not in self._expanded:
+                        continue
+                    items = self._buckets.get(key, [])
+                    limit = min(self._shown.get(key, 0), len(items))
+                    for version, category in items[:limit]:
+                        pending.append(
+                            self._new_row_item(version, category, "", game_dir, cache_root)
+                        )
+                    if limit < len(items):
+                        pending.append(self._new_load_more_item(key))
+            for item, widget in pending:
+                self.list.setItemWidget(item, widget)
+                # The page can be rebuilt while it is hidden (a signal from another page). Qt then
+                # keeps the item widget hidden until another show/layout pass, which leaves the focus
+                # chain without the fold headers the keyboard walk needs. Showing the widget here is
+                # what makes it a real, focusable control as soon as its page is shown.
+                widget.setVisible(True)
+                if isinstance(widget, _VersionRow):
+                    self.rows.append(widget)
         finally:
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
-        if shown:
-            index = next(
-                (i for i, (v, _c) in enumerate(shown) if v.id == current),
-                0,
-            )
-            self.list.setCurrentRow(index)
-        self._sync_row_selection(self.list.currentRow())
+
+        ids = self.version_ids()
+        selected = current if current in ids else (ids[0] if ids else None)
+        if selected is not None:
+            self.list.setCurrentRow(self._row_index(selected))
+        else:
+            self.list.setCurrentRow(-1)
+        self._sync_row_selection(selected)
         # A rebuild during a download (a search keystroke) hands the new row the running progress.
         self._sync_install_row()
+        self._restore_scroll(scroll)
         # The page may still be inside its first layout pass here; re-apply the viewport width once
         # the widget hierarchy has settled (see _VersionList).
         QTimer.singleShot(0, self.list.sync_item_widths)
+
+    def _new_row_item(
+        self,
+        version,
+        category: str,
+        highlight: str,
+        game_dir: Path,
+        cache_root: Path,
+    ) -> tuple[QListWidgetItem, _VersionRow]:
+        """One dense version card as a list item (the card is still ``_VersionRow``, unchanged)."""
+        item, row = self._make_row_item(version, category, highlight, game_dir, cache_root)
+        self.list.addItem(item)
+        return item, row
+
+    def _make_row_item(
+        self,
+        version,
+        category: str,
+        highlight: str,
+        game_dir: Path,
+        cache_root: Path,
+    ) -> tuple[QListWidgetItem, _VersionRow]:
+        """Build (but do not insert) the item and the card of one version."""
+        type_label = tr(_TYPE_LABELS.get(category, "versions.type.release"))
+        date_text = human_date(version.release_time)
+        installed = version.id in self._installed
+        status_text = tr(
+            "versions.status.installed" if installed else "versions.status.not_installed"
+        )
+        self._meta[version.id] = (type_label, date_text, status_text)
+        # The item's own text is the accessible/testable representation; the card paints the
+        # human-readable form on top of it.
+        item = QListWidgetItem(
+            " · ".join(part for part in (version.id, type_label, date_text) if part)
+        )
+        item.setData(Qt.UserRole, version.id)
+        item.setSizeHint(QSize(0, _VersionRow.SLOT_HEIGHT))
+        row = _VersionRow(
+            version.id,
+            type_label,
+            date_text,
+            status_text,
+            installed,
+            self._row_icon(version.id, version.type, installed, game_dir, cache_root),
+            on_select=lambda version_id=version.id: self._select_version(version_id),
+            on_install=lambda version_id=version.id: self._on_row_install(version_id),
+            highlight=highlight,
+        )
+        return item, row
+
+    def _new_header_item(self, key: str) -> tuple[QListWidgetItem, _GroupHeader]:
+        title = tr(_GROUP_TITLE_KEYS[key])
+        count = len(self._buckets.get(key, []))
+        header = _GroupHeader(
+            key,
+            title,
+            count,
+            key in self._expanded,
+            on_toggle=self.toggle_group,
+        )
+        self._headers[key] = header
+        item = QListWidgetItem(f"{title} ({count})")
+        # A fold header is a control of its own (its widget is the focus stop and the click target);
+        # the list item must not also become a selectable version row.
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setSizeHint(QSize(0, _GroupHeader.SLOT_HEIGHT))
+        self.list.addItem(item)
+        self._header_items[key] = item
+        return item, header
+
+    def _new_load_more_item(
+        self, key: str | None, *, add: bool = True
+    ) -> tuple[QListWidgetItem, _LoadMoreRow]:
+        if key is None:
+            remaining = max(0, self._search_total - self._search_shown)
+            on_load = lambda: self.load_more(None)
+        else:
+            remaining = max(0, len(self._buckets.get(key, [])) - self._shown.get(key, 0))
+            on_load = lambda group=key: self.load_more(group)
+        text = tr("versions.group.more", remaining)
+        row = _LoadMoreRow(text, on_load=on_load)
+        self._load_more_rows[key] = row
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setSizeHint(QSize(0, _LoadMoreRow.SLOT_HEIGHT))
+        if add:
+            self.list.addItem(item)
+        self._load_more_items[key] = item
+        return item, row
+
+    def _update_result_line(self) -> None:
+        """The line above the list: "N 个结果" while searching, the manifest total otherwise."""
+        if self._search_needle:
+            text = tr("versions.search.results", self._search_total)
+            if self._auto_groups:
+                names = " / ".join(tr(_GROUP_TITLE_KEYS[key]) for key in self._auto_groups)
+                text += " · " + tr("versions.search.expanded", names)
+            self.result_count.setText(text)
+            self.result_count.setVisible(True)
+            version_id = self._selected_id()
+            self.info_label.setText(
+                tr("versions.info.selected", version_id)
+                if version_id
+                else tr("versions.info.default")
+            )
+            return
+        self.result_count.clear()
+        self.result_count.setVisible(False)
+        total = len(self.manifest.versions) if self.manifest is not None else 0
+        self.info_label.setText(tr("versions.msg.shown", total))
+
+    def _restore_scroll(self, value: int) -> None:
+        """Put the scroll offset back after a rebuild, once the new rows have a layout."""
+        bar = self.list.verticalScrollBar()
+
+        def apply() -> None:
+            bar.setValue(min(value, bar.maximum()))
+
+        apply()
+        QTimer.singleShot(0, apply)
+
+    def _select_version(self, version_id: str) -> None:
+        index = self._row_index(version_id)
+        if index >= 0:
+            self.list.setCurrentRow(index)
 
     def _row_icon(
         self,
@@ -1081,13 +2061,13 @@ class VersionsPage(QWidget):
             cache_root=cache_root,
         )
 
-    def _sync_row_selection(self, index: int) -> None:
-        for row_index, row in enumerate(self.rows):
-            row.set_selected(row_index == index)
+    def _sync_row_selection(self, version_id: str | None) -> None:
+        for row in self.rows:
+            row.set_selected(row.version_id == version_id)
 
     def _on_select(self, row: int = -1) -> None:
-        self._sync_row_selection(row)
         version_id = self._selected_id()
+        self._sync_row_selection(version_id)
         if version_id is None:
             return
         self.info_label.setText(tr("versions.info.selected", version_id))
@@ -1095,8 +2075,14 @@ class VersionsPage(QWidget):
     # ---------- row metadata (what the cards paint, addressable for tests) ----------
 
     def version_ids(self) -> list[str]:
-        """The visible version ids, top to bottom - the list's own order."""
-        return [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())]
+        """The visible version ids, top to bottom - the list's own order, headers left out."""
+        ids: list[str] = []
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            version_id = item.data(Qt.UserRole)
+            if version_id is not None:
+                ids.append(version_id)
+        return ids
 
     def type_of(self, version_id: str) -> str:
         return self._meta.get(version_id, ("", "", ""))[0]
