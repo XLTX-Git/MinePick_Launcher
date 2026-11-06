@@ -256,15 +256,15 @@ def test_dismissing_a_running_task_cancels_it_instead(center) -> None:
 # ---------- the download page's additions to the model ----------
 
 
-def test_the_five_kinds_are_their_own_titles_and_their_own_glyph(center) -> None:
-    """One task per install category, each with the title key and the kind its row's glyph reads."""
+def test_every_kind_is_its_own_title_and_its_own_glyph(center) -> None:
+    """One task per job category, each with the title key and the kind its row's glyph reads."""
     for kind, title_key in KIND_TITLE_KEYS.items():
         task = center.add_task(title_key, "x", kind=kind)
         assert task.kind == kind
         assert task.title() == i18n.tr(title_key, "x")
     kinds = [task.kind for task in center.tasks()]
-    assert kinds == list(KIND_TITLE_KEYS), "the five kinds must all be listable at once"
-    assert len(set(kinds)) == 5
+    assert kinds == list(KIND_TITLE_KEYS), "every kind must be listable at once"
+    assert len(set(kinds)) == len(KIND_TITLE_KEYS)
 
 
 def test_a_task_created_by_title_key_alone_still_knows_its_kind(center) -> None:

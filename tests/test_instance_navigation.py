@@ -239,6 +239,7 @@ def test_detail_sidebar_is_eight_items_in_three_groups(app, monkeypatch, ws_tmp)
         SIDEBAR_ITEM_HEIGHT,
         SIDEBAR_WIDTH,
         TAB_DIAGNOSIS,
+        TAB_EXPORT,
         TAB_MODIFY,
         TAB_RESOURCEPACKS,
         TAB_SAVES,
@@ -288,13 +289,25 @@ def test_detail_sidebar_is_eight_items_in_three_groups(app, monkeypatch, ws_tmp)
         app.processEvents()
         assert detail.stack.currentIndex() == TAB_SHADERPACKS
 
-        # 修改 and 导出 explain the missing capability instead of pretending to implement it.
-        for index in (TAB_MODIFY,):
-            detail.tabs[index].click()
-            app.processEvents()
-            labels = [label.text() for label in detail.stack.widget(index).findChildren(QLabel)]
-            assert i18n.tr("instances.detail.not_implemented.title") in labels
-            assert any("." in text or "。" in text for text in labels)
+        # 修改 shows what the instance runs now, plus the two controls that re-point it.
+        detail.tabs[TAB_MODIFY].click()
+        app.processEvents()
+        assert detail.stack.currentIndex() == TAB_MODIFY
+        assert detail.modify_values["game_version"].text() == "1.21.11"
+        assert detail.modify_values["loader"].text() == "Fabric 0.19.3"
+        assert detail.modify_values["point_to"].text() == "fabric-loader-0.19.3-1.21.11"
+        assert detail.change_version_button.isEnabled()
+        assert detail.change_loader_button.isEnabled()
+
+        # 导出 offers the zip, and says the modpack manifest is not on offer (no dead link).
+        detail.tabs[TAB_EXPORT].click()
+        app.processEvents()
+        assert detail.stack.currentIndex() == TAB_EXPORT
+        export_labels = [
+            label.text() for label in detail.stack.widget(TAB_EXPORT).findChildren(QLabel)
+        ]
+        assert i18n.tr("instances.detail.export.modpack") in export_labels
+        assert detail.export_button.text() == i18n.tr("instances.detail.export.button")
 
         # The diagnosis page owns the log viewer and shows the file contents directly.
         detail.tabs[TAB_DIAGNOSIS].click()
