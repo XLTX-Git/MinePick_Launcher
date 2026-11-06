@@ -27,6 +27,7 @@ dropped by the owner guard instead of dereferencing a freed C++ object.
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 from functools import partial
 from pathlib import Path
@@ -55,12 +56,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import block_icons, i18n, inwindow_dialog, nav_icons, theme
+from gui import block_icons, i18n, inwindow_dialog, nav_icons, paint_utils, theme
 from gui.accessibility_launch import (
     prepare_launch_accessibility,
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
+from gui.pages.instance_files import (
+    backup_save,
+    format_modified,
+    read_enabled_resource_packs,
+    scan_content_files,
+    scan_saves,
+)
 from gui.view_state import remember_column_widths
 from gui.widgets import (
     PAGE_HEADER_GAP,
@@ -107,11 +115,7 @@ from launcher.launch import (
 )
 from launcher.meta import block_textures
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
-from launcher.mods.modrinth import (
-    delete_installed_content,
-    list_installed_content,
-    resolve_content_dir,
-)
+from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
 
 tr = i18n.tr
 
@@ -172,6 +176,11 @@ ICON_PICKER_ICON = 48
 ICON_PICKER_TILE = 64
 ICON_PICKER_COLUMNS = 4
 
+#: The letter tile each resource/shader row carries inside its name cell. 20px keeps the 30px table
+#: row compact; the tile is drawn with the same painter as the resource list's placeholder icons.
+CONTENT_ICON_SIZE = 20
+CONTENT_ICON_RADIUS = 6
+
 
 def human_size(size: int) -> str:
     """Format a byte count with the launcher's unit strings."""
@@ -182,18 +191,6 @@ def human_size(size: int) -> str:
     if size >= 1 << 10:
         return f"{size / (1 << 10):.0f} " + tr("unit.kb")
     return f"{size} " + tr("unit.bytes")
-
-
-def directory_size(path: Path) -> int:
-    """Total size of the regular files below a directory (0 when it is unreadable)."""
-    total = 0
-    try:
-        for entry in path.rglob("*"):
-            if entry.is_file():
-                total += entry.stat().st_size
-    except OSError:
-        return total
-    return total
 
 
 def save_custom_icon(source: Path, folder: Path) -> str:
@@ -486,7 +483,10 @@ class InstanceDetail(QWidget):
         self._isolation_warned = False
         self._loaded_tabs: set[int] = set()
         self._content_items: dict[str, list] = {sub: [] for sub in _CONTENT_SUBDIRS}
-        self._saves: list[tuple[str, float, int]] = []
+        #: The normal empty-state text per content page, restored after a failed read replaced it
+        #: with the error message (an unreadable folder must not keep looking like a load failure).
+        self._content_empty_text: dict[str, str] = {}
+        self._saves: list = []
         self._badge_counts: dict[str, int] = {key: 0 for key in _BADGED_SECTIONS}
 
         self.tab_group = QButtonGroup(self)
@@ -911,11 +911,12 @@ class InstanceDetail(QWidget):
         banner, self.res_banner_label = self._build_share_banner()
         self.res_banner = banner
         layout.addWidget(banner)
-        box, table, empty = self._build_content_section(
-            "resourcepacks", tr("mods.tab.resourcepacks")
+        box = self._build_content_section(
+            "resourcepacks",
+            tr("instances.detail.nav.resourcepacks"),
+            tr("instances.detail.resourcepacks.empty"),
+            with_status=True,
         )
-        self.content_tables["resourcepacks"] = table
-        self.content_empty["resourcepacks"] = empty
         layout.addWidget(box, 1)
         return page
 
@@ -927,34 +928,50 @@ class InstanceDetail(QWidget):
         banner, self.shader_banner_label = self._build_share_banner()
         self.shader_banner = banner
         layout.addWidget(banner)
-        box, table, empty = self._build_content_section(
-            "shaderpacks", tr("mods.tab.shaderpacks")
+        box = self._build_content_section(
+            "shaderpacks",
+            tr("instances.detail.nav.shaderpacks"),
+            tr("instances.detail.shaderpacks.empty"),
         )
-        self.content_tables["shaderpacks"] = table
-        self.content_empty["shaderpacks"] = empty
         layout.addWidget(box, 1)
         return page
 
-    def _build_content_section(self, subdir: str, title: str):
+    def _build_content_section(
+        self, subdir: str, title: str, empty_text: str, *, with_status: bool = False
+    ) -> QWidget:
+        """One file list: title, [icon|name|size|enabled], empty state, open/delete.
+
+        The icon is drawn into the name cell with the same letter-tile painter the resource list
+        uses, so a row is one line of text with a picture rather than a second column of blank
+        squares. Resource packs carry the enabled state the game recorded; shader packs do not have
+        one in options.txt, so their table has no status column instead of a fake "off".
+        """
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         title_label = QLabel(title)
         title_label.setObjectName("title")
-        table = QTableWidget(0, 2)
+        table = QTableWidget(0, 3 if with_status else 2)
         name_table_for_screen_readers(table, title)
-        table.setHorizontalHeaderLabels(
-            [tr("instances.detail.col.name"), tr("instances.detail.col.size")]
-        )
+        headers = [tr("instances.detail.col.name"), tr("instances.detail.col.size")]
+        if with_status:
+            headers.append(tr("instances.detail.col.status"))
+        table.setHorizontalHeaderLabels(headers)
         apply_no_focus_outline(table)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setSelectionMode(QTableWidget.ExtendedSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setIconSize(QSize(CONTENT_ICON_SIZE, CONTENT_ICON_SIZE))
         table.horizontalHeader().setStretchLastSection(True)
         table.setColumnWidth(0, 280)
+        if with_status:
+            table.setColumnWidth(1, 90)
         remember_column_widths(table, "instance_" + subdir)
-        empty = EmptyState(tr("mods.installed.empty"))
+        empty = EmptyState(empty_text)
+        self.content_tables[subdir] = table
+        self.content_empty[subdir] = empty
+        self._content_empty_text[subdir] = empty_text
         open_button = QPushButton(tr("instances.detail.open_folder"))
         open_button.setObjectName("secondaryButton")
         delete_button = QPushButton(tr("instances.mods.delete"))
@@ -968,10 +985,10 @@ class InstanceDetail(QWidget):
         buttons.addWidget(delete_button)
         buttons.addStretch(1)
         layout.addWidget(title_label)
-        layout.addWidget(table, 1)
-        layout.addWidget(empty)
         layout.addLayout(buttons)
-        return box, table, empty
+        layout.addWidget(empty, 1)
+        layout.addWidget(table, 1)
+        return box
 
     def _build_saves(self) -> QWidget:
         page = QWidget()
@@ -989,26 +1006,41 @@ class InstanceDetail(QWidget):
         )
         apply_no_focus_outline(self.saves_table)
         self.saves_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.saves_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.saves_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.saves_table.horizontalHeader().setStretchLastSection(True)
         self.saves_table.setColumnWidth(0, 260)
+        # "2026-11-06 18:40" does not fit the default column; an elided date is not a date.
+        self.saves_table.setColumnWidth(1, 150)
         remember_column_widths(self.saves_table, "instance_saves")
         self.saves_empty = EmptyState(tr("instances.detail.saves.empty"))
+        self.saves_empty_text = tr("instances.detail.saves.empty")
         self.saves_refresh_button = QPushButton(tr("instances.mods.refresh"))
         self.saves_refresh_button.setObjectName("secondaryButton")
         self.saves_folder_button = QPushButton(tr("instances.detail.saves.open_folder"))
         self.saves_folder_button.setObjectName("secondaryButton")
+        self.saves_backup_button = QPushButton(tr("instances.detail.saves.backup"))
+        self.saves_backup_button.setObjectName("secondaryButton")
+        self.saves_delete_button = QPushButton(tr("instances.mods.delete"))
+        self.saves_delete_button.setObjectName("dangerButton")
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(6)
-        buttons.addWidget(self.saves_refresh_button)
-        buttons.addWidget(self.saves_folder_button)
+        for button in (
+            self.saves_refresh_button,
+            self.saves_folder_button,
+            self.saves_backup_button,
+            self.saves_delete_button,
+        ):
+            buttons.addWidget(button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
+        layout.addWidget(self.saves_empty, 1)
         layout.addWidget(self.saves_table, 1)
-        layout.addWidget(self.saves_empty)
         self.saves_refresh_button.clicked.connect(self.reload_saves)
         self.saves_folder_button.clicked.connect(self.open_saves_folder)
+        self.saves_backup_button.clicked.connect(self.backup_selected_save)
+        self.saves_delete_button.clicked.connect(self.delete_selected_saves)
         return page
 
     def _build_diagnosis(self) -> QWidget:
@@ -1428,6 +1460,17 @@ class InstanceDetail(QWidget):
         self.log_view.clear()
         self.log_view.setVisible(False)
         self.log_empty.setVisible(True)
+        for subdir, table in self.content_tables.items():
+            table.setRowCount(0)
+            table.setVisible(False)
+            empty = self.content_empty.get(subdir)
+            if empty is not None:
+                empty.setText(self._content_empty_text.get(subdir, ""))
+                empty.setVisible(True)
+        self.saves_table.setRowCount(0)
+        self.saves_table.setVisible(False)
+        self.saves_empty.setText(self.saves_empty_text)
+        self.saves_empty.setVisible(True)
         for key in _BADGED_SECTIONS:
             self._set_badge_count(key, 0)
 
@@ -2084,36 +2127,87 @@ class InstanceDetail(QWidget):
         set_app_status(self, tr("instances.detail.res.loading"))
 
         def work() -> dict:
+            # The game records the enabled packs in the options file of the directory it runs in;
+            # for an isolated instance that is the instance folder, otherwise the shared game root.
+            enabled = read_enabled_resource_packs(resolved.launch_dir / "options.txt")
             return {
-                sub: list_installed_content(
-                    resolved.game_dir,
-                    sub,
-                    version_id=resolved.id,
-                    isolated=resolved.isolated,
+                subdir: scan_content_files(
+                    resolve_content_dir(
+                        resolved.game_dir,
+                        subdir,
+                        version_id=resolved.id,
+                        isolated=resolved.isolated,
+                    ),
+                    enabled=enabled if subdir == "resourcepacks" else None,
                 )
-                for sub in _CONTENT_SUBDIRS
+                for subdir in _CONTENT_SUBDIRS
             }
 
         run_in_background(work, on_result=self._fill_resources, on_error=self._on_content_failed)
 
     def _on_content_failed(self, message: str) -> None:
-        set_app_status(self, tr("instances.detail.res.msg.load_fail", message), "error")
+        """Report an unreadable folder in the status line *and* where the list would be.
+
+        A failed read must not look like an empty instance: the table is hidden and the empty-state
+        slot carries the reason until the next successful read restores its normal text.
+        """
+        text = tr("instances.detail.res.msg.load_fail", message)
+        set_app_status(self, text, "error")
+        for subdir in _CONTENT_SUBDIRS:
+            table = self.content_tables.get(subdir)
+            if table is not None:
+                table.setRowCount(0)
+                table.setVisible(False)
+            empty = self.content_empty.get(subdir)
+            if empty is not None:
+                empty.setText(text)
+                empty.setVisible(True)
 
     def _fill_resources(self, payload: dict) -> None:
-        total = 0
         for subdir, items in payload.items():
             self._content_items[subdir] = items
-            total += len(items)
             table = self.content_tables[subdir]
             table.setRowCount(0)
             table.setRowCount(len(items))
             for row, item in enumerate(items):
-                table.setItem(row, 0, QTableWidgetItem(item.name))
+                name_item = QTableWidgetItem(item.name)
+                # The same letter tile the resource list uses for a project without an icon: a
+                # column of packages reads better than a column of names with no picture at all.
+                name_item.setIcon(
+                    QIcon(
+                        paint_utils.letter_tile_pixmap(
+                            item.name, CONTENT_ICON_SIZE, CONTENT_ICON_RADIUS
+                        )
+                    )
+                )
+                name_item.setToolTip(item.name)
+                table.setItem(row, 0, name_item)
                 table.setItem(
                     row, 1, NumericTableItem(human_size(item.size), float(item.size))
                 )
-            self.content_empty[subdir].update_for(len(items))
-        set_app_status(self, tr("instances.detail.res.count", total))
+                if table.columnCount() > 2:
+                    state = (
+                        "unknown"
+                        if item.enabled is None
+                        else ("enabled" if item.enabled else "disabled")
+                    )
+                    table.setItem(
+                        row, 2, QTableWidgetItem(tr("instances.detail.res.status." + state))
+                    )
+            table.setVisible(bool(items))
+            empty = self.content_empty[subdir]
+            empty.setText(self._content_empty_text.get(subdir, empty.text()))
+            empty.update_for(len(items))
+        # Both lists load in one pass (they live on two sibling pages), but the status line must not
+        # mix them into one meaningless total: say each count, so either page reads correctly.
+        set_app_status(
+            self,
+            tr(
+                "instances.detail.res.counts",
+                len(payload.get("resourcepacks", [])),
+                len(payload.get("shaderpacks", [])),
+            ),
+        )
 
     def delete_selected_content(self, subdir: str) -> None:
         if self._require_instance() is None:
@@ -2122,11 +2216,18 @@ class InstanceDetail(QWidget):
         if not names:
             set_app_status(self, tr("instances.detail.res.msg.need_select"), "warning")
             return
-        if not inwindow_dialog.question(
+        # A destructive question: Enter must keep the safe answer, so the default is the cancel
+        # button and only an explicit click on 删除所选 removes anything.
+        outcome = inwindow_dialog.confirm(
             self,
             tr("instances.mods.delete"),
             tr("instances.detail.res.delete.confirm", len(names)),
-        ):
+            accept_text=tr("instances.mods.delete"),
+            reject_text=tr("dialog.cancel"),
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="critical",
+        )
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
             return
         resolved = self.resolved
 
@@ -2140,8 +2241,8 @@ class InstanceDetail(QWidget):
         )
 
     def _on_content_deleted(self, deleted: int) -> None:
-        set_app_status(self, tr("instances.detail.res.msg.deleted", deleted))
         self.reload_resources()
+        set_app_status(self, tr("instances.detail.res.msg.deleted", deleted))
 
     def _on_content_delete_failed(self, message: str) -> None:
         set_app_status(self, tr("instances.detail.res.msg.delete_fail", message), "error")
@@ -2154,24 +2255,19 @@ class InstanceDetail(QWidget):
         target = self.resolved.launch_dir / "saves"
         set_app_status(self, tr("instances.detail.saves.loading"))
 
-        def work() -> list:
-            found = []
-            if target.is_dir():
-                for entry in sorted(target.iterdir()):
-                    try:
-                        if not entry.is_dir():
-                            continue
-                        found.append(
-                            (entry.name, entry.stat().st_mtime, directory_size(entry))
-                        )
-                    except OSError:
-                        continue
-            return found
-
-        run_in_background(work, on_result=self._fill_saves, on_error=self._on_saves_failed)
+        run_in_background(
+            partial(scan_saves, target),
+            on_result=self._fill_saves,
+            on_error=self._on_saves_failed,
+        )
 
     def _on_saves_failed(self, message: str) -> None:
-        set_app_status(self, tr("instances.detail.saves.msg.load_fail", message), "error")
+        text = tr("instances.detail.saves.msg.load_fail", message)
+        set_app_status(self, text, "error")
+        self.saves_table.setRowCount(0)
+        self.saves_table.setVisible(False)
+        self.saves_empty.setText(text)
+        self.saves_empty.setVisible(True)
 
     def _fill_saves(self, saves: list) -> None:
         self._saves = saves
@@ -2180,14 +2276,105 @@ class InstanceDetail(QWidget):
         table = self.saves_table
         table.setRowCount(0)
         table.setRowCount(len(saves))
-        for row, (name, modified, size) in enumerate(saves):
-            table.setItem(row, 0, QTableWidgetItem(name))
-            table.setItem(
-                row, 1, QTableWidgetItem(time.strftime("%Y-%m-%d %H:%M", time.localtime(modified)))
-            )
-            table.setItem(row, 2, NumericTableItem(human_size(size), float(size)))
+        for row, save in enumerate(saves):
+            name_item = QTableWidgetItem(save.world_name)
+            if save.world_name != save.folder:
+                # The folder is what delete/backup act on, so keep it discoverable when level.dat
+                # renamed the world away from it.
+                name_item.setToolTip(save.folder)
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, QTableWidgetItem(format_modified(save.modified)))
+            table.setItem(row, 2, NumericTableItem(human_size(save.size), float(save.size)))
+        table.setVisible(bool(saves))
+        self.saves_empty.setText(self.saves_empty_text)
         self.saves_empty.update_for(len(saves))
         set_app_status(self, tr("instances.detail.saves.count", len(saves)))
+
+    def _selected_save_folders(self) -> list[str]:
+        rows = sorted({item.row() for item in self.saves_table.selectedItems()})
+        return [
+            self._saves[row].folder for row in rows if 0 <= row < len(self._saves)
+        ]
+
+    def delete_selected_saves(self) -> None:
+        if self._require_instance() is None:
+            return
+        folders = self._selected_save_folders()
+        if not folders:
+            set_app_status(self, tr("instances.detail.saves.msg.need_select"), "warning")
+            return
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("instances.detail.saves.delete.title"),
+            tr("instances.detail.saves.delete.confirm", len(folders)),
+            accept_text=tr("instances.mods.delete"),
+            reject_text=tr("dialog.cancel"),
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="critical",
+        )
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
+            return
+        base = self.resolved.launch_dir / "saves"
+
+        def work() -> tuple[int, str]:
+            deleted = 0
+            errors: list[str] = []
+            for folder in folders:
+                try:
+                    shutil.rmtree(base / folder)
+                    deleted += 1
+                except OSError as exc:
+                    errors.append(f"{folder}: {exc}")
+            return deleted, "; ".join(errors)
+
+        run_in_background(
+            work,
+            on_result=self._on_saves_deleted,
+            on_error=self._on_saves_delete_failed,
+        )
+
+    def _on_saves_deleted(self, result: tuple[int, str]) -> None:
+        deleted, errors = result
+        self.reload_saves()
+        if errors:
+            set_app_status(self, tr("instances.detail.saves.msg.delete_fail", errors), "error")
+        else:
+            set_app_status(self, tr("instances.detail.saves.msg.deleted", deleted))
+
+    def _on_saves_delete_failed(self, message: str) -> None:
+        set_app_status(self, tr("instances.detail.saves.msg.delete_fail", message), "error")
+
+    def backup_selected_save(self) -> None:
+        """Zip one selected world, after asking where the archive should go."""
+        if self._require_instance() is None:
+            return
+        folders = self._selected_save_folders()
+        if len(folders) != 1:
+            set_app_status(self, tr("instances.detail.saves.backup.need_one"), "warning")
+            return
+        folder = folders[0]
+        saved_dir = self.resolved.launch_dir / "saves"
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        destination, _filter = QFileDialog.getSaveFileName(
+            self,
+            tr("instances.detail.saves.backup.title"),
+            str(saved_dir / f"{folder}-{stamp}.zip"),
+            "Zip (*.zip)",
+        )
+        if not destination:
+            return
+        set_app_status(self, tr("instances.detail.saves.msg.backing_up", folder))
+        run_in_background(
+            partial(backup_save, saved_dir / folder, Path(destination)),
+            on_result=self._on_save_backed_up,
+            on_error=self._on_save_backup_failed,
+        )
+
+    def _on_save_backed_up(self, path) -> None:
+        set_app_status(self, tr("instances.detail.saves.msg.backed_up", str(path)))
+
+    def _on_save_backup_failed(self, message: str) -> None:
+        set_app_status(self, tr("instances.detail.saves.msg.backup_fail", message), "error")
 
     # ---------- launch ----------
 
