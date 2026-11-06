@@ -34,12 +34,15 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QBuffer, Qt, QThreadPool
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from gui import i18n, inwindow_dialog
+from gui import i18n, inwindow_dialog, paint_utils, theme
 from gui.pages import instance_detail as detail_module
 from gui.pages.instance_detail import (
+    CONTENT_ICON_SIZE,
+    TAB_MODS,
     TAB_RESOURCEPACKS,
     TAB_SAVES,
     TAB_SHADERPACKS,
@@ -143,6 +146,52 @@ def _table_text(detail: InstanceDetail, subdir: str) -> list[list[str]]:
     return rows
 
 
+def _png_bytes(color: str, size: int = 8) -> bytes:
+    """A real, decodable PNG of one solid colour (a pack.png, not just a signature)."""
+    image = QImage(size, size, QImage.Format.Format_ARGB32)
+    image.fill(QColor(color))
+    buffer = QBuffer()
+    buffer.open(QBuffer.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, "PNG")
+    return bytes(buffer.data())
+
+
+def _write_pack(path: Path, icon: bytes | None = None, *, extra: str | None = None) -> None:
+    """A real resource-pack zip: pack.mcmeta plus the optional root pack.png."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("pack.mcmeta", json.dumps({"pack": {"pack_format": 34}}))
+        if icon is not None:
+            archive.writestr("pack.png", icon)
+        if extra is not None:
+            archive.writestr(extra, b"not an icon")
+
+
+def _write_mod(path: Path, *, mod_id: str, name: str, version: str) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "fabric.mod.json",
+            json.dumps({"id": mod_id, "name": name, "version": version}),
+        )
+
+
+def _icon_image(icon) -> QImage:
+    return icon.pixmap(CONTENT_ICON_SIZE, CONTENT_ICON_SIZE).toImage()
+
+
+def _painted_pixels(image: QImage) -> list[tuple[int, QColor]]:
+    return [
+        (image.pixelColor(x, y).alpha(), image.pixelColor(x, y))
+        for x in range(image.width())
+        for y in range(image.height())
+        if image.pixelColor(x, y).alpha() > 0
+    ]
+
+
+def _hint_color() -> QColor:
+    tokens = theme.current_tokens() or theme.theme_palette("light")
+    return QColor(tokens["FG_HINT"])
+
+
 # ---------------------------------------------------------------- resource packs
 
 
@@ -174,9 +223,11 @@ def test_resourcepack_rows_show_the_real_files_size_and_enabled_state(app, monke
             i18n.tr("instances.detail.res.status.enabled"),
             i18n.tr("instances.detail.res.status.disabled"),
         ]
-        # Every row carries the letter tile, drawn from its own name.
+        # Every row owns one 32px icon slot: its pack.png when present, the neutral cube otherwise.
         for row in range(table.rowCount()):
-            assert not table.item(row, 0).icon().isNull()
+            image = _icon_image(table.item(row, 0).icon())
+            assert image.width() == CONTENT_ICON_SIZE
+            assert _painted_pixels(image), "the neutral cube must actually draw something"
         assert not table.isHidden()
         assert detail.content_empty["resourcepacks"].isHidden()
     finally:
@@ -197,12 +248,220 @@ def test_shaderpack_rows_show_the_real_files_without_a_fake_status_column(app, m
         assert _table_text(detail, "shaderpacks") == [
             ["ComplementaryReimagined.zip", human_size(2052)]
         ]
-        assert not table.item(0, 0).icon().isNull()
+        # No shader pack ships a pack.png (measured: none of BSL / Complementary / Photon / SEUS),
+        # so the row carries the neutral cube rather than a letter tile or an empty slot.
+        image = _icon_image(table.item(0, 0).icon())
+        assert image.width() == CONTENT_ICON_SIZE
+        assert _painted_pixels(image)
     finally:
         _close(app, detail)
 
 
-# ---------------------------------------------------------------- saves
+# ---------------------------------------------------------------- pack icons
+
+
+def test_a_pack_png_is_the_row_icon_and_a_missing_one_is_the_neutral_cube(
+    app, monkeypatch, ws_tmp
+):
+    _game, folder = _prepare(monkeypatch, ws_tmp)
+    packs = folder / "resourcepacks"
+    packs.mkdir()
+    _write_pack(packs / "Painted.zip", _png_bytes("#ff00ff"))
+    _write_pack(packs / "No Art.zip")
+    _write_pack(packs / "Corrupt.zip", b"not a real png")
+
+    detail = _detail(app, tab=TAB_RESOURCEPACKS)
+    try:
+        table = detail.content_tables["resourcepacks"]
+        rows = {table.item(row, 0).text(): row for row in range(table.rowCount())}
+        real = _icon_image(table.item(rows["Painted.zip"], 0).icon())
+        assert real.width() == CONTENT_ICON_SIZE and real.height() == CONTENT_ICON_SIZE
+        # The 8x8 solid pack.png is scaled into the 32px slot, so its centre is exactly its colour.
+        assert real.pixelColor(CONTENT_ICON_SIZE // 2, CONTENT_ICON_SIZE // 2) == QColor("#ff00ff")
+
+        for label in ("No Art.zip", "Corrupt.zip"):
+            neutral = _icon_image(table.item(rows[label], 0).icon())
+            assert neutral.size() == real.size(), "the placeholder must use the same slot"
+            # No background block and no filled faces: the corners of the 32px slot stay transparent.
+            assert neutral.pixelColor(2, 2).alpha() == 0
+            assert neutral.pixelColor(CONTENT_ICON_SIZE - 3, CONTENT_ICON_SIZE - 3).alpha() == 0
+            # A thin FG_HINT outline at ~65%: present, but not as loud as a real pack icon. Corners
+            # where two strokes meet read a little stronger, so look at the body of an edge.
+            body = [
+                color
+                for alpha, color in _painted_pixels(neutral)
+                if 140 <= alpha <= 190
+            ]
+            assert body, "no stroke at the expected FG_HINT opacity"
+            hint = _hint_color()
+            assert any(
+                abs(color.red() - hint.red()) <= 3
+                and abs(color.green() - hint.green()) <= 3
+                and abs(color.blue() - hint.blue()) <= 3
+                for color in body
+            ), "the placeholder is not drawn in FG_HINT"
+    finally:
+        _close(app, detail)
+
+
+def test_content_rows_never_draw_a_letter_tile(app, monkeypatch, ws_tmp):
+    _game, folder = _prepare(monkeypatch, ws_tmp)
+    for name in ("resourcepacks", "shaderpacks"):
+        (folder / name).mkdir()
+    (folder / "resourcepacks" / "Plain.zip").write_bytes(b"PK\x03\x04")
+    (folder / "shaderpacks" / "Shaders.zip").write_bytes(b"PK\x03\x04")
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("a letter tile was drawn for a content row")
+
+    monkeypatch.setattr(paint_utils, "letter_tile_pixmap", forbidden)
+    detail = _detail(app, tab=TAB_RESOURCEPACKS)
+    try:
+        for subdir in ("resourcepacks", "shaderpacks"):
+            table = detail.content_tables[subdir]
+            assert table.rowCount() == 1
+            image = _icon_image(table.item(0, 0).icon())
+            assert image.width() == CONTENT_ICON_SIZE
+            assert _painted_pixels(image)
+    finally:
+        _close(app, detail)
+
+
+def test_a_zip_read_error_falls_back_to_the_cube_without_crashing(app, monkeypatch, ws_tmp):
+    """An encrypted/unreadable pack.png is just "no icon"; the row still shows its file name."""
+    _game, folder = _prepare(monkeypatch, ws_tmp)
+    packs = folder / "resourcepacks"
+    packs.mkdir()
+    _write_pack(packs / "BrokenRead.zip", _png_bytes("#ff00ff"))
+
+    def explode(self, name, pwd=None):
+        raise RuntimeError("encrypted entry")
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", explode)
+    detail = _detail(app, tab=TAB_RESOURCEPACKS)
+    try:
+        table = detail.content_tables["resourcepacks"]
+        assert table.rowCount() == 1
+        assert table.item(0, 0).text() == "BrokenRead.zip"
+        image = _icon_image(table.item(0, 0).icon())
+        assert image.width() == CONTENT_ICON_SIZE
+        assert _painted_pixels(image), "a failed read must still leave a visible placeholder"
+    finally:
+        _close(app, detail)
+
+
+def test_pack_icons_are_read_locally_without_the_network(app, monkeypatch, ws_tmp):
+    from launcher.net import http_cache
+
+    calls: list[str] = []
+
+    def fail(name):
+        def _fail(*_args, **_kwargs):
+            calls.append(name)
+            raise AssertionError(f"{name} must not be reached while filling a local pack list")
+
+        return _fail
+
+    monkeypatch.setattr(http_cache, "fetch_icon_bytes", fail("fetch_icon_bytes"))
+    monkeypatch.setattr(http_cache, "cached_icon_bytes", fail("cached_icon_bytes"))
+    _game, folder = _prepare(monkeypatch, ws_tmp)
+    packs = folder / "resourcepacks"
+    packs.mkdir()
+    _write_pack(packs / "Local.zip", _png_bytes("#3366cc"))
+
+    detail = _detail(app, tab=TAB_RESOURCEPACKS)
+    try:
+        assert detail.content_tables["resourcepacks"].rowCount() == 1
+        assert calls == [], "a pack icon must never trigger a network fetch"
+    finally:
+        _close(app, detail)
+
+
+# ---------------------------------------------------------------- display names
+
+
+def test_coded_names_are_stripped_for_display_but_kept_on_disk_and_in_the_tooltip(
+    app, monkeypatch, ws_tmp
+):
+    _game, folder = _prepare(monkeypatch, ws_tmp)
+    packs = folder / "resourcepacks"
+    packs.mkdir()
+    coded = "\u00a7cCozyUI\u00a7b+ \u00a77v1.10\u00a7c no-fonts \u00a70.zip"
+    hexed = "\u00a7x\u00a7f\u00a7f\u00a7a\u00a7a\u00a70\u00a70VanillaTweaks\u00a7r \u00a77v1.2.zip"
+    _write_pack(packs / coded)
+    _write_pack(packs / hexed)
+    (packs / "\u00a7c").write_bytes(b"PK\x03\x04")  # stripping leaves nothing: keep the raw name
+
+    detail = _detail(app, tab=TAB_RESOURCEPACKS)
+    try:
+        table = detail.content_tables["resourcepacks"]
+        shown = [table.item(row, 0).text() for row in range(table.rowCount())]
+        assert "CozyUI+ v1.10 no-fonts .zip" in shown
+        assert "VanillaTweaks v1.2.zip" in shown
+        assert "\u00a7c" in shown, "a name with nothing left after stripping keeps its raw form"
+        assert all("\u00a7" not in text for text in shown if text != "\u00a7c")
+
+        row = shown.index("CozyUI+ v1.10 no-fonts .zip")
+        assert table.item(row, 0).toolTip() == coded
+        # The disk is untouched: only the cell text differs.
+        assert {path.name for path in packs.iterdir()} == {coded, hexed, "\u00a7c"}
+    finally:
+        _close(app, detail)
+
+
+def test_deleting_a_coded_pack_uses_the_real_file_name(app, monkeypatch, ws_tmp):
+    _game, folder = _prepare(monkeypatch, ws_tmp)
+    packs = folder / "resourcepacks"
+    packs.mkdir()
+    victim = packs / "\u00a7cUnused\u00a7r.zip"
+    victim.write_bytes(b"PK\x03\x04")
+    keep = packs / "Keep.zip"
+    keep.write_bytes(b"PK\x03\x04")
+    monkeypatch.setattr(
+        detail_module.inwindow_dialog, "confirm", lambda *_a, **_k: inwindow_dialog.Outcome.ACCEPTED
+    )
+
+    detail = _detail(app, tab=TAB_RESOURCEPACKS)
+    try:
+        rows = [
+            detail.content_tables["resourcepacks"].item(row, 0).text()
+            for row in range(detail.content_tables["resourcepacks"].rowCount())
+        ]
+        assert "Unused.zip" in rows
+        detail.content_tables["resourcepacks"].selectRow(rows.index("Unused.zip"))
+        detail.delete_selected_content("resourcepacks")
+        _settle(app)
+        assert not victim.exists(), "the delete used the stripped display name"
+        assert keep.exists()
+    finally:
+        _close(app, detail)
+
+
+def test_the_mods_file_column_strips_codes_and_delete_uses_the_real_name(
+    app, monkeypatch, ws_tmp
+):
+    _game, folder = _prepare(monkeypatch, ws_tmp)
+    jar = folder / "mods" / "\u00a7a[sodium]\u00a7r sodium-fabric-0.6.5.jar"
+    _write_mod(jar, mod_id="sodium", name="Sodium", version="0.6.5")
+    monkeypatch.setattr(detail_module.inwindow_dialog, "question", lambda *_a, **_k: True)
+
+    detail = _detail(app, tab=TAB_MODS)
+    try:
+        table = detail.mods_table
+        rows = [row for row in range(table.rowCount()) if table.item(row, 1).text() == "Sodium"]
+        assert rows, "the coded mod was not listed"
+        row = rows[0]
+        assert table.item(row, 5).text() == "[sodium] sodium-fabric-0.6.5.jar"
+        assert table.item(row, 5).toolTip() == jar.name
+        assert table.item(row, 5).data(Qt.ItemDataRole.UserRole) == jar.name
+        assert jar.exists(), "display stripping must not rename the file"
+
+        table.selectRow(row)
+        detail.delete_selected_mods()
+        _settle(app)
+        assert not jar.exists(), "the delete used the stripped display name"
+    finally:
+        _close(app, detail)
 
 
 def test_saves_read_level_name_modified_time_and_size(app, monkeypatch, ws_tmp):
