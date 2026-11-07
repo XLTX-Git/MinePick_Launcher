@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -69,38 +69,15 @@ MIN_VISIBLE_ACCOUNTS = 2  # rows kept readable even in a short window (a half-cu
 MAX_VISIBLE_ACCOUNTS = 4  # rows shown once the page has room for them
 
 
-def skin_face_pixmap(skin: QPixmap, size: int = AVATAR_SIZE) -> QPixmap | None:
-    """Crop just the head out of a Minecraft skin texture (hat overlay included).
-
-    A modern skin is 64x64 (HD skins are 128x128, 256x256...): the head's front face sits at
-    (8, 8) and its hat overlay at (40, 8), both 8x8 units. Legacy 64x32 skins have no overlay.
-    Nearest-neighbour scaling keeps the pixel-art look. Returns None for textures too small to
-    be a skin (the caller then keeps the letter avatar).
-    """
-    if skin.isNull() or skin.width() < 64 or skin.height() < 32:
-        return None
-    unit = max(1, skin.width() // 64)  # HD skins store the same layout at a larger scale
-    face = skin.copy(QRect(8 * unit, 8 * unit, 8 * unit, 8 * unit))
-    if face.isNull():
-        return None
-    canvas = QPixmap(size, size)
-    canvas.fill(Qt.transparent)
-    painter = QPainter(canvas)
-    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-    target = QRect(0, 0, size, size)
-    painter.drawPixmap(target, face)
-    if skin.height() >= 64 * unit:  # legacy 64x32 textures carry no hat layer
-        painter.drawPixmap(target, skin.copy(QRect(40 * unit, 8 * unit, 8 * unit, 8 * unit)))
-    painter.end()
-    return canvas
-
-
 def avatar_pixmap(data: bytes | None, size: int = AVATAR_SIZE) -> QPixmap | None:
-    """Decode downloaded skin bytes into a face-only avatar; None keeps the letter avatar."""
+    """Decode downloaded skin bytes into a face-only avatar; None keeps the letter avatar.
+
+    The crop itself lives in :func:`gui.paint_utils.skin_face_pixmap`, shared with the launch page.
+    """
     skin = QPixmap()
     if not data or not skin.loadFromData(data):
         return None
-    return skin_face_pixmap(skin, size)
+    return paint_utils.skin_face_pixmap(skin, size)
 
 
 class _AccountRow(QWidget):
@@ -299,6 +276,9 @@ class LoginPage(QWidget):
         # Scopes the light sheet's card + dense-row rules to this page.
         self.setObjectName("accountPage")
         self.rows: list[_AccountRow] = []
+        # The skin URL the avatar slot currently belongs to: a download that finishes after the user
+        # switched accounts must not paint itself over the new one.
+        self._avatar_skin_url = ""
         self.avatar_label = QLabel()
         self.avatar_label.setFixedSize(AVATAR_SIZE, AVATAR_SIZE)
         self.account_label = QLabel()
@@ -413,6 +393,7 @@ class LoginPage(QWidget):
         cfg, _ = config.load()
         accounts = AccountStore().load()
         account = accounts.get(cfg.selected_account) if cfg.selected_account else None
+        self._avatar_skin_url = str(getattr(account, "skin_url", "") or "") if account else ""
         if account is None:
             self.account_label.setText(tr("account.none"))
             self._clear_avatar()  # no account: the slot keeps its size and paints nothing
@@ -468,41 +449,50 @@ class LoginPage(QWidget):
         )
 
     def _update_avatar(self, account) -> None:
+        """Paint the letter first, then upgrade to the account's skin face when it arrives.
+
+        The download is shared through :mod:`gui.paint_utils`: one request per skin URL for the whole
+        process, so the launch page and this page never fetch the same texture twice. A failed or
+        unusable texture leaves the letter in place rather than an empty slot.
+        """
         self._set_letter_avatar(account.username)
-        if not account.skin_url:
+        skin_url = str(getattr(account, "skin_url", "") or "")
+        if not skin_url:
             return
+
+        def apply_face(source) -> None:
+            if source is None or self._avatar_skin_url != skin_url:
+                return  # failed, or another account owns the slot by now
+            face = paint_utils.skin_face_pixmap(source, AVATAR_SIZE)
+            if face is None:
+                return
+            try:
+                self.avatar_label.setPixmap(face)
+                for row in self.rows:
+                    if row.username == account.username:
+                        row.set_avatar(face)
+                        break
+            except RuntimeError:
+                pass  # page already destroyed (language switch rebuild)
+
+        if not paint_utils.watch_skin(skin_url, apply_face):
+            return  # cached (the face is already painted) or another download will call back
 
         def do_fetch() -> object:
             from launcher.meta.manifest import _new_client
 
             client = _new_client()
             try:
-                resp = client.get(account.skin_url)
+                resp = client.get(skin_url)
                 resp.raise_for_status()
                 return resp.content
             finally:
                 client.close()
 
-        def on_ok(data) -> None:
-            try:
-                avatar = avatar_pixmap(data)
-                if avatar is not None:  # unusable texture: keep the letter avatar
-                    self.avatar_label.setPixmap(avatar)
-                    skin_cache = getattr(self, "_skin_cache", None)
-                    if skin_cache is None:
-                        skin_cache = self._skin_cache = {}
-                    skin_cache[account.skin_url] = avatar
-                    for row in self.rows:
-                        if row.username == account.username:
-                            row.set_avatar(avatar)
-                            break
-            except RuntimeError:
-                pass  # page already destroyed (language switch rebuild)
-
         run_in_background(
             do_fetch,
-            on_result=on_ok,
-            on_error=lambda _m: None,  # keep the letter avatar on failure
+            on_result=lambda data: paint_utils.finish_skin(skin_url, data),
+            on_error=lambda _message: paint_utils.finish_skin(skin_url, None),
         )
 
     # ---------- Account list ----------
@@ -526,9 +516,6 @@ class LoginPage(QWidget):
             item.setSizeHint(QSize(0, _AccountRow.HEIGHT))
             self.accounts_list.addItem(item)
             is_current = account_id == cfg.selected_account
-            skin_cache = getattr(self, "_skin_cache", None)
-            if skin_cache is None:
-                skin_cache = self._skin_cache = {}
             row = _AccountRow(
                 account.username,
                 kind,
@@ -536,7 +523,9 @@ class LoginPage(QWidget):
                 on_switch=lambda row_index=index: self._switch_row(row_index),
                 on_remove=lambda account_key=account_id: self._remove_row(account_key),
                 separator=index < len(ordered) - 1,
-                avatar=skin_cache.get(getattr(account, "skin_url", "") or ""),
+                avatar=paint_utils.skin_face_for(
+                    str(getattr(account, "skin_url", "") or ""), _AccountRow.AVATAR
+                ),
             )
             self.accounts_list.setItemWidget(item, row)
             self.rows.append(row)

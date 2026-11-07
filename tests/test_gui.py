@@ -821,7 +821,8 @@ def test_account_avatar_uses_only_the_head(app):
     from PySide6.QtCore import QBuffer, QRect, Qt
     from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
-    from gui.pages.login_page import AVATAR_SIZE, avatar_pixmap, skin_face_pixmap
+    from gui.pages.login_page import AVATAR_SIZE, avatar_pixmap
+    from gui.paint_utils import skin_face_pixmap
 
     face = QColor("#ff0000")
     hat = QColor("#00ff00")

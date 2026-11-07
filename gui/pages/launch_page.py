@@ -42,7 +42,13 @@ from gui.accessibility_launch import (
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
-from gui.paint_utils import avatar_pixmap, block_pixmap
+from gui.paint_utils import (
+    avatar_pixmap,
+    block_pixmap,
+    finish_skin,
+    skin_face_pixmap,
+    watch_skin,
+)
 from gui.widgets import (
     PAGE_HEADER_GAP,
     disable_keeping_focus,
@@ -73,6 +79,8 @@ _TYPE_LABEL_KEYS = {
     "old_alpha": "versions.type.old_alpha",
 }
 _SNAPSHOT_ID = re.compile(r"^\d{2}w\d{2}[a-z]$")
+#: The account row's avatar slot: the letter fallback and the skin face are both cropped to this.
+_AVATAR_SIZE = 36
 
 
 def _locale_name(code: str) -> str:
@@ -181,6 +189,9 @@ class LaunchPage(QWidget):
         super().__init__()
         self._version_id = ""
         self._version_choices: list[tuple[str, str]] = []
+        # The skin URL this page's avatar slot currently belongs to; a download that finishes after a
+        # switch must not paint the previous account's face.
+        self._avatar_skin_url = ""
         self.setObjectName("launchPage")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
@@ -225,7 +236,7 @@ class LaunchPage(QWidget):
 
         # ---- account block: one inline row, the switch button on its right ----
         self.avatar_label = QLabel()
-        self.avatar_label.setFixedSize(36, 36)
+        self.avatar_label.setFixedSize(_AVATAR_SIZE, _AVATAR_SIZE)
         self.avatar_label.setAccessibleName(tr("launch.account.avatar"))
         self.account_label = QLabel("")
         self.account_label.setObjectName("accountName")
@@ -363,21 +374,68 @@ class LaunchPage(QWidget):
         self._refresh_stats()
 
     def refresh_account(self) -> None:
-        """Show the selected account; switching happens on the account page (one click away)."""
+        """Show the selected account; switching happens on the account page (one click away).
+
+        The letter avatar is painted first, then upgraded in the background when the account has a
+        skin. That keeps the row complete from the first frame and makes a slow/failed download a
+        no-op rather than a blank slot.
+        """
         cfg, _ = config.load()
         accounts = AccountStore().load()
         account = accounts.get(cfg.selected_account) if cfg.selected_account else None
+        self._avatar_skin_url = str(getattr(account, "skin_url", "") or "") if account else ""
         if account is None:
             self.account_label.setText(tr("launch.account.none.item"))
             self.avatar_label.clear()
             return
         kind = tr("kind.ms") if account.type == "microsoft" else tr("kind.offline")
         self.account_label.setText(tr("launch.account.label", account.username, kind))
-        avatar = avatar_pixmap(account.username, 36)
+        avatar = avatar_pixmap(account.username, _AVATAR_SIZE)
         if avatar is None:
             self.avatar_label.clear()
         else:
             self.avatar_label.setPixmap(avatar)
+        if self._avatar_skin_url:
+            self._load_avatar_skin(self._avatar_skin_url)
+
+    def _load_avatar_skin(self, skin_url: str) -> None:
+        """Upgrade the letter avatar to the account's skin face once the texture is available.
+
+        The download is shared through :mod:`gui.paint_utils` (one request per URL for the whole
+        process), and it runs on the worker pool - never on the UI thread. The letter stays until a
+        usable face exists, so a failed request is invisible instead of an empty avatar.
+        """
+
+        def apply_face(source) -> None:
+            if source is None or self._avatar_skin_url != skin_url:
+                return  # failed, or the user switched accounts while this download was running
+            face = skin_face_pixmap(source, _AVATAR_SIZE)
+            if face is None:  # not a skin texture (too small / corrupt): keep the letter
+                return
+            try:
+                self.avatar_label.setPixmap(face)
+            except RuntimeError:
+                pass  # the page was rebuilt (language switch) and this label is gone
+
+        if not watch_skin(skin_url, apply_face):
+            return  # cached already (the face is painted above) or an in-flight download will call back
+
+        def do_fetch() -> object:
+            from launcher.meta.manifest import _new_client
+
+            client = _new_client()
+            try:
+                response = client.get(skin_url)
+                response.raise_for_status()
+                return response.content
+            finally:
+                client.close()
+
+        run_in_background(
+            do_fetch,
+            on_result=lambda data: finish_skin(skin_url, data),
+            on_error=lambda _message: finish_skin(skin_url, None),
+        )
 
     def _refresh_version_block(self) -> None:
         """Update the block icon, the version number, the meta line and the launch history."""

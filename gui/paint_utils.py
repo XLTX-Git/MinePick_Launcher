@@ -15,18 +15,24 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Painted pixmaps for the launch page: version block, avatar fallback and disclosure chevron.
+"""Painted pixmaps and the shared avatar helpers: version block, letter fallback, skin face, chevron.
 
 Everything here is drawn with QPainter. The launch page must not ship an external image (no PNG/SVG
 asset, no network), so the version icon is an isometric block, the avatar falls back to the same
 hue-from-name disc the account page uses, and the disclosure chevron is a drawn glyph. Colours come
 from ``theme.current_tokens()``, the table the stylesheet is built from, so the pixmaps follow the
 user's accent without a second palette.
+
+This module also owns the one downloaded-skin cache the two account avatars share (the launch page's
+36px face and the account page's 42px one): one request per URL per process, and a failed texture
+falls back to the letter without leaving an empty slot.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from collections.abc import Callable
+
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -44,6 +50,11 @@ _BLOCK_CACHE: dict[tuple[int, str], QPixmap] = {}
 _CHEVRON_CACHE: dict[tuple[bool, str], QPixmap] = {}
 _LETTER_CACHE: dict[tuple[str, int, str, str], QPixmap] = {}
 _CUBE_CACHE: dict[tuple[int, str], QPixmap] = {}
+#: Decoded skin textures by URL. The download itself lives with the pages; this only keeps the result,
+#: so the same skin is fetched once for the whole process and every avatar crops its own face from it.
+_SKIN_CACHE: dict[str, QPixmap] = {}
+#: Callbacks waiting for an in-flight URL. The first waiter is the one that has to start the download.
+_SKIN_WAITERS: dict[str, list[Callable[[QPixmap | None], None]]] = {}
 
 #: The "no artwork" cube: 66% of its slot, thin edges, and FG_HINT at 65% so it sits lightly on the
 #: row instead of reading as a missing-image block. Both numbers are visual constants from the PCL
@@ -170,6 +181,99 @@ def avatar_pixmap(username: str, size: int = 36) -> QPixmap | None:
     painter.drawText(QRectF(0, 0, extent, extent), Qt.AlignmentFlag.AlignCenter, letter)
     painter.end()
     return pixmap
+
+
+def skin_face_pixmap(skin: QPixmap, size: int = 42) -> QPixmap | None:
+    """Crop just the head out of a Minecraft skin texture (hat overlay included).
+
+    A modern skin is 64x64 (HD skins are 128x128, 256x256...): the head's front face sits at
+    (8, 8) and its hat overlay at (40, 8), both 8x8 units. Legacy 64x32 skins have no overlay.
+    Nearest-neighbour scaling keeps the pixel-art look. Returns None for textures too small to
+    be a skin (the caller then keeps the letter avatar).
+
+    ``size`` defaults to the account page's 42px slot; the launch page passes its own 36. The
+    function is shared by both pages so a skin is cropped by one rule, not two copies that drift.
+    """
+    if skin.isNull() or skin.width() < 64 or skin.height() < 32:
+        return None
+    unit = max(1, skin.width() // 64)  # HD skins store the same layout at a larger scale
+    face = skin.copy(QRect(8 * unit, 8 * unit, 8 * unit, 8 * unit))
+    if face.isNull():
+        return None
+    canvas = QPixmap(size, size)
+    canvas.fill(Qt.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+    target = QRect(0, 0, size, size)
+    painter.drawPixmap(target, face)
+    if skin.height() >= 64 * unit:  # legacy 64x32 textures carry no hat layer
+        painter.drawPixmap(target, skin.copy(QRect(40 * unit, 8 * unit, 8 * unit, 8 * unit)))
+    painter.end()
+    return canvas
+
+
+def cached_skin(skin_url: str) -> QPixmap | None:
+    """The decoded skin texture remembered for ``skin_url``, or None before the download lands."""
+    if not skin_url:
+        return None
+    return _SKIN_CACHE.get(skin_url)
+
+
+def skin_face_for(skin_url: str, size: int) -> QPixmap | None:
+    """The cached skin's face at ``size``; None when it is not downloaded yet or is not a skin."""
+    skin = cached_skin(skin_url)
+    return skin_face_pixmap(skin, size) if skin is not None else None
+
+
+def watch_skin(skin_url: str, callback: Callable[[QPixmap | None], None]) -> bool:
+    """Show a skin as soon as it is available, downloading each URL at most once.
+
+    ``callback`` runs on the GUI thread: immediately with the decoded texture when the URL is already
+    cached, or when the single in-flight download finishes (with None if it failed). The return value
+    says whether the caller must start that download - never start a second one for the same URL.
+
+    The callbacks belong to widgets, so a page that is rebuilt can have its labels destroyed before
+    the download finishes; a ``RuntimeError`` from one waiter (Qt's deleted-object error) must not
+    keep the others from getting the texture.
+    """
+    if not skin_url:
+        callback(None)
+        return False
+    skin = _SKIN_CACHE.get(skin_url)
+    if skin is not None:
+        callback(skin)
+        return False
+    waiters = _SKIN_WAITERS.setdefault(skin_url, [])
+    waiters.append(callback)
+    return len(waiters) == 1
+
+
+def finish_skin(skin_url: str, data: bytes | None) -> QPixmap | None:
+    """Decode a finished download, remember it and hand it to every waiting avatar.
+
+    ``data`` is None when the request failed: the waiters are released with None and the letter
+    stays, so a failed skin never leaves an empty slot behind. An image too small to be a skin is
+    treated exactly like a failed request.
+    """
+    skin: QPixmap | None = None
+    if data:
+        candidate = QPixmap()
+        if candidate.loadFromData(data):
+            skin = candidate
+    if skin is not None and skin_url:
+        _SKIN_CACHE[skin_url] = skin
+    for callback in _SKIN_WAITERS.pop(skin_url, []):
+        try:
+            callback(skin)
+        except RuntimeError:
+            pass  # the page that asked was rebuilt/closed; the other waiters still get the texture
+    return skin
+
+
+def clear_skin_cache() -> None:
+    """Forget every remembered skin and waiter (tests: the cache is process-wide on purpose)."""
+    _SKIN_CACHE.clear()
+    _SKIN_WAITERS.clear()
 
 
 def letter_tile_pixmap(text: str, size: int = 48, radius: int = 8) -> QPixmap:
