@@ -2,6 +2,8 @@
 
 # MinePick Launcher
 
+[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+
 Python + PySide6 で作られたポータブルな Minecraft ランチャー：Microsoft アカウントとオフラインアカウント、バージョンの
 インストール、Modrinth と CurseForge のリソース、Fabric/Forge/NeoForge/Quilt ローダー、分離された
 インスタンス — 単一のポータブル EXE としてパッケージ化されています。

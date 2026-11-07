@@ -62,6 +62,7 @@ EXCLUDE_PARTS = {
     ".pytest_cache",
     ".mypy_cache",
     ".ruff_cache",
+    ".work",  # tests/.work: gitignored probe scripts and fixtures, never shipped
 }
 
 

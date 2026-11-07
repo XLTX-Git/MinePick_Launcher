@@ -2,6 +2,8 @@
 
 # MinePick Launcher
 
+[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+
 Портативный лаунчер Minecraft на Python + PySide6: аккаунты Microsoft и офлайн-режим, установка версий,
 ресурсы Modrinth и CurseForge, загрузчики Fabric/Forge/NeoForge/Quilt, изолированные экземпляры — всё
 упаковано в один портативный EXE.
