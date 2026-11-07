@@ -306,7 +306,10 @@ class LaunchPage(QWidget):
         # stays the same 16px the instance-detail header uses.
         panel.addSpacing(PAGE_HEADER_GAP)
         panel.addLayout(account_row)
-        panel.addStretch(1)
+        # The actions sit a third below the midpoint instead of dead-centre: 2:1 above/below, so the
+        # group keeps its distance from the account row as the window grows. Deliberately not a fixed
+        # spacing - a taller window must still move the group, not pin it to the top.
+        panel.addStretch(2)
         panel.addWidget(self.launch_button)
         panel.addSpacing(12)
         panel.addLayout(secondary_row)
