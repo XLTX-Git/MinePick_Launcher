@@ -17,10 +17,10 @@
 
 """The launch page's action group sits below the middle, and stays a stretch, not a fixed gap.
 
-The launch sheet asks for the primary action and its two secondary siblings to sit well below the
-panel's centre. Before this the two ``addStretch(1)`` around them centred the group exactly; now the
-upper spring is three times the lower one (3:1), which puts the group three quarters of the free space
-down. These tests pin both facts that matter:
+The launch sheet asks for the primary action and its two secondary siblings to sit in the lower part
+of the panel, just above the footer lines that report the mod count and the last launch. A single
+spring above the group does that: it pushes the group down as the window grows, while a fixed 24px gap
+keeps the group from drifting away from the footer. These tests pin both facts that matter:
 
 * the spring factors are 2 and 1, so a future edit cannot silently return to dead-centre;
 * growing the window moves the group by the extra free space's sixth (the difference between 2/3 and
@@ -98,37 +98,54 @@ def _spring_factors(page) -> list[int]:
     return [layout.stretch(index) for index in range(layout.count()) if layout.stretch(index) > 0]
 
 
-def test_the_actions_hang_from_a_three_to_one_spring_pair(page):
-    """The design decision itself: three times as much air above the buttons as below them."""
-    assert _spring_factors(page) == [3, 1], (
-        "the action group is not positioned by a 3:1 stretch pair; the page would centre it again "
-        "or pin it with a fixed spacing"
+def test_a_single_spring_holds_the_group_above_the_footer(page):
+    """The design decision itself: one spring above, nothing springing below."""
+    assert _spring_factors(page) == [1], (
+        "the action group is not positioned by a single upper spring; a lower spring would float it "
+        "away from the footer, and fixed spacing alone would pin it to the top"
     )
 
 
-def test_the_group_sits_well_below_the_middle(page, app):
-    """Measured, not just declared: the space above the group is three times the space below it."""
+def test_a_fixed_24px_stands_between_the_group_and_the_footer(page):
+    """Structural, not measured through geometry: the panel holds a 24px spacer right before the footer.
+
+    Measuring the on-screen gap would depend on the footer having text, and an empty stats label has no
+    geometry to measure against. The spacer is the decision, so assert the spacer.
+    """
+    panel = page.panel.layout()
+    items = [panel.itemAt(index) for index in range(panel.count())]
+    for index, item in enumerate(items[:-1]):
+        spacer = item.spacerItem()
+        if spacer is None or spacer.sizeHint().height() != 24:
+            continue
+        if items[index + 1].widget() is page.stats_label:
+            return
+    raise AssertionError(
+        "no 24px spacer sits between the action group and the footer; the group would drift with the window"
+    )
+
+
+def test_the_group_sits_in_the_lower_half(page, app):
+    """The group is not centred: more than half of the content height is above it."""
     _settle(app)
     above = _top(page.launch_button, page) - _bottom(page.avatar_label, page)
-    # The 4px fixed gap between the lower spring and the last-launch label is not part of the spring.
-    below = _top(page.last_launch_label, page) - _bottom(page.select_instance_button, page) - 4
-    assert above > below, "the action group still sits above the middle"
-    assert above == pytest.approx(3 * below, abs=6), (
-        f"the springs did not settle at 3:1 (above={above}px, below={below}px)"
-    )
+    below = _bottom(page.last_launch_label, page) - _bottom(page.select_instance_button, page)
+    assert above > below, f"the action group still sits high (above={above}px, below={below}px)"
 
 
 def test_growing_the_window_moves_the_group_with_the_upper_spring(page, app):
     """A stretch, not a fixed offset: a taller window must not pin the buttons to the top."""
     short_top = _top(page.launch_button, page)
+    short_bottom = _top(page.stats_label, page)
     page.resize(1000, TALL_HEIGHT)
     _settle(app)
     tall_top = _top(page.launch_button, page)
 
     extra = TALL_HEIGHT - SHORT_HEIGHT
     assert tall_top > short_top, "the action group did not follow the taller window"
-    # The new free space splits 3:1, so the group itself takes three quarters of it.
-    assert tall_top - short_top == pytest.approx(extra * 3 / 4, abs=4)
+    # One spring above means the whole new free space goes above the group.
+    assert tall_top - short_top == pytest.approx(extra, abs=4)
+    assert _top(page.stats_label, page) == pytest.approx(short_bottom, abs=2), "the footer moved with the window"
 
 
 def test_a_squashed_window_still_keeps_the_group_inside_the_card(page, app):
