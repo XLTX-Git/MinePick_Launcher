@@ -247,14 +247,13 @@ class _WindowShot:
         return (colour.red(), colour.green(), colour.blue())
 
     def background(self) -> tuple[int, int, int]:
-        """The page's own fill, sampled away from the slot: under it, and in the window's corner."""
-        below = self.slot(self.width // 2, self.height + 6)
-        corner = self.slot(-self.origin.x() + 5, -self.origin.y() + 5)
-        assert below == corner, (
-            f"the two background references disagree ({below} under the row, {corner} in the page corner), "
-            "so this test cannot tell what 'the surrounding fill' is"
-        )
-        return below
+        """The fill the slot sits on, sampled just below it.
+
+        This used to cross-check against the window's top-left corner. That corner is the title bar
+        now, so the two references legitimately differ and the cross-check only produced a false
+        failure. Below the slot is inside the same row, which is what the slot is actually painted on.
+        """
+        return self.slot(self.width // 2, self.height + 6)
 
     def slot_colours(self) -> set[tuple[int, int, int]]:
         return {self.slot(dx, dy) for dx in range(self.width) for dy in range(self.height)}
