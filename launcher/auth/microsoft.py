@@ -44,7 +44,7 @@ from launcher.auth.models import Account, GameProfile, MicrosoftTokens
 from launcher.i18n import describe_network_error, tr_core
 
 # Microsoft has retired the old public client id (e.g. 00000000402b5328, which returns AADSTS700016).
-# The current default comes from the build config in the PrismLauncher open-source project (GPL) source, and supports the device-code flow;
+# The default is this project's own Azure registration, approved for the Minecraft API allow list.
 # override via config msa_client_id or the MSA_CLIENT_ID environment variable (e.g. after registering your own Azure app).
 # Registered for this project, and approved for the Minecraft API allow list by Mojang Enforcement
 # on 2026-11-06. Override per-build with msa_client_id or MSA_CLIENT_ID.

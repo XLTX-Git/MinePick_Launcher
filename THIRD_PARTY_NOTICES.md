@@ -132,6 +132,6 @@ The names and logos of the mod loaders (Fabric, Forge, NeoForge, Quilt) belong t
   - 社区伙伴，《MinePick Launcher Revision》的作者，感谢在生态探索上的并肩前行。
   - <https://github.com/TheDarkLord234>
 - **Prism Launcher**
-  - provides the default Microsoft sign-in client id.
-  - 提供了默认的微软登录 Client ID。
+  - formerly provided the default Microsoft sign-in client id; the project now uses its own app registration.
+  - 曾经提供了默认的微软登录 Client ID（现已换成本项目自己的应用注册）。
   - <https://prismlauncher.org/>

@@ -116,6 +116,13 @@ class _AccountRow(QWidget):
     GAP = 12
     TAG_HEIGHT = 18
 
+    def set_avatar(self, pixmap: QPixmap | None) -> None:
+        """Swap the generated letter avatar for the account's own skin face."""
+        if pixmap is None or pixmap.isNull():
+            return
+        self._avatar = pixmap
+        self.update()
+
     def __init__(
         self,
         username: str,
@@ -125,6 +132,7 @@ class _AccountRow(QWidget):
         on_switch,
         on_remove,
         separator: bool = True,
+        avatar: QPixmap | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -136,7 +144,11 @@ class _AccountRow(QWidget):
         self._separator = separator
         self._selected = False
         self._hover = False
-        self._avatar = paint_utils.avatar_pixmap(username, self.AVATAR)
+        self._avatar = (
+            avatar
+            if avatar is not None and not avatar.isNull()
+            else paint_utils.avatar_pixmap(username, self.AVATAR)
+        )
         self._fallback = paint_utils.letter_tile_pixmap(
             username or "?", self.AVATAR, self.AVATAR // 2
         )
@@ -476,6 +488,14 @@ class LoginPage(QWidget):
                 avatar = avatar_pixmap(data)
                 if avatar is not None:  # unusable texture: keep the letter avatar
                     self.avatar_label.setPixmap(avatar)
+                    skin_cache = getattr(self, "_skin_cache", None)
+                    if skin_cache is None:
+                        skin_cache = self._skin_cache = {}
+                    skin_cache[account.skin_url] = avatar
+                    for row in self.rows:
+                        if row.username == account.username:
+                            row.set_avatar(avatar)
+                            break
             except RuntimeError:
                 pass  # page already destroyed (language switch rebuild)
 
@@ -506,6 +526,9 @@ class LoginPage(QWidget):
             item.setSizeHint(QSize(0, _AccountRow.HEIGHT))
             self.accounts_list.addItem(item)
             is_current = account_id == cfg.selected_account
+            skin_cache = getattr(self, "_skin_cache", None)
+            if skin_cache is None:
+                skin_cache = self._skin_cache = {}
             row = _AccountRow(
                 account.username,
                 kind,
@@ -513,6 +536,7 @@ class LoginPage(QWidget):
                 on_switch=lambda row_index=index: self._switch_row(row_index),
                 on_remove=lambda account_key=account_id: self._remove_row(account_key),
                 separator=index < len(ordered) - 1,
+                avatar=skin_cache.get(getattr(account, "skin_url", "") or ""),
             )
             self.accounts_list.setItemWidget(item, row)
             self.rows.append(row)
