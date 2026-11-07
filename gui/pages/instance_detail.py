@@ -4008,18 +4008,18 @@ class InstanceDetailPage(QWidget):
         style_page_layout(layout)
         layout.setSpacing(8)
 
-        self.back_button = QPushButton("← " + tr("instances.detail.back"))
+        self.back_button = QPushButton("← " + tr("instances.detail.back"), self)
         self.back_button.setObjectName("backButton")
         self.back_button.setAccessibleName(tr("instances.detail.back"))
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.clicked.connect(lambda: self.back_requested.emit())
 
-        self.detail = InstanceDetail()
-        self.no_selection = QLabel(tr("instances.select.hint"))
+        self.detail = InstanceDetail(self)
+        self.no_selection = QLabel(tr("instances.select.hint"), self)
         self.no_selection.setObjectName("emptyState")
         self.no_selection.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.no_selection.setWordWrap(True)
-        self.detail_stack = QStackedWidget()
+        self.detail_stack = QStackedWidget(self)
         self.detail_stack.addWidget(self.detail)
         self.detail_stack.addWidget(self.no_selection)
 

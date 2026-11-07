@@ -314,7 +314,9 @@ class _InstanceCard(QFrame):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(12)
-        icon = QLabel()
+        # Parented at creation: a parentless widget is a top-level window, and the card's parts are
+        # built while the grid is already on screen (every refresh rebuilds them).
+        icon = QLabel(self)
         icon.setObjectName("instanceCardIcon")
         icon.setFixedSize(40, 40)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -359,7 +361,7 @@ class _InstanceCard(QFrame):
         counts_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         # The primary action. It keeps the button base rule (accent fill, white text), so it reads as
         # "the" action on the card without a second colour vocabulary.
-        self.use_button = QPushButton(tr("instances.card.use"))
+        self.use_button = QPushButton(tr("instances.card.use"), self)
         self.use_button.setObjectName("instanceCardUse")
         self.use_button.setAccessibleName(
             tr("instances.card.use") + " " + instance.name
@@ -368,7 +370,7 @@ class _InstanceCard(QFrame):
         self.use_button.setFixedHeight(28)
         self.use_button.clicked.connect(lambda: self.use_requested.emit(self.instance_id))
         # The secondary sibling: the same quiet outline the card used to draw for 管理.
-        self.manage_button = QPushButton(tr("instances.card.manage"))
+        self.manage_button = QPushButton(tr("instances.card.manage"), self)
         self.manage_button.setObjectName("instanceCardManage")
         self.manage_button.setAccessibleName(tr("instances.card.open", instance.name))
         self.manage_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -464,12 +466,25 @@ class _CardGroupView(QWidget):
         self._layout.setSpacing(16)
         self._layout.addStretch(1)
 
-    def clear(self) -> None:
+    def clear(self, retired: QWidget | None = None) -> None:
+        """Drop every section; ``retired`` is where a dropped section waits for its deferred delete.
+
+        A section is detached, not deleted on the spot: ``deleteLater`` is what keeps a card's
+        ``clicked`` handler from deleting the widget that is emitting the signal. The detach has to be
+        ordered as well. ``setParent(None)`` on a *visible* widget is the exact shape of the flash this
+        page was reported for: Qt turns the widget into a top-level window (its own native title bar,
+        at the top-left corner) for as long as it exists, which is one event-loop turn. So the section
+        is hidden first - a hidden widget is not a window anybody can see - and then handed to
+        ``retired``, a hidden child of the page, so it is never a top-level window either. With no
+        ``retired`` host (a bare ``_CardGroupView`` in a test) the detach is the only option left.
+        """
         for section in self._sections:
             self._layout.removeWidget(section)
-            # Reparent before the deferred delete: a widget only removed from the layout keeps its old
-            # geometry (and stays painted) until the event loop runs DeferredDelete.
-            section.setParent(None)
+            section.hide()
+            if retired is not None:
+                section.setParent(retired)
+            else:
+                section.setParent(None)
             section.deleteLater()
         self._sections = []
 
@@ -505,7 +520,7 @@ class _FolderEmptyState(QWidget):
         self.setObjectName("instanceFolderEmpty")
         self.label = EmptyState(tr("instances.folder.empty"), self)
         self.label.update_for(0)  # EmptyState starts hidden; this panel is the only thing on screen
-        self.download_button = QPushButton(tr("instances.folder.download"))
+        self.download_button = QPushButton(tr("instances.folder.download"), self)
         self.download_button.setObjectName("secondaryButton")
         self.download_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.download_button.clicked.connect(self.download_requested)
@@ -526,13 +541,14 @@ class _CreateDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(tr("instances.dialog.title"))
-        self.name_edit = QLineEdit()
+        self.name_edit = QLineEdit(self)
         self.name_edit.setPlaceholderText(tr("instances.name.placeholder"))
-        self.version_combo = QComboBox()
+        self.version_combo = QComboBox(self)
         self.version_combo.setEditable(True)
         self.version_combo.addItem(tr("instances.loading"))
         self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
         )
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("instances.create.ok"))
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(
@@ -606,20 +622,20 @@ class InstancesPage(QWidget):
         self._reveal_timer.setSingleShot(True)
         self._reveal_timer.timeout.connect(self._reveal_pending_card)
 
-        self.search_edit = QLineEdit()
+        self.search_edit = QLineEdit(self)
         add_search_icon(self.search_edit)
         self.search_edit.setPlaceholderText(tr("instances.search.placeholder"))
         self.search_edit.setAccessibleName(tr("instances.search.placeholder"))  # WCAG 4.1.2
         self.search_edit.setClearButtonEnabled(True)
 
         # The left column: folders, their counts and the shared 「添加文件夹…」 entry.
-        self.folder_rail = FolderRail()
+        self.folder_rail = FolderRail(self)
         self.folder_list = self.folder_rail.list
 
         # The right pane: one scroll area of group sections. Searching collapses it to a single flat
         # section, which is why the same container serves both states.
-        self.groups_view = _CardGroupView()
-        self.content_scroll = QScrollArea()
+        self.groups_view = _CardGroupView(self)
+        self.content_scroll = QScrollArea(self)
         self.content_scroll.setObjectName("instanceGroupScroll")
         self.content_scroll.setAccessibleName(tr("nav.instances"))
         self.content_scroll.setWidgetResizable(True)
@@ -638,29 +654,29 @@ class InstancesPage(QWidget):
         attach_hover_scrollbar(self.content_scroll)
 
         # "N 个结果", the resources page's search-summary wording. Hidden unless a search is running.
-        self.result_count = QLabel("")
+        self.result_count = QLabel("", self)
         self.result_count.setObjectName("instanceResultCount")
         self.result_count.setVisible(False)
 
-        self.empty_folder = _FolderEmptyState()
-        self.empty_search = EmptyState(tr("instances.search.none"))
-        self.list_stack = QStackedWidget()
+        self.empty_folder = _FolderEmptyState(self)
+        self.empty_search = EmptyState(tr("instances.search.none"), self)
+        self.list_stack = QStackedWidget(self)
         self.list_stack.addWidget(self.content_scroll)
         self.list_stack.addWidget(self.empty_folder)
         self.list_stack.addWidget(self.empty_search)
 
-        self.sort_combo = QComboBox()
+        self.sort_combo = QComboBox(self)
         self.sort_combo.addItem(tr("instances.sort.name"), "name")
         self.sort_combo.addItem(tr("instances.sort.time"), "time")
         # WCAG 4.1.2: the visible label sits in the same row layout, not in a QFormLayout row, so it
         # never became this combo's name and the control was announced as an unlabelled list.
         self.sort_combo.setAccessibleName(tr("instances.sort.label"))
 
-        self.create_button = QPushButton(tr("instances.create_copy"))
-        self.import_button = QPushButton(tr("instances.import"))
+        self.create_button = QPushButton(tr("instances.create_copy"), self)
+        self.import_button = QPushButton(tr("instances.import"), self)
         self.import_button.setObjectName("secondaryButton")
 
-        self.detail_page = InstanceDetailPage()
+        self.detail_page = InstanceDetailPage(self)
         self.detail = self.detail_page.detail
         self.detail_stack = self.detail_page.detail_stack
         self.no_selection = self.detail_page.no_selection
@@ -671,7 +687,14 @@ class InstancesPage(QWidget):
         self.crash_button = self.detail.crash_button
         self.mods_table = self.detail.mods_table
 
-        browser = QWidget()
+        # Where a section waits for its deferred delete (see :meth:`_CardGroupView.clear`): a hidden
+        # child of this page, so a dropped section is neither painted nor a top-level window. It is not
+        # inside groups_view, so ``groups_view.findChildren`` keeps describing only the live sections.
+        self._retired_groups = QWidget(self)
+        self._retired_groups.setObjectName("instanceGroupRetired")
+        self._retired_groups.setVisible(False)
+
+        browser = QWidget(self)
         browser.setObjectName("instanceBrowser")
         browser_layout = QVBoxLayout(browser)
         style_page_layout(browser_layout)
@@ -690,7 +713,7 @@ class InstancesPage(QWidget):
         first_row = QHBoxLayout()
         first_row.setContentsMargins(0, 0, 0, 0)
         first_row.setSpacing(8)
-        sort_label = QLabel(tr("instances.sort.label"))
+        sort_label = QLabel(tr("instances.sort.label"), browser)
         sort_label.setBuddy(self.sort_combo)
         first_row.addWidget(self.search_edit, 1)
         first_row.addWidget(sort_label)
@@ -710,7 +733,7 @@ class InstancesPage(QWidget):
         main_row.addLayout(pane, 1)
         browser_layout.addLayout(main_row)
 
-        self.view_stack = QStackedWidget()
+        self.view_stack = QStackedWidget(self)
         self.view_stack.addWidget(browser)
         self.view_stack.addWidget(self.detail_page)
         layout = QVBoxLayout(self)
@@ -971,7 +994,7 @@ class InstancesPage(QWidget):
 
     def _build_cards(self, ordered, cfg, game_dir: Path, current_id: str, needle: str) -> int:
         """Draw the cards - grouped by type, or flat while searching - and return how many showed."""
-        self.groups_view.clear()
+        self.groups_view.clear(self._retired_groups)
         self.result_count.setVisible(bool(needle))
         grouped: dict[str, list[_InstanceCard]] = {key: [] for key in GROUP_ORDER}
         flat: list[_InstanceCard] = []
@@ -1008,7 +1031,10 @@ class InstancesPage(QWidget):
         shown = 0
         if needle:
             # Searching does not group: one flat grid, introduced by the "N 个结果" line.
-            section = self.groups_view.add_section(_GroupSection())
+            # Parented at creation, unlike the labels this page used to build: _settle_layout() shows
+            # these sections, and a section that the layout has not adopted yet is a window of its own
+            # for one frame - the flash the card grid was reported for.
+            section = self.groups_view.add_section(_GroupSection(parent=self.groups_view))
             for card in flat:
                 section.add_card(card)
             shown = len(flat)
@@ -1019,7 +1045,7 @@ class InstancesPage(QWidget):
                 if not cards:  # an empty group is not rendered at all
                     continue
                 section = self.groups_view.add_section(
-                    _GroupSection(tr(GROUP_TITLE_KEYS[key]))
+                    _GroupSection(tr(GROUP_TITLE_KEYS[key]), self.groups_view)
                 )
                 for card in cards:
                     section.add_card(card)

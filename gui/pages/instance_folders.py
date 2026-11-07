@@ -101,13 +101,16 @@ class _FolderRow(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(FOLDER_ROW_PADDING_X, 0, FOLDER_ROW_PADDING_X, 0)
         layout.setSpacing(8)
-        self.name_label = ElidedLabel(name)
+        # Parented at creation: a parentless label that is told to be visible is a top-level window
+        # for an instant. The row itself is built while the rail is on screen (a folder switch
+        # rebuilds it), so nothing in here may start life parentless.
+        self.name_label = ElidedLabel(name, self)
         self.name_label.setObjectName("instanceFolderName")
         # ElidedLabel is selectable by mouse, which makes it a ClickFocus stop with no focus rule of
         # its own; the row is a list item, so its text must not enter the tab chain.
         self.name_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.count_label = QLabel(str(count))
+        self.count_label = QLabel(str(count), self)
         self.count_label.setObjectName("instanceFolderCount")
         self.count_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -157,7 +160,7 @@ class FolderRail(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        self.list = QListWidget()
+        self.list = QListWidget(self)
         self.list.setObjectName("instanceFolderList")
         # WCAG 4.1.2: the list is a keyboard stop (Tab reaches it, the arrow keys move inside it) and
         # would otherwise be announced as an unnamed list.
@@ -173,7 +176,7 @@ class FolderRail(QWidget):
         # on focus, while an item pseudo-state proved unreliable for list items.
         apply_no_focus_outline(self.list)
 
-        self.add_button = QPushButton(tr("settings.folder.add"))
+        self.add_button = QPushButton(tr("settings.folder.add"), self)
         self.add_button.setObjectName("secondaryButton")
         self.add_button.setAccessibleName(tr("settings.folder.add"))
         self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -222,7 +225,10 @@ class FolderRail(QWidget):
                 )
                 item.setToolTip(path)
                 self.list.addItem(item)
-                row = _FolderRow(name, count)
+                # Parented at creation (to the view's viewport, the row's final home): a parentless
+                # widget is a top-level window until the view adopts it, and this rail is rebuilt
+                # while the page is already on screen.
+                row = _FolderRow(name, count, self.list.viewport())
                 row.setAccessibleName(text)
                 self.list.setItemWidget(item, row)
                 self._items.append(item)
