@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import zipfile
 from pathlib import Path
@@ -26,6 +27,8 @@ from pathlib import Path
 from launcher.i18n import tr_core
 from launcher.install import library_path
 from launcher.meta.rules import ResolvedLibrary
+
+logger = logging.getLogger(__name__)
 
 
 class LaunchError(Exception):
@@ -64,13 +67,37 @@ def prepare_natives(
     return natives_dir
 
 
+def _member_target(dest: Path, name: str) -> Path | None:
+    """``dest/name`` resolved, or ``None`` when the archive entry tries to leave ``dest``.
+
+    Zip member names are attacker-controlled data: ``../evil.dll``, ``/abs/evil.dll`` and
+    ``C:\\evil.dll`` all name files outside the natives directory, and the launcher used to write
+    them wherever they pointed. Absolute names (POSIX or Windows form) and drive-qualified names are
+    rejected up front, and the resolved path is checked against the resolved destination so ``..``
+    segments cannot slip through either. ``dest`` may itself be relative, hence resolving both sides.
+    """
+    if not name or name.startswith(("/", "\\")) or ":" in name:
+        return None
+    try:
+        target = (dest / name).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return target if target.is_relative_to(dest) else None
+
+
 def _extract_jar(jar: Path, dest: Path, excludes: list[str]) -> None:
+    dest = dest.resolve()
     with zipfile.ZipFile(jar) as zf:
         for member in zf.infolist():
             name = member.filename
             if member.is_dir() or any(name.startswith(prefix) for prefix in excludes):
                 continue
-            target = dest / name
+            target = _member_target(dest, name)
+            if target is None:
+                # One hostile entry must not stop a version from launching, so skip it and carry on
+                # with the rest: the guard is about not writing outside dest, not about refusing jars.
+                logger.warning("skipping unsafe archive entry %r in %s", name, jar.name)
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(member) as src, target.open("wb") as dst:
                 shutil.copyfileobj(src, dst)
