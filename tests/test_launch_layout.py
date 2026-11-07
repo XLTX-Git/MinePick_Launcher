@@ -17,9 +17,9 @@
 
 """The launch page's action group sits below the middle, and stays a stretch, not a fixed gap.
 
-The launch sheet asks for the primary action and its two secondary siblings to sit about a third
-below the panel's centre. Before this the two ``addStretch(1)`` around them centred the group exactly;
-now the upper spring is twice the lower one (2:1), which puts the group two thirds of the free space
+The launch sheet asks for the primary action and its two secondary siblings to sit well below the
+panel's centre. Before this the two ``addStretch(1)`` around them centred the group exactly; now the
+upper spring is three times the lower one (3:1), which puts the group three quarters of the free space
 down. These tests pin both facts that matter:
 
 * the spring factors are 2 and 1, so a future edit cannot silently return to dead-centre;
@@ -98,23 +98,23 @@ def _spring_factors(page) -> list[int]:
     return [layout.stretch(index) for index in range(layout.count()) if layout.stretch(index) > 0]
 
 
-def test_the_actions_hang_from_a_two_to_one_spring_pair(page):
-    """The design decision itself: twice as much air above the buttons as below them."""
-    assert _spring_factors(page) == [2, 1], (
-        "the action group is not positioned by a 2:1 stretch pair; the page would centre it again "
+def test_the_actions_hang_from_a_three_to_one_spring_pair(page):
+    """The design decision itself: three times as much air above the buttons as below them."""
+    assert _spring_factors(page) == [3, 1], (
+        "the action group is not positioned by a 3:1 stretch pair; the page would centre it again "
         "or pin it with a fixed spacing"
     )
 
 
-def test_the_group_sits_a_third_below_the_middle(page, app):
-    """Measured, not just declared: the space above the group is twice the space below it."""
+def test_the_group_sits_well_below_the_middle(page, app):
+    """Measured, not just declared: the space above the group is three times the space below it."""
     _settle(app)
     above = _top(page.launch_button, page) - _bottom(page.avatar_label, page)
     # The 4px fixed gap between the lower spring and the last-launch label is not part of the spring.
     below = _top(page.last_launch_label, page) - _bottom(page.select_instance_button, page) - 4
     assert above > below, "the action group still sits above the middle"
-    assert above == pytest.approx(2 * below, abs=6), (
-        f"the springs did not settle at 2:1 (above={above}px, below={below}px)"
+    assert above == pytest.approx(3 * below, abs=6), (
+        f"the springs did not settle at 3:1 (above={above}px, below={below}px)"
     )
 
 
@@ -127,8 +127,8 @@ def test_growing_the_window_moves_the_group_with_the_upper_spring(page, app):
 
     extra = TALL_HEIGHT - SHORT_HEIGHT
     assert tall_top > short_top, "the action group did not follow the taller window"
-    # The new free space splits 2:1, so the group itself takes two thirds of it.
-    assert tall_top - short_top == pytest.approx(extra * 2 / 3, abs=4)
+    # The new free space splits 3:1, so the group itself takes three quarters of it.
+    assert tall_top - short_top == pytest.approx(extra * 3 / 4, abs=4)
 
 
 def test_a_squashed_window_still_keeps_the_group_inside_the_card(page, app):
