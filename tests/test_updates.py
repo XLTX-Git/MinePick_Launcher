@@ -50,7 +50,9 @@ def _payload(tag: str = "v0.2.0", assets: list[dict] | None = None, body: str = 
     }
 
 
-def _release(size: int = 6, name: str = "MinePick_Launcher.exe") -> updates.ReleaseInfo:
+def _release(
+    size: int = 6, name: str = "MinePick_Launcher.exe", digest: str = ""
+) -> updates.ReleaseInfo:
     return updates.ReleaseInfo(
         version="0.2.0",
         tag="v0.2.0",
@@ -59,6 +61,7 @@ def _release(size: int = 6, name: str = "MinePick_Launcher.exe") -> updates.Rele
         exe_url=EXE_URL,
         exe_name=name,
         exe_size=size,
+        exe_digest=digest,
     )
 
 
@@ -101,7 +104,21 @@ def test_fetch_latest_release() -> None:
     assert release.tag == "v0.2.0"
     assert release.exe_name == "MinePick_Launcher.exe"
     assert release.exe_size == 6
+    assert release.exe_digest == ""  # no digest in this payload: the signature fallback applies
     assert release.page_url.endswith("/v0.2.0")
+
+
+@respx.mock
+def test_fetch_latest_release_reads_the_asset_digest() -> None:
+    digest = "sha256:" + "b" * 64
+    payload = _payload()
+    payload["assets"][0]["digest"] = digest
+    respx.get(API).mock(return_value=httpx.Response(200, json=payload))
+    assert updates.fetch_latest_release(httpx.Client()).exe_digest == digest
+
+    payload["assets"][0]["digest"] = None  # the API can return null for an asset
+    respx.get(API).mock(return_value=httpx.Response(200, json=payload))
+    assert updates.fetch_latest_release(httpx.Client()).exe_digest == ""
 
 
 @respx.mock
@@ -169,6 +186,48 @@ def test_download_happy_path(ws_tmp, monkeypatch) -> None:
 
 
 @respx.mock
+def test_download_accepts_the_published_digest(ws_tmp, monkeypatch) -> None:
+    """A SHA-256 matching the release asset's ``digest`` is the primary check and is enough."""
+    payload = b"MZ" + b"1" * 4
+    signature_checks: list[Path] = []
+    monkeypatch.setattr(
+        updates, "signature_is_valid", lambda path: signature_checks.append(path) or True
+    )
+    respx.get(EXE_URL).mock(return_value=httpx.Response(200, content=payload))
+    release = _release(digest="sha256:" + hashlib.sha256(payload).hexdigest())
+    path = updates.download_release_exe(release, ws_tmp, client=httpx.Client())
+    assert path.read_bytes() == payload
+    assert signature_checks == []  # the digest is authoritative, no Authenticode round-trip
+
+
+@respx.mock
+def test_download_refuses_a_digest_mismatch_and_deletes_the_partial(ws_tmp, monkeypatch) -> None:
+    payload = b"MZ" + b"1" * 4
+    monkeypatch.setattr(updates, "signature_is_valid", lambda _path: True)  # would say yes
+    respx.get(EXE_URL).mock(return_value=httpx.Response(200, content=payload))
+    release = _release(digest="sha256:" + "0" * 64)
+    with pytest.raises(updates.UpdateError) as exc:
+        updates.download_release_exe(release, ws_tmp, client=httpx.Client())
+    assert exc.value.code == "signature"  # the existing "failed verification" bucket
+    assert not list(ws_tmp.iterdir())  # the .part was deleted and nothing was staged
+
+
+@respx.mock
+def test_a_null_digest_falls_back_to_the_signature_and_still_works(ws_tmp, monkeypatch) -> None:
+    """Old releases (or an API returning ``"digest": null``) keep the pre-digest behaviour."""
+    payload = b"MZ" + b"1" * 4
+    signature_checks: list[Path] = []
+    monkeypatch.setattr(
+        updates, "signature_is_valid", lambda path: signature_checks.append(path) or True
+    )
+    respx.get(EXE_URL).mock(return_value=httpx.Response(200, content=payload))
+    release = _release(digest="")  # the asset object has no usable digest
+    path = updates.download_release_exe(release, ws_tmp, client=httpx.Client())
+    assert path.read_bytes() == payload
+    assert bool(signature_checks) is (os.name == "nt")  # unchanged: no Authenticode off Windows
+
+
+@respx.mock
 def test_download_refuses_size_mismatch(ws_tmp) -> None:
     respx.get(EXE_URL).mock(return_value=httpx.Response(200, content=b"MZ"))
     with pytest.raises(updates.UpdateError) as exc:
@@ -213,6 +272,20 @@ def test_is_pe_file(ws_tmp) -> None:
     assert updates.is_pe_file(ws_tmp / "missing.exe") is False
 
 
+def test_digest_is_valid_only_with_a_matching_sha256(ws_tmp) -> None:
+    """The digest comparison itself: case-insensitive hex, and anything unverifiable is a refusal."""
+    exe = ws_tmp / "a.exe"
+    exe.write_bytes(b"MZ-payload")
+    good = hashlib.sha256(b"MZ-payload").hexdigest()
+    assert updates.digest_is_valid(exe, "sha256:" + good) is True
+    assert updates.digest_is_valid(exe, "SHA256:" + good.upper()) is True
+    assert updates.digest_is_valid(exe, "sha256:" + "0" * 64) is False
+    assert updates.digest_is_valid(exe, "sha512:" + "0" * 128) is False  # cannot be checked -> no
+    assert updates.digest_is_valid(exe, "not-a-digest") is False
+    assert updates.digest_is_valid(exe, "") is False
+    assert updates.digest_is_valid(ws_tmp / "missing.exe", "sha256:" + good) is False
+
+
 def test_signature_policy_accepts_our_self_signed_build(monkeypatch) -> None:
     """The certificate is self-signed: an untrusted chain is fine, a foreign signer or tampering is not."""
     reply = {"stdout": ""}
@@ -232,6 +305,32 @@ def test_signature_policy_accepts_our_self_signed_build(monkeypatch) -> None:
     for rejected in (f"HashMismatch|{ours}", "NotSigned|", "Valid|CN=Evil Corp"):
         reply["stdout"] = rejected
         assert updates.signature_is_valid(Path("candidate.exe")) is False, rejected
+
+
+def test_the_signature_command_doubles_a_single_quote_in_the_path() -> None:
+    """A path is file-system data: one ``'`` used to end the PowerShell string and break the check."""
+    command = updates._signature_command(Path(r"C:\it's a\launcher.exe"))
+    script = command[-1]
+    assert r"C:\it''s a\launcher.exe" in script  # PowerShell's escape inside '...'
+    assert r"C:\it's a\launcher.exe" not in script  # the unescaped form would inject
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Authenticode only exists on Windows")
+def test_the_signature_check_really_runs_with_a_quoted_path(ws_tmp) -> None:
+    """Run PowerShell for real: stdout must have the status|subject shape, not a parse error.
+
+    ``signature_is_valid`` returns False for an unsigned file, which a broken command also produces
+    (empty stdout), so the command is executed directly to tell the two apart.
+    """
+    exe = ws_tmp / "it's a launcher's copy.exe"
+    exe.write_bytes(b"MZ" + b"\x00" * 64)
+    assert updates.signature_is_valid(exe) is False  # a result, not an exception
+    result = subprocess.run(
+        updates._signature_command(exe), capture_output=True, text=True, timeout=60, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    status, separator, _subject = result.stdout.strip().partition("|")
+    assert separator and status.strip(), (result.stdout, result.stderr)
 
 
 # ---------- install helper ----------

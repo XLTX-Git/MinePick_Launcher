@@ -27,6 +27,7 @@ update must never leave the user without a working launcher.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -42,16 +43,32 @@ RELEASES_PAGE = f"https://github.com/{REPO}/releases"
 EXE_ASSETS = ("MinePick_Launcher.exe", "MinePick_UI_Trial.exe")
 GITHUB_ACCEPT = "application/vnd.github+json"
 
-# Signature policy: the launcher's own certificate (see scripts/sign_exe.ps1). A self-signed
-# certificate never chains to a trusted root on a user machine, so Windows reports UnknownError or
-# NotTrusted there; those are accepted, while a missing signature, a hash mismatch or a foreign
-# signer still blocks the update. (Spellings follow PowerShell's SignatureStatus values.)
+# Integrity policy, strongest check first.
+#
+# 1. **Digest (primary).** The release asset carries a ``digest`` field (``sha256:...``) that GitHub
+#    computes from the bytes it stores and serves over HTTPS with the release. A downloaded file whose
+#    local SHA-256 differs from it is not the published asset and is refused.
+# 2. **Authenticode (fallback).** Releases published before GitHub added that field carry no digest;
+#    those keep the pre-existing signature policy so they stay updatable.
+#
+# The signature policy itself: the launcher ships a **self-signed** certificate (see
+# scripts/sign_exe.ps1), so on a normal machine the chain is untrusted and Windows reports
+# ``UnknownError`` / ``NotTrusted`` - those are accepted. ``EXPECTED_SIGNER`` is only auxiliary
+# information and proves nothing about who built the file: anybody can mint a self-signed certificate
+# with the same ``CN`` and Windows reports the same statuses for it. It is kept for the fallback path
+# and for diagnostics, never as a reason to trust a download on its own.
+# (Spellings follow PowerShell's SignatureStatus values.)
 EXPECTED_SIGNER = "CN=WDNDXLTX"
 ACCEPTED_SIGNATURE_STATUSES = {"valid", "unknownerror", "nottrusted"}
 
 
 class UpdateError(RuntimeError):
-    """Update failure carrying an i18n key suffix: network / http / parse / no_asset / size / signature."""
+    """Update failure carrying an i18n key suffix: network / http / parse / no_asset / size / signature.
+
+    ``signature`` is the existing "the download failed verification" bucket and also covers a
+    SHA-256 digest mismatch: the GUI/i18n layer keys its message off it, and a download the release
+    did not publish is exactly what that message describes.
+    """
 
     def __init__(self, code: str, detail: str = "") -> None:
         super().__init__(detail or code)
@@ -69,6 +86,10 @@ class ReleaseInfo:
     exe_url: str
     exe_name: str
     exe_size: int
+    # "sha256:<hex>" as served by the release API; "" when the API has no digest for the asset
+    # (older releases, or an API that predates the field). An empty value selects the signature
+    # fallback, and it stays last and defaulted because callers construct this dataclass without it.
+    exe_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -153,6 +174,7 @@ def fetch_latest_release(client=None) -> ReleaseInfo:
         exe_url=str(asset.get("browser_download_url") or ""),
         exe_name=str(asset.get("name") or EXE_ASSETS[0]),
         exe_size=int(asset.get("size") or 0),
+        exe_digest=str(asset.get("digest") or "").strip(),
     )
 
 
@@ -180,28 +202,69 @@ def is_pe_file(path: Path) -> bool:
         return False
 
 
-def signature_is_valid(path: Path) -> bool:
-    """Whether the file is signed by this project's certificate without being tampered with.
+def file_sha256(path: Path) -> str:
+    """Hex SHA-256 of a file, read in chunks so a large EXE never has to fit in memory."""
+    hasher = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
-    The launcher ships a **self-signed** certificate, so on a normal machine the chain is untrusted
-    and Windows reports ``UnknownError`` — that is expected and must not block an update. What must
-    block one is a missing signature, a hash mismatch, or a signature by somebody else.
+
+def digest_is_valid(path: Path, expected: str) -> bool:
+    """Whether ``path`` matches a GitHub asset digest such as ``sha256:<hex>``.
+
+    A value that is present but cannot be checked - a future algorithm, a malformed string - counts
+    as a mismatch. Only an empty digest means "no digest on this release" and selects the signature
+    fallback; silently downgrading a declared-but-unverifiable digest would defeat the point.
     """
-    if os.name != "nt":
+    algorithm, _sep, value = (expected or "").strip().partition(":")
+    if algorithm.lower() != "sha256" or not value.strip():
         return False
-    command = [
+    try:
+        return file_sha256(path) == value.strip().lower()
+    except OSError:
+        return False
+
+
+def _signature_command(path: Path) -> list[str]:
+    """The PowerShell call that prints ``<status>|<subject>`` for one file.
+
+    The path is interpolated into a PowerShell **single-quoted** string, where the only escape is a
+    doubled quote. Without that doubling a path such as ``C:\\it's\\a.exe`` ends the string early and
+    the rest of the path is parsed as PowerShell code - broken at best, injection at worst. A
+    temporary ``.ps1`` plus ``-File`` would avoid quoting altogether, but that adds a file to create,
+    encode, locate and clean up; doubling one character is the smaller change for one subprocess.
+
+    Kept as its own function so the quoting can be asserted without running PowerShell (and so the
+    real invocation can be exercised directly on Windows).
+    """
+    quoted = str(path).replace("'", "''")
+    return [
         "powershell",
         "-NoProfile",
         "-NonInteractive",
         "-Command",
         (
-            f"$s = Get-AuthenticodeSignature -FilePath '{path}'; "
+            f"$s = Get-AuthenticodeSignature -FilePath '{quoted}'; "
             '"$($s.Status)|$($s.SignerCertificate.Subject)"'
         ),
     ]
+
+
+def signature_is_valid(path: Path) -> bool:
+    """Whether the file is signed by this project's certificate without being tampered with.
+
+    The launcher ships a **self-signed** certificate, so on a normal machine the chain is untrusted
+    and Windows reports ``UnknownError`` — that is expected and must not block an update. This is the
+    *fallback* check for releases without a digest; see ``EXPECTED_SIGNER`` for what the subject
+    comparison can and cannot prove.
+    """
+    if os.name != "nt":
+        return False
     try:
         result = subprocess.run(
-            command,
+            _signature_command(path),
             capture_output=True,
             text=True,
             timeout=60,
@@ -217,7 +280,7 @@ def signature_is_valid(path: Path) -> bool:
 
 
 def download_release_exe(release: ReleaseInfo, target_dir: Path, client=None, on_progress=None) -> Path:
-    """Download the release EXE, verify size + Authenticode signature, and return the local path.
+    """Download the release EXE, verify size + digest (or signature when there is no digest), return it.
 
     The partial file is removed and :class:`UpdateError` raised as soon as a check fails, so a broken
     download can never be mistaken for a usable update.
@@ -271,7 +334,15 @@ def download_release_exe(release: ReleaseInfo, target_dir: Path, client=None, on
         if not is_pe_file(partial):
             _cleanup()
             raise UpdateError("signature", "not a Windows executable")
-        if os.name == "nt" and not signature_is_valid(partial):
+        if release.exe_digest:
+            # Primary check: the digest GitHub serves for this asset. Different bytes mean this is
+            # not the published file, so the download is discarded before it can be installed.
+            if not digest_is_valid(partial, release.exe_digest):
+                _cleanup()
+                raise UpdateError("signature", f"sha256 digest mismatch: {release.exe_digest!r}")
+        elif os.name == "nt" and not signature_is_valid(partial):
+            # No digest on this release (published before GitHub added the field): fall back to the
+            # old Authenticode policy, identical to the behaviour before digests existed.
             _cleanup()
             raise UpdateError("signature", "invalid Authenticode signature")
         target.unlink(missing_ok=True)
