@@ -1,0 +1,6 @@
+# synthetic sample: shaped after a real log, not captured from one
+[01Jan2026 12:02:00.000] [main/INFO] [FabricLoader/]: Loading 12 mods:
+[01Jan2026 12:02:03.000] [Render thread/ERROR] [ResourcePackManager/]: Failed to load resource pack 'huge_pack.zip'
+java.io.IOException: resource pack too large: entry assets/minecraft/textures/block/stone.png exceeds 64 MiB
+	at net.minecraft.server.packs.FilePackResources.getResource(FilePackResources.java:118)
+	at net.minecraft.server.packs.resources.ResourceManager.reload(ResourceManager.java:54)

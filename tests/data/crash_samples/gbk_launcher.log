@@ -1,3 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
 2026-09-25 21:05:12 INFO    launcher.launch.runner: 启动游戏: versions/1.20.1
 2026-09-25 21:05:12 INFO    launcher.launch.orchestrate: 使用 Java 17
 2026-09-25 21:05:13 ERROR   launcher.install: 安装文件失败

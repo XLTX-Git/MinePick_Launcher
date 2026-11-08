@@ -1,0 +1,77 @@
+---- Minecraft Crash Report ----
+// I bet Cylons wouldn't have this problem.
+Time: 2026-06-22 21:24:01
+Description: Initializing game
+java.lang.RuntimeException: Mixin transformation of fi.dy.masa.malilib.interfaces.IDataSyncer failed
+	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.getPostMixinClassByteArray(KnotClassDelegate.java:440)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.tryLoadClass(KnotClassDelegate.java:336)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.loadClass(KnotClassDelegate.java:231)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassLoader.loadClass(KnotClassLoader.java:119)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490)
+	at java.base/java.lang.ClassLoader.defineClass1(Native Method)
+	at java.base/java.lang.ClassLoader.defineClass(ClassLoader.java:962)
+	at java.base/java.security.SecureClassLoader.defineClass(SecureClassLoader.java:144)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassLoader.defineClassFwd(KnotClassLoader.java:165)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.tryLoadClass(KnotClassDelegate.java:368)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.loadClass(KnotClassDelegate.java:231)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassLoader.loadClass(KnotClassLoader.java:119)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490)
+	at knot//fi.dy.masa.litematica.InitHandler.registerModHandlers(InitHandler.java:43)
+	at knot//fi.dy.masa.malilib.event.InitializationHandler.onGameInitDone(InitializationHandler.java:51)
+	at knot//net.minecraft.class_310.handler$fla000$malilib$onInitComplete(class_310.java:19150)
+	at knot//net.minecraft.class_310.<init>(class_310.java:745)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: org.spongepowered.asm.mixin.transformer.throwables.MixinTransformerError: An unexpected critical error was encountered
+	at org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinProcessor.java:380)
+	at org.spongepowered.asm.mixin.transformer.MixinTransformer.transformClass(MixinTransformer.java:237)
+	at org.spongepowered.asm.mixin.transformer.MixinTransformer.transformClassBytes(MixinTransformer.java:202)
+	at knot//meteordevelopment.meteorclient.asm.Asm$Transformer.transformClassBytes(Asm.java:103)
+	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.getPostMixinClassByteArray(KnotClassDelegate.java:435)
+	... 17 more
+Caused by: org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [carpet-tis-addition.mixins.json:rule.largeBarrel.compat.malilib.IDataSyncerMixin from mod carpet-tis-addition] from phase [DEFAULT] in config [carpet-tis-addition.mixins.json] FAILED during APPLY
+	at org.spongepowered.asm.mixin.transformer.MixinProcessor.handleMixinError(MixinProcessor.java:685)
+	at org.spongepowered.asm.mixin.transformer.MixinProcessor.handleMixinApplyError(MixinProcessor.java:636)
+	at org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinProcessor.java:367)
+	... 21 more
+Caused by: org.spongepowered.asm.mixin.injection.throwables.InvalidInjectionException: @ModifyReturnValue return value modifier method fi/dy/masa/malilib/interfaces/IDataSyncer::syncTheOtherSideOfTheLargeBarrel from carpet-tis-addition.mixins.json:rule.largeBarrel.compat.malilib.IDataSyncerMixin from mod carpet-tis-addition has an invalid signature. Found unexpected argument type net.minecraft.class_2338 at index 2, expected fi.dy.masa.malilib.util.position.BlockPos. Handler signature: (Lnet/minecraft/class_1263;Lnet/minecraft/class_1937;Lnet/minecraft/class_2338;Z)Lnet/minecraft/class_1263; Expected signature: (Lnet/minecraft/class_1263;Lnet/minecraft/class_1937;Lfi/dy/masa/malilib/util/position/BlockPos;Z)Lnet/minecraft/class_1263; [INJECT_APPLY Applicator Phase -> carpet-tis-addition.mixins.json:rule.largeBarrel.compat.malilib.IDataSyncerMixin from mod carpet-tis-addition -> Apply Injections ->  -> Inject -> carpet-tis-addition.mixins.json:rule.largeBarrel.compat.malilib.IDataSyncerMixin from mod carpet-tis-addition->@ModifyReturnValue::syncTheOtherSideOfTheLargeBarrel(Lnet/minecraft/class_1263;Lnet/minecraft/class_1937;Lnet/minecraft/class_2338;Z)Lnet/minecraft/class_1263;]
+	at org.spongepowered.asm.mixin.injection.code.Injector.validateParams(Injector.java:623)
+	at knot//com.llamalad7.mixinextras.injector.ModifyReturnValueInjector.injectReturnValueModifier(ModifyReturnValueInjector.java:34)
+	at knot//com.llamalad7.mixinextras.injector.ModifyReturnValueInjector.inject(ModifyReturnValueInjector.java:26)
+	at org.spongepowered.asm.mixin.injection.code.Injector.inject(Injector.java:284)
+	at org.spongepowered.asm.mixin.injection.struct.InjectionInfo.inject(InjectionInfo.java:508)
+	at org.spongepowered.asm.mixin.transformer.MixinTargetContext.applyInjections(MixinTargetContext.java:1470)
+	at org.spongepowered.asm.mixin.transformer.MixinApplicatorStandard.applyInjections(MixinApplicatorStandard.java:832)
+	at org.spongepowered.asm.mixin.transformer.MixinApplicatorInterface.applyInjections(MixinApplicatorInterface.java:164)
+	at org.spongepowered.asm.mixin.transformer.MixinApplicatorStandard.lambda$runApplicatorPass$7(MixinApplicatorStandard.java:362)
+	at org.spongepowered.asm.mixin.transformer.MixinApplicatorStandard.processMixins(MixinApplicatorStandard.java:381)
+	at org.spongepowered.asm.mixin.transformer.MixinApplicatorStandard.runApplicatorPass(MixinApplicatorStandard.java:360)
+	at org.spongepowered.asm.mixin.transformer.MixinApplicatorStandard.apply(MixinApplicatorStandard.java:240)
+	at org.spongepowered.asm.mixin.transformer.TargetClassContext.apply(TargetClassContext.java:437)
+	at org.spongepowered.asm.mixin.transformer.TargetClassContext.applyMixins(TargetClassContext.java:418)
+	at org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinProcessor.java:351)
+	... 21 more
+
+-- System Details --
+Details:
+	Minecraft Version: 1.21.11
+	Minecraft Version ID: 1.21.11
+	Operating System: Windows 11 (amd64) version 10.0
+	Java Version: 25.0.2, Oracle Corporation
+	Java VM Version: Java HotSpot(TM) 64-Bit Server VM (mixed mode, sharing), Oracle Corporation
+	Memory: 331052976 bytes (315 MiB) / 1073741824 bytes (1024 MiB) up to 6119489536 bytes (5836 MiB)
+	Launched Version: 1.21.11-Fabric_0.19.3
+	Backend API: NVIDIA GeForce RTX 4060 Laptop GPU/PCIe/SSE2 GL version 3.3.0 NVIDIA 610.62, NVIDIA Corporation
+	Is Modded: Definitely; Client brand changed to 'fabric'
+
+Fabric Mods:
+	carpet-tis-addition: Carpet TIS Addition 1.79.1
+	fabricloader: Fabric Loader 0.19.3
+	litematica: Litematica 0.26.9
+	litematica_printer: Litematica Printer 3.2.1B
+	malilib: MaLiLib 0.27.13
+	meteor-client: Meteor Client 1.21.11-82
+	meteordevelopment_discord-ipc: discord-ipc 1.1
+	meteordevelopment_orbit: orbit 0.2.4
+	org_meteordev_starscript: starscript 0.2.5
+	minecraft: Minecraft 1.21.11
+	... (mod list shortened for this fixture)

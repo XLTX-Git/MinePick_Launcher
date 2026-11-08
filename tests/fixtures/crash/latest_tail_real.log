@@ -1,0 +1,280 @@
+	at knot//net.minecraft.class_634.method_11117(class_634.java:1282)
+	at knot//net.minecraft.class_2724.method_11782(class_2724.java:44)
+	at knot//net.minecraft.class_2724.method_65081(class_2724.java:9)
+	at knot//net.minecraft.class_11980$class_11981.method_74450(class_11980.java:55)
+	at knot//net.minecraft.class_11980.method_74449(class_11980.java:38)
+	at knot//net.minecraft.class_310.method_1523(class_310.java:1337)
+	at knot//net.minecraft.class_310.method_1514(class_310.java:966)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+[21:07:58] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:07:58] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:07:58] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:07:58] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:07:58] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:07:58] [Render thread/INFO]: [me.cx.vy.cl.VoxyInstance]: Creating new world engine: 931602549822164926@670055826
+[21:07:58] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:07:58] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:07:59] [Render thread/INFO]: Stopping worker threads
+[21:07:59] [Render thread/INFO]: Started 10 worker threads
+[21:07:59] [Render thread/INFO]: Stopping worker threads
+[21:07:59] [Render thread/INFO]: Started 10 worker threads
+[21:07:59] [Render thread/INFO]: Starting [4] Placement Manager Daemon threads
+[21:07:59] [Thread-24/INFO]: Firing world change event: ACTUAL_DIMENSION_SWITCH from null to ResourceKey[minecraft:dimension / minecraft:the_end]
+[21:07:59] [Render thread/INFO]: Forgot about advancement blazeandcave:technical/unending_hell_end
+[21:07:59] [Render thread/INFO]: Loaded 2093 advancements
+[21:07:59] [Render thread/WARN]: Server side doesn't have XaeroLib installed! Resetting.
+[21:07:59] [Render thread/WARN]: Error while parsing the block ID map entry for "block.10104":
+[21:07:59] [Render thread/WARN]: - The block minecraft:stone_slab has no property with the name variant, ignoring!
+[21:07:59] [Thread-24/INFO]: Firing world change event: VIEWED_DIMENSION_SWITCH from ResourceKey[minecraft:dimension / minecraft:the_end] to ResourceKey[minecraft:dimension / minecraft:overworld]
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:07:59] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:07:59] [Render thread/INFO]: Stopping worker threads
+[21:07:59] [Render thread/INFO]: Started 10 worker threads
+[21:08:00] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 2097152
+[21:08:00] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 4194304
+[21:08:00] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$SyncResults]: Expanding scatter update buffer to 24720
+[21:08:00] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 2097152
+[21:08:00] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 4194304
+[21:08:09] [Active world cleaner/INFO]: [me.cx.vy.cl.VoxyInstance]: Shutting down idle world: -1282276199874746992
+[21:08:10] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:10] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:08:10] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:08:10] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:10] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:08:10] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:08:11] [Render thread/INFO]: Stopping worker threads
+[21:08:11] [Render thread/INFO]: Started 10 worker threads
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:08:11] [Render thread/INFO]: Stopping worker threads
+[21:08:11] [Render thread/INFO]: Started 10 worker threads
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:08:11] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:08:11] [Render thread/INFO]: Stopping worker threads
+[21:08:11] [Render thread/INFO]: Started 10 worker threads
+[21:08:52] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:52] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:08:52] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:08:52] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:52] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:08:52] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:08:53] [Render thread/INFO]: Stopping worker threads
+[21:08:53] [Render thread/INFO]: Started 10 worker threads
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:08:53] [Render thread/INFO]: Stopping worker threads
+[21:08:53] [Render thread/INFO]: Started 10 worker threads
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:08:53] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:08:53] [Render thread/INFO]: Stopping worker threads
+[21:08:53] [Render thread/INFO]: Started 10 worker threads
+[21:08:54] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 2097152
+[21:08:54] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 4194304
+[21:08:54] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 2097152
+[21:08:54] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 4194304
+[21:08:54] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$SyncResults]: Expanding scatter update buffer to 24720
+[21:09:11] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$SyncResults]: Expanding scatter update buffer to 24720
+[21:10:00] [Render thread/INFO]: [System] [CHAT] ? Command Assistant (Esc = Hide, Tab = Show & Next, Shift + Tab = Prev)
+[21:10:00] [Render thread/INFO]: [System] [CHAT] /home tp ... <home>
+[21:10:01] [Render thread/INFO]: Reloading pipeline on dimension change: minecraft:overworld => minecraft:the_end
+[21:10:01] [Render thread/INFO]: Destroying pipeline minecraft:overworld
+[21:10:01] [Thread-24/INFO]: Skipping dim switch world change event firing
+[21:10:01] [Render thread/INFO]: Creating pipeline for dimension minecraft:the_end
+[21:10:01] [Render thread/WARN]: Failed to resolve uniform inSulfurCaves, reason: Unknown variable: BIOME_SULFUR_CAVES ( = FunctionCall{smooth {[Number{56}, FunctionCall{if {[FunctionCall{in {[Id{biome}, Id{BIOME_SULFUR_CAVES}]} }, Number{1}, Number{0}]} }, Number{15}, Number{15}]} })
+java.lang.RuntimeException: Unknown variable: BIOME_SULFUR_CAVES
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveExpressionInternal(ExpressionResolver.java:225)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveCallExpressionInternal(ExpressionResolver.java:81)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveCallExpression(ExpressionResolver.java:140)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveExpressionInternal(ExpressionResolver.java:196)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveCallExpressionInternal(ExpressionResolver.java:81)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveCallExpression(ExpressionResolver.java:140)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveCallExpression(ExpressionResolver.java:127)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveExpressionInternal(ExpressionResolver.java:196)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveCallExpressionInternal(ExpressionResolver.java:81)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveCallExpression(ExpressionResolver.java:140)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveExpressionInternal(ExpressionResolver.java:196)
+	at knot//kroppeb.stareval.resolver.ExpressionResolver.resolveExpression(ExpressionResolver.java:50)
+	at knot//net.irisshaders.iris.uniforms.custom.CustomUniforms.<init>(CustomUniforms.java:60)
+	at knot//net.irisshaders.iris.uniforms.custom.CustomUniforms$Builder.build(CustomUniforms.java:332)
+	at knot//net.irisshaders.iris.uniforms.custom.CustomUniforms$Builder.build(CustomUniforms.java:343)
+	at knot//net.irisshaders.iris.pipeline.IrisRenderingPipeline.<init>(IrisRenderingPipeline.java:297)
+	at knot//net.irisshaders.iris.Iris.createPipeline(Iris.java:654)
+	at knot//net.irisshaders.iris.pipeline.PipelineManager.preparePipeline(PipelineManager.java:33)
+	at knot//net.minecraft.class_310.handler$dal000$iris$resetPipeline(class_310.java:17160)
+	at knot//net.minecraft.class_310.method_76796(class_310.java)
+	at knot//net.minecraft.class_310.method_1481(class_310.java:2214)
+	at knot//net.minecraft.class_634.method_11117(class_634.java:1282)
+	at knot//net.minecraft.class_2724.method_11782(class_2724.java:44)
+	at knot//net.minecraft.class_2724.method_65081(class_2724.java:9)
+	at knot//net.minecraft.class_11980$class_11981.method_74450(class_11980.java:55)
+	at knot//net.minecraft.class_11980.method_74449(class_11980.java:38)
+	at knot//net.minecraft.class_310.method_1523(class_310.java:1337)
+	at knot//net.minecraft.class_310.method_1514(class_310.java:966)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+[21:10:02] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:02] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:02] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:02] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:02] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:02] [Render thread/INFO]: [me.cx.vy.cl.VoxyInstance]: Creating new world engine: -1282276199874746992@670055826
+[21:10:02] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:02] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:03] [Render thread/INFO]: Stopping worker threads
+[21:10:03] [Render thread/INFO]: Started 10 worker threads
+[21:10:03] [Render thread/INFO]: Stopping worker threads
+[21:10:03] [Render thread/INFO]: Started 10 worker threads
+[21:10:03] [Render thread/INFO]: Starting [4] Placement Manager Daemon threads
+[21:10:03] [Render thread/INFO]: Loaded 2094 advancements
+[21:10:03] [Render thread/WARN]: Server side doesn't have XaeroLib installed! Resetting.
+[21:10:03] [Thread-24/INFO]: Firing world change event: ACTUAL_DIMENSION_SWITCH from null to ResourceKey[minecraft:dimension / minecraft:overworld]
+[21:10:03] [Render thread/WARN]: Error while parsing the block ID map entry for "block.10104":
+[21:10:03] [Render thread/WARN]: - The block minecraft:stone_slab has no property with the name variant, ignoring!
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:03] [Thread-24/INFO]: Firing world change event: VIEWED_DIMENSION_SWITCH from ResourceKey[minecraft:dimension / minecraft:overworld] to ResourceKey[minecraft:dimension / minecraft:the_end]
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:03] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:03] [Render thread/INFO]: Stopping worker threads
+[21:10:03] [Render thread/INFO]: Started 10 worker threads
+[21:10:05] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 2097152
+[21:10:05] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$SyncResults]: Expanding scatter update buffer to 24800
+[21:10:05] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$ComputeMemoryCopy]: Resizing scratch data buffer to: 4194304
+[21:10:05] [Async Node Manager/INFO]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager$SyncResults]: Expanding scatter update buffer to 37360
+[21:10:05] [Render thread/WARN]: [me.cx.vy.ct.ce.rg.hl.AsyncNodeManager]: Large amount of copies, lag will probably happen: 518
+[21:10:13] [Active world cleaner/INFO]: [me.cx.vy.cl.VoxyInstance]: Shutting down idle world: 931602549822164926
+[21:10:30] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:30] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:30] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:30] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:30] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:30] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:31] [Render thread/INFO]: Stopping worker threads
+[21:10:31] [Render thread/INFO]: Started 10 worker threads
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:31] [Render thread/INFO]: Stopping worker threads
+[21:10:31] [Render thread/INFO]: Started 10 worker threads
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:31] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:31] [Render thread/INFO]: Stopping worker threads
+[21:10:31] [Render thread/INFO]: Started 10 worker threads
+[21:10:44] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:44] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:44] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:44] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:44] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:44] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:45] [Render thread/INFO]: Stopping worker threads
+[21:10:45] [Render thread/INFO]: Started 10 worker threads
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:45] [Render thread/INFO]: Stopping worker threads
+[21:10:45] [Render thread/INFO]: Started 10 worker threads
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Creating Voxy render system
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.RenderPipelineFactory]: Creating voxy iris render pipeline
+[21:10:45] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Voxy render system created with 4294966272 geometry capacity, using pipeline 'IrisVoxyRenderPipeline' with renderer 'MDICSectionRenderer'
+[21:10:45] [Render thread/INFO]: Stopping worker threads
+[21:10:45] [Render thread/INFO]: Started 10 worker threads
+[21:10:47] [Render thread/INFO]: Stopping [1] Worker Daemon threads
+[21:10:47] [Render thread/INFO]: [voicechat] Clearing audio channels
+[21:10:47] [Render thread/INFO]: [voicechat] Disconnecting voicechat
+[21:10:47] [Render thread/INFO]: Xaero hud session finalized.
+[21:10:47] [Render thread/INFO]: Finalizing world map session...
+[21:10:47] [Thread-24/INFO]: World map cleaned normally!
+[21:10:47] [Thread-24/INFO]: Firing world change event: EXIT_WORLD from ResourceKey[minecraft:dimension / minecraft:the_end] to null
+[21:10:47] [Render thread/INFO]: World map session finalized.
+[21:10:47] [Render thread/INFO]: Stopping JEI
+[21:10:47] [Render thread/INFO]: Stopping JEI
+[21:10:47] [Render thread/INFO]: Sending Runtime Unavailable...
+[21:10:47] [Render thread/INFO]: Stopping JEI GUI
+[21:10:47] [Render thread/INFO]: Sending Runtime Unavailable took 480.6 microseconds
+[21:10:47] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:47] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down rendering
+[21:10:47] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Shutting down render pipeline
+[21:10:47] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Flushing download stream
+[21:10:47] [Render thread/INFO]: [me.cx.vy.ct.ce.VoxyRenderSystem]: Render shutdown completed
+[21:10:47] [Render thread/INFO]: Stopping worker threads
+[21:10:47] [Render thread/INFO]: [me.cx.vy.cl.VoxyInstance]: Shutting down voxy instance
+[21:10:48] [Render thread/INFO]: [me.cx.vy.cl.VoxyInstance]: Instance shutdown
+[21:10:48] [Render thread/WARN]: Unable to start LAN server detection: Network interface not configured for IPv4
+[21:10:48] [Render thread/INFO]: Stopping [4] Placement Manager Daemon threads
+[21:10:48] [Render thread/INFO]: Stopping [1] Worker Daemon threads
+[21:10:48] [Render thread/INFO]: Stopping [0] Placement Manager Daemon threads
+[21:10:48] [CullThread/INFO]: [STDOUT]: Shutting down culling task!
+[21:10:48] [Render thread/INFO]: Stopping [1] Worker Daemon threads
+[21:10:48] [Render thread/INFO]: Stopping!
+[21:10:48] [Render thread/INFO]: IAS: Closing IAS...
+[21:10:48] [Render thread/INFO]: IAS: Shutting down IAS executor...
+[21:10:48] [Render thread/INFO]: IAS: IAS executor shut down.
+[21:10:48] [Render thread/INFO]: IAS: IAS has been unloaded.
+[21:10:48] [Render thread/INFO]: Stopping [0] Placement Manager Daemon threads
+[21:10:48] [Render thread/INFO]: Stopping [1] Worker Daemon threads
+[21:10:48] [Render thread/INFO]: Client is closing, Concerto resources released.
+[21:10:49] [Ixeris Event Polling Thread/INFO]: Exiting event polling thread.

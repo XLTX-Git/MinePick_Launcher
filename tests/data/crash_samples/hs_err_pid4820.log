@@ -1,3 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
 # A fatal error has been detected by the Java Runtime Environment:
 #
 #  EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x00007ffb1a2c4d10, pid=4820, tid=14208

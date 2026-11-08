@@ -1,3 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
 ---- Minecraft Crash Report ----
 // Ouch. That hurt :(
 

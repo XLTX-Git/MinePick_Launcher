@@ -1,0 +1,42 @@
+---- Minecraft Crash Report ----
+// Why did you do that?
+Time: 2026-08-13 11:57:28
+Description: Initializing game
+java.lang.RuntimeException: Could not execute entrypoint stage 'client' due to errors, provided by 'notebot' at 'JP.MichiJP.notebot.bootstrap.NoteBotClientEntrypoint'!
+	at net.fabricmc.loader.impl.FabricLoaderImpl.lambda$invokeEntrypoints$0(FabricLoaderImpl.java:413)
+	at net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33)
+	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:411)
+	at net.fabricmc.loader.impl.game.minecraft.Hooks.startClient(Hooks.java:53)
+	at knot//net.minecraft.class_310.<init>(class_310.java:475)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.lang.ExceptionInInitializerError
+	at java.base/java.lang.Class.forName0(Native Method)
+	at java.base/java.lang.Class.forName(Class.java:467)
+	at java.base/java.lang.Class.forName(Class.java:458)
+	at knot//JP.MichiJP.notebot.bootstrap.NoteBotRuntime.invokeNoArg(NoteBotRuntime.java:73)
+	at knot//JP.MichiJP.notebot.bootstrap.NoteBotClientEntrypoint.onInitializeClient(NoteBotClientEntrypoint.java:15)
+	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409)
+	... 3 more
+Caused by: java.lang.IllegalStateException: Unable to create the NoteBot key mapping category identifier.
+	at knot//JP.MichiJP.NoteBot.NoteBotClient.createIdentifier(NoteBotClient.java:109)
+	at knot//JP.MichiJP.NoteBot.NoteBotClient.<clinit>(NoteBotClient.java:14)
+	... 9 more
+
+-- System Details --
+Details:
+	Minecraft Version: 1.21.11
+	Minecraft Version ID: 1.21.11
+	Operating System: Windows 11 (amd64) version 10.0
+	Java Version: 25.0.2, Oracle Corporation
+	Java VM Version: Java HotSpot(TM) 64-Bit Server VM (mixed mode, sharing), Oracle Corporation
+	Memory: 2425022472 bytes (2312 MiB) / 3221225472 bytes (3072 MiB) up to 6442450944 bytes (6144 MiB)
+	Launched Version: 1.21.11-Fabric_0.19.3
+	Backend API: Unknown
+	Is Modded: Definitely; Client brand changed to 'fabric'
+
+Fabric Mods:
+	carpet: Carpet Mod 1.4.194+v251223
+	fabricloader: Fabric Loader 0.19.3
+	minecraft: Minecraft 1.21.11
+	notebot: NoteBot 1.5.6
+	... (mod list shortened for this fixture)

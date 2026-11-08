@@ -1,3 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
 ---- Minecraft Crash Report ----
 // Embeddium instance tainted by mods: [oculus, embeddium_extra]
 // Please do not reach out for Embeddium support without removing these mods first.

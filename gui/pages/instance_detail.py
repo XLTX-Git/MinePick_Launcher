@@ -157,6 +157,7 @@ from launcher.net import downloader, http_cache
 from launcher.net.downloader import DownloadCancelled
 
 tr = i18n.tr
+log = logging.getLogger(__name__)
 
 # Stacked-page order. The sidebar owns the visual order; the stack is a sequence of pages only.
 TAB_OVERVIEW = 0
@@ -2316,7 +2317,13 @@ class InstanceDetail(QWidget):
         return page
 
     def _build_diagnosis(self) -> QWidget:
-        """Diagnosis and the live latest.log, merged into one page (two cards)."""
+        """Diagnosis and the live latest.log, merged into one page (two cards).
+
+        The result card shows the cause, the three-step certainty, at most three
+        evidence lines (file + line number) and the rule's action buttons. The raw
+        log card starts collapsed while a result is shown — the evidence is the
+        entry point, the full text is one click away.
+        """
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2328,10 +2335,34 @@ class InstanceDetail(QWidget):
         card_layout.addWidget(self.diagnosis_empty)
 
         self.diagnosis_code = QLabel("")
-        self.diagnosis_code.setObjectName("title")
+        self.diagnosis_code.setObjectName("hint")
         self.diagnosis_code.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.diagnosis_time = QLabel("")
         self.diagnosis_time.setObjectName("hint")
+        self.diagnosis_cause = QLabel("")
+        self.diagnosis_cause.setObjectName("title")
+        self.diagnosis_cause.setWordWrap(True)
+        self.diagnosis_cause.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.diagnosis_confidence = QLabel("")
+        self.diagnosis_confidence.setObjectName("hint")
+        self.diagnosis_suspect = QLabel("")
+        self.diagnosis_suspect.setObjectName("hint")
+        self.diagnosis_suspect.setWordWrap(True)
+        self.diagnosis_suspect.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.diagnosis_evidence = QLabel("")
+        self.diagnosis_evidence.setObjectName("hint")
+        self.diagnosis_evidence.setWordWrap(True)
+        self.diagnosis_evidence.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.diagnosis_evidence.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.diagnosis_evidence_title = QLabel(tr("diagnosis.section.evidence"))
+        self.diagnosis_evidence_title.setObjectName("hint")
+        self.diagnosis_evidence_title.setVisible(False)
         self.diagnosis_body = QLabel("")
         self.diagnosis_body.setObjectName("hint")
         self.diagnosis_body.setWordWrap(True)
@@ -2339,7 +2370,26 @@ class InstanceDetail(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.diagnosis_body.setAlignment(Qt.AlignmentFlag.AlignTop)
-        for widget in (self.diagnosis_code, self.diagnosis_time, self.diagnosis_body):
+
+        self.diagnosis_actions = QWidget()
+        self.diagnosis_actions_layout = QHBoxLayout(self.diagnosis_actions)
+        self.diagnosis_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.diagnosis_actions_layout.setSpacing(6)
+        self.diagnosis_actions_layout.addStretch(1)
+        self.diagnosis_action_buttons: list[QPushButton] = []
+
+        self._diagnosis_result_widgets = (
+            self.diagnosis_code,
+            self.diagnosis_time,
+            self.diagnosis_cause,
+            self.diagnosis_confidence,
+            self.diagnosis_suspect,
+            self.diagnosis_evidence_title,
+            self.diagnosis_evidence,
+            self.diagnosis_body,
+            self.diagnosis_actions,
+        )
+        for widget in self._diagnosis_result_widgets:
             widget.setVisible(False)
             card_layout.addWidget(widget)
 
@@ -2348,15 +2398,23 @@ class InstanceDetail(QWidget):
         self.diagnosis_copy_button = QPushButton(tr("instances.detail.diagnosis.copy"))
         self.diagnosis_copy_button.setObjectName("secondaryButton")
         self.diagnosis_copy_button.clicked.connect(self.copy_diagnosis)
+        self.raw_toggle = QPushButton(tr("instances.detail.diagnosis.raw_show"))
+        self.raw_toggle.setObjectName("secondaryButton")
+        self.raw_toggle.setAccessibleName(tr("instances.detail.diagnosis.raw_show"))
+        self.raw_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.raw_toggle.clicked.connect(self.toggle_raw_log)
+        self.raw_toggle.setVisible(False)
         self.diagnosis_reports_label = QLabel("")
         self.diagnosis_reports_label.setObjectName("hint")
         row.addWidget(self.diagnosis_copy_button)
+        row.addWidget(self.raw_toggle)
         row.addWidget(self.diagnosis_reports_label)
         row.addStretch(1)
         card_layout.addLayout(row)
         layout.addWidget(card)
 
         log_card, log_layout = self._make_card()
+        self.log_card = log_card
         log_layout.addWidget(self._card_heading("instances.detail.log.title"))
         self.log_path_label = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideLeft)
         self.log_path_label.setObjectName("hint")
@@ -2382,8 +2440,227 @@ class InstanceDetail(QWidget):
         layout.addStretch(1)
 
         self._diagnosis_lines: list[str] = []
+        self._live_diagnosis = None
         self.diagnosis_copy_button.setEnabled(False)
+        card.setAccessibleName(tr("instances.detail.tab.diagnosis"))
         return page
+
+    def toggle_raw_log(self) -> None:
+        """Reveal or hide the raw log card (collapsed by default while a result shows)."""
+        showing = self.log_card.isVisible()
+        self.log_card.setVisible(not showing)
+        key = (
+            "instances.detail.diagnosis.raw_show"
+            if showing
+            else "instances.detail.diagnosis.raw_hide"
+        )
+        self.raw_toggle.setText(tr(key))
+        self.raw_toggle.setAccessibleName(tr(key))
+
+    def _clear_diagnosis_actions(self) -> None:
+        for button in self.diagnosis_action_buttons:
+            self.diagnosis_actions_layout.removeWidget(button)
+            button.hide()
+            button.setParent(None)
+            button.deleteLater()
+        self.diagnosis_action_buttons.clear()
+
+    def _analyze_instance(self):
+        """Run the local knowledge base over this instance's logs (never raises)."""
+        if self.resolved is None or self.instance_id is None:
+            return None
+        from launcher.diagnostics import (
+            CrashLogSet,
+            CrashModIndex,
+            CrashStackAnalyzer,
+            DiagnosisContext,
+            diagnose,
+        )
+
+        try:
+            context = DiagnosisContext(
+                version_id=self.instance_id,
+                game_dir=self.resolved.game_dir,
+                launch_dir=self.resolved.launch_dir,
+                instance=self.instance,
+                mods_dir=self.resolved.mods_dir,
+                memory_gb=self.resolved.memory_gb,
+                java_path=self.resolved.java_path,
+                # Only this instance's own logs: the launcher's shared log would
+                # otherwise explain a crash that happened in another instance.
+                launcher_logs_dir=instance_dir(self.game_dir, self.instance_id)
+                / ".no-launcher-logs",
+            )
+            log_set = CrashLogSet.from_context(context)
+            index = CrashModIndex.scan(self.resolved.mods_dir)
+            stack = CrashStackAnalyzer(index).analyze(log_set.logs)
+            return diagnose(
+                context,
+                logs=list(log_set.logs),
+                mod_index=index,
+                stack=stack,
+            )
+        except Exception:
+            log.exception("diagnostics: the instance analysis failed")
+            return None
+
+    def _render_live_diagnosis(self, diagnosis) -> None:
+        """Fill the result card from a diagnosis (cause / certainty / evidence / actions)."""
+        primary = diagnosis.primary
+        self._live_diagnosis = diagnosis
+        self.diagnosis_actions.setVisible(False)
+        self._clear_diagnosis_actions()
+        self.diagnosis_code.setText(diagnosis.code)
+        self.diagnosis_cause.setText(tr(primary.cause))
+        self.diagnosis_confidence.setText(
+            tr("diagnosis.confidence", tr(f"diagnosis.certainty.{primary.certainty}"))
+        )
+        suspect = diagnosis.facts.suspect_text
+        if suspect and suspect != "-":
+            file = diagnosis.facts.suspect_file
+            name = f"{suspect} · {file}" if file and file != "-" else suspect
+            self.diagnosis_suspect.setText(tr("instances.detail.diagnosis.suspect", name))
+            self.diagnosis_suspect.setVisible(True)
+        else:
+            self.diagnosis_suspect.clear()
+            self.diagnosis_suspect.setVisible(False)
+
+        evidence_lines = []
+        ordered = sorted(primary.evidence, key=lambda item: item.line_number or 0)
+        for item in ordered[:3]:
+            text = item.line.strip()
+            if len(text) > 220:
+                text = text[:217] + "…"
+            evidence_lines.append(f"{item.location}  {text}")
+        self.diagnosis_evidence.setText("\n".join(evidence_lines))
+        self.diagnosis_evidence.setVisible(bool(evidence_lines))
+        self.diagnosis_evidence_title.setVisible(bool(evidence_lines))
+
+        for action in primary.actions:
+            button = self._action_button(action, primary)
+            if button is not None:
+                self.diagnosis_actions_layout.insertWidget(
+                    self.diagnosis_actions_layout.count() - 1, button
+                )
+                self.diagnosis_action_buttons.append(button)
+        self.diagnosis_actions.setVisible(bool(self.diagnosis_action_buttons))
+
+        self._diagnosis_lines = []
+        from launcher.diagnostics import render_lines
+
+        try:
+            self._diagnosis_lines = list(render_lines(diagnosis, tr))
+        except Exception:
+            log.exception("diagnostics: could not render the diagnosis summary")
+        self.diagnosis_body.clear()
+        self.diagnosis_body.setVisible(False)
+        self.diagnosis_time.clear()
+        self.diagnosis_time.setVisible(False)
+        self.diagnosis_empty.setVisible(False)
+        self.diagnosis_copy_button.setEnabled(bool(self._diagnosis_lines))
+
+    def _action_button(self, action, primary) -> QPushButton | None:
+        """One clickable action; the knowledge base only describes it, this runs it."""
+        label = tr(action.i18n_key, *action.args)
+        if action.kind == "disable_mod":
+            target = self._mod_action_target(action.param("mod"))
+            if target is None:
+                return None
+            button = QPushButton(label)
+            button.setObjectName("secondaryButton")
+            button.setAccessibleName(label)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(partial(self._disable_mod, target))
+            return button
+        if action.kind == "open_mods":
+            button = QPushButton(label)
+            button.setObjectName("secondaryButton")
+            button.setAccessibleName(label)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(self._open_mods_folder)
+            return button
+        if action.kind == "set_memory":
+            button = QPushButton(label)
+            button.setObjectName("secondaryButton")
+            button.setAccessibleName(label)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                partial(self._apply_suggested_memory, action.param("memory"))
+            )
+            return button
+        if action.kind == "open_help":
+            button = QPushButton(label)
+            button.setObjectName("secondaryButton")
+            button.setAccessibleName(label)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(partial(self._show_help, primary))
+            return button
+        return None
+
+    def _mod_action_target(self, name: str) -> Path | None:
+        if not name or name == "-" or self.resolved is None:
+            return None
+        target = self.resolved.mods_dir / name
+        try:
+            return target if target.is_file() else None
+        except OSError:
+            return None
+
+    def _open_mods_folder(self) -> None:
+        if self.resolved is None:
+            return
+        target = self.resolved.mods_dir
+        if not target.is_dir():
+            target = self.resolved.launch_dir
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            set_app_status(
+                self, tr("instances.detail.diagnosis.open_failed", str(target)), "error"
+            )
+
+    def _disable_mod(self, target: Path) -> None:
+        if not inwindow_dialog.question(
+            self,
+            tr("instances.detail.diagnosis.disable.title"),
+            tr("instances.detail.diagnosis.disable.msg", target.name),
+        ):
+            return
+        disabled = target.with_name(target.name + ".disabled")
+        try:
+            target.replace(disabled)
+        except OSError as exc:
+            set_app_status(
+                self, tr("instances.detail.diagnosis.disable_failed", str(exc)), "error"
+            )
+            return
+        set_app_status(self, tr("instances.detail.diagnosis.disabled", target.name))
+        self.reload()
+
+    def _apply_suggested_memory(self, value: str) -> None:
+        if self._require_instance() is None:
+            return
+        try:
+            memory = float(value)
+        except ValueError:
+            return
+        try:
+            set_instance_settings(
+                self.instance_id, game_dir=self.game_dir, memory_gb=memory
+            )
+        except (InstancesError, OSError) as exc:
+            set_app_status(
+                self, tr("instances.detail.diagnosis.memory_failed", str(exc)), "error"
+            )
+            return
+        set_app_status(self, tr("instances.detail.diagnosis.memory_set", f"{memory:g}"))
+        self.reload()
+
+    def _show_help(self, primary) -> None:
+        """Local help: the rule's own cause + advice, never a web request."""
+        advice = "\n".join(tr(key, *args) for key, args in primary.advice)
+        text = tr(primary.cause) + (("\n\n" + advice) if advice else "")
+        inwindow_dialog.information(
+            self, tr("instances.detail.diagnosis.help.title"), text
+        )
 
     def _build_modify(self) -> QWidget:
         """修改: what the instance runs now, and the two ways to change the core it runs.
@@ -2532,6 +2809,16 @@ class InstanceDetail(QWidget):
             self.log_empty.setVisible(True)
             return
         log_path = self.resolved.launch_dir / "logs" / "latest.log"
+        if not log_path.is_file():
+            # A crash report is the other raw log the diagnosis points into; when
+            # latest.log is already rotated away, show the newest report instead.
+            reports = sorted(
+                (self.resolved.launch_dir / "crash-reports").glob("crash-*.txt"),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+            if reports:
+                log_path = reports[0]
         self.log_path_label.setText(str(log_path))
         try:
             text = log_path.read_text(encoding="utf-8", errors="replace")
@@ -2544,7 +2831,13 @@ class InstanceDetail(QWidget):
         self.log_empty.setVisible(not text)
 
     def refresh_diagnosis(self) -> None:
-        """Show the diagnosis recorded for this instance, plus its crash report count."""
+        """Analyze this instance's own logs, falling back to the recorded summary.
+
+        The live pass is what makes the card real: it runs the current log set
+        through the knowledge base and shows cause, certainty, evidence with
+        line numbers and the rule's actions. The recorded ``diagnosis.json``
+        remains the fallback for an instance whose logs were already cleaned up.
+        """
         from gui.crash_viewer import collect_crash_reports
         from gui.dialogs.crash_dialog import load_recorded_diagnosis
 
@@ -2552,33 +2845,77 @@ class InstanceDetail(QWidget):
             return
         record = load_recorded_diagnosis(instance_dir(self.game_dir, self.instance_id))
         has_record = bool(record and record.get("code"))
-        self.diagnosis_empty.setVisible(not has_record)
-        for widget in (self.diagnosis_code, self.diagnosis_time, self.diagnosis_body):
-            widget.setVisible(has_record)
-        self.diagnosis_copy_button.setEnabled(has_record)
-        self._diagnosis_lines = []
-        if has_record:
-            self.diagnosis_code.setText(str(record.get("code", "")))
-            recorded_at = record.get("recorded_at")
-            stamp = ""
-            if recorded_at:
-                try:
-                    stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(recorded_at)))
-                except (TypeError, ValueError, OSError):
-                    stamp = ""
-            self.diagnosis_time.setText(tr("instances.detail.diagnosis.recorded", stamp))
-            self._diagnosis_lines = [str(line) for line in record.get("lines", []) if str(line)]
-            self.diagnosis_body.setText("\n".join(self._diagnosis_lines))
+        live = self._analyze_instance()
+        has_live = bool(
+            live is not None and live.analysable and not live.primary.fallback
+        )
+
+        self._refresh_log()
+        if has_live:
+            self._render_live_diagnosis(live)
+            self.diagnosis_empty.setVisible(False)
+            for widget in (
+                self.diagnosis_code,
+                self.diagnosis_cause,
+                self.diagnosis_confidence,
+                self.diagnosis_evidence,
+                self.diagnosis_actions,
+            ):
+                widget.setVisible(True)
+            self.diagnosis_code.setVisible(True)
+            self.diagnosis_confidence.setVisible(True)
+            has_log = bool(self.log_view.toPlainText())
+            # A crash report / hs_err is the "raw log" a result points into, so it starts
+            # collapsed. A diagnosis made from latest.log alone keeps the log card open:
+            # there is no crash report to expand, and the log is the only source shown.
+            from launcher.diagnostics import KIND_CRASH_REPORT, KIND_HS_ERR
+
+            collapse = any(
+                log.kind in (KIND_CRASH_REPORT, KIND_HS_ERR) for log in live.logs
+            )
+            self.log_card.setVisible(not (has_log and collapse))
+            self.raw_toggle.setVisible(has_log and collapse)
+            self.raw_toggle.setText(tr("instances.detail.diagnosis.raw_show"))
+            self.raw_toggle.setAccessibleName(
+                tr("instances.detail.diagnosis.raw_show")
+            )
         else:
-            self.diagnosis_code.clear()
-            self.diagnosis_time.clear()
-            self.diagnosis_body.clear()
+            self._live_diagnosis = None
+            self._clear_diagnosis_actions()
+            for widget in self._diagnosis_result_widgets:
+                widget.setVisible(False)
+            self.diagnosis_empty.setVisible(not has_record)
+            self.log_card.setVisible(True)
+            self.raw_toggle.setVisible(False)
+            self.diagnosis_copy_button.setEnabled(has_record)
+            self._diagnosis_lines = []
+            if has_record:
+                self.diagnosis_code.setText(str(record.get("code", "")))
+                recorded_at = record.get("recorded_at")
+                stamp = ""
+                if recorded_at:
+                    try:
+                        stamp = time.strftime(
+                            "%Y-%m-%d %H:%M", time.localtime(float(recorded_at))
+                        )
+                    except (TypeError, ValueError, OSError):
+                        stamp = ""
+                self.diagnosis_time.setText(tr("instances.detail.diagnosis.recorded", stamp))
+                self._diagnosis_lines = [
+                    str(line) for line in record.get("lines", []) if str(line)
+                ]
+                self.diagnosis_body.setText("\n".join(self._diagnosis_lines))
+                for widget in (self.diagnosis_code, self.diagnosis_time, self.diagnosis_body):
+                    widget.setVisible(True)
+            else:
+                self.diagnosis_code.clear()
+                self.diagnosis_time.clear()
+                self.diagnosis_body.clear()
         try:
             count = len(collect_crash_reports(self.effective_dir()))
         except OSError:
             count = 0
         self.diagnosis_reports_label.setText(tr("instances.detail.diagnosis.reports", count))
-        self._refresh_log()
 
     def effective_dir(self) -> Path:
         """The directory the game actually uses for this instance (its own folder when isolated)."""

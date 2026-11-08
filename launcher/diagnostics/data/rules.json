@@ -472,7 +472,11 @@
           "NoClassDefFoundError",
           "AbstractMethodError",
           "IncompatibleClassChangeError",
-          "Unsupported class file major version"
+          "Unsupported class file major version",
+          "InaccessibleObjectException",
+          "Unable to make",
+          "module java.base does not \"opens\"",
+          "--add-opens"
         ],
         "none": [
           "Missing or unsupported mandatory dependencies",

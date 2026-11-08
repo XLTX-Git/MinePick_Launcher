@@ -1,0 +1,12 @@
+# synthetic sample: shaped after a real log, not captured from one
+# There is insufficient memory for the Java Runtime Environment to continue.
+# Native memory allocation (malloc) failed to allocate 1048576 bytes for Chunk::new
+# Possible reasons:
+#   The system is out of physical RAM or swap space
+#   The process is running with CompressedOops or CompressedClassSpaceSize
+# 32-Bit Server VM (25.0.2+9-39) for windows-x86 JRE (1.8.0_402-b06), built on Dec 12 2025
+# Java VM: Java HotSpot(TM) Client VM (25.0.2+9-39, mixed mode, sharing)
+# Core dump will be written. Default location: C:/Users/example/.minecraft/hs_err_pid3312.mdmp
+---------------  S U M M A R Y ------------
+Command Line: -Xmx4096m -Djava.library.path=natives net.fabricmc.loader.impl.launch.knot.KnotClient
+Host: Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz, 8 G,  Windows 11 , 64 bit Build 26100

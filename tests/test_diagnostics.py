@@ -164,7 +164,9 @@ def _write_rules(ws_tmp: Path, rules: list[dict]) -> Path:
 def test_shipped_rule_file_is_valid() -> None:
     assert RULE_FILE.is_file(), f"the knowledge base is missing: {RULE_FILE}"
     rules = load_rules()
-    assert 12 <= len(rules) <= 15, f"expected 12-15 rules, found {len(rules)}"
+    assert 25 <= len(rules) <= 45, f"expected 25-45 rules, found {len(rules)}"
+    crash_rules = [rule for rule in rules if rule.phase != "launcher"]
+    assert 25 <= len(crash_rules) <= 30, f"expected 25-30 game-side rules, found {len(crash_rules)}"
     codes = [rule.code for rule in rules]
     assert len(codes) == len(set(codes)), "duplicate codes in the shipped rule file"
     assert all(rule.cause.startswith("diagnosis.") for rule in rules)

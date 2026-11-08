@@ -1,3 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
 [25Sep2026 21:09:58.221] [main/INFO] [mixin/]: SpongePowered MIXIN Subsystem Version=0.8.5 Source=file:/C:/Users/Test/AppData/Roaming/.minecraft/libraries/org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar
 [25Sep2026 21:10:01.884] [main/ERROR] [mixin/]: Mixin apply failed sodium.mixins.json:features.render.world.MixinLevelRenderer -> net.minecraft.client.renderer.LevelRenderer: org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [sodium.mixins.json:features.render.world.MixinLevelRenderer] from phase [DEFAULT] in config [sodium.mixins.json] FAILED during APPLY
 org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [sodium.mixins.json:features.render.world.MixinLevelRenderer] from phase [DEFAULT] in config [sodium.mixins.json] FAILED during APPLY

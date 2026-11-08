@@ -1,0 +1,10 @@
+# synthetic sample: shaped after a real log, not captured from one
+[01Jan2026 12:00:00.000] [main/INFO] [FabricLoader/]: Loading 42 mods:
+	- fabric-api 0.92.2+1.20.1
+	- sodium 0.5.4+mc1.20.1
+[01Jan2026 12:00:03.100] [Render thread/INFO] [Minecraft/]: Backend library: LWJGL version 3.3.3
+[01Jan2026 12:00:05.240] [Render thread/ERROR] [Minecraft/]: Failed to render chunk
+java.lang.OutOfMemoryError: Java heap space
+	at net.minecraft.client.renderer.chunk.RenderChunk.rebuild(RenderChunk.java:214)
+	at net.minecraft.client.renderer.LevelRenderer.renderChunks(LevelRenderer.java:1411)
+	at java.base/java.lang.Thread.run(Thread.java:840)

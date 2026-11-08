@@ -1,3 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
 [25Sep2026 21:06:31.220] [main/ERROR] [ne.ne.fm.loading.ModSorter/]: Found duplicate mods:
 	mods/embeddium-0.3.31+mc1.20.1.jar
 	mods/rubidium-0.7.1.jar

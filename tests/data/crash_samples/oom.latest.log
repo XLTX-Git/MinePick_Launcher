@@ -1,3 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
 [25Sep2026 21:10:03.114] [main/INFO] [LaunchServiceHandler/]: Loading 42 mods
 [25Sep2026 21:10:03.240] [main/INFO] [FabricLoader/]: Loading 42 mods:
 	- fabric-api 0.92.2+1.20.1

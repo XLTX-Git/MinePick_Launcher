@@ -1,0 +1,4 @@
+# synthetic sample: shaped after a real log, not captured from one
+2026-01-01 12:04:00 INFO    launcher.install: 检测到 Forge 版本 1.20.1-forge-47.4.22
+2026-01-01 12:04:01 WARN    launcher.install: Forge installation is incomplete: libraries/net/minecraftforge/forge/1.20.1-47.4.22 missing
+2026-01-01 12:04:01 ERROR   launcher.launch: 启动失败

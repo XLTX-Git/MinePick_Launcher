@@ -1,0 +1,5 @@
+# synthetic sample: shaped after a real log, not captured from one
+[01Jan2026 12:03:00.000] [main/INFO] [FabricLoader/]: Loading 12 mods:
+[01Jan2026 12:03:02.000] [Render thread/INFO] [Minecraft/]: Setting user: Player
+[01Jan2026 12:03:05.000] [Render thread/INFO] [Minecraft/]: Started integrated server
+[01Jan2026 12:03:08.000] [Render thread/INFO] [Minecraft/]: Stopping!
