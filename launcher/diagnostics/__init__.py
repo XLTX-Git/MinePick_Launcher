@@ -22,6 +22,9 @@ Layering::
     launcher/diagnostics/
       collector.py  find the candidate logs of one launch (freshness gate)
       prepare.py    classify + window + de-duplicate + decode (BOM/UTF-8/GB18030)
+      logset.py     CrashLogSet: kinds, mtimes, line numbers, newest-only matching
+      modindex.py   CrashModIndex: jar metadata, package/name maps, mods anomalies
+      stack.py      CrashStackAnalyzer: exception chain, frames, mixin failures
       rules.py      load and validate data/rules.json (plain data, strict schema)
       facts.py      environment facts (exit code, Java, memory, loader, mods)
       engine.py     phase ladder -> merge by cause -> rank -> fallback
@@ -57,6 +60,7 @@ returns a diagnosis — ``MPL-Crash-0000`` (nothing matched) or
 
 from __future__ import annotations
 
+from launcher.diagnostics.causes import CAUSE_KEYS, CAUSES, cause_key
 from launcher.diagnostics.codes import (
     CRASH_PREFIX,
     LAUNCH_PREFIX,
@@ -70,10 +74,12 @@ from launcher.diagnostics.collector import (
 )
 from launcher.diagnostics.context import DiagnosisContext
 from launcher.diagnostics.engine import (
+    CONFIDENCE_CERTAINTY,
     PHASES,
     Diagnosis,
     Evidence,
     Finding,
+    ResolvedAction,
     diagnose,
 )
 from launcher.diagnostics.facts import (
@@ -82,6 +88,13 @@ from launcher.diagnostics.facts import (
     collect_facts,
     derive_version_facts,
 )
+from launcher.diagnostics.logset import (
+    CrashLogSet,
+    build_virtual_logs,
+    environment_logs,
+    virtual_log,
+)
+from launcher.diagnostics.modindex import CrashModIndex, JarMod, ModAnomaly
 from launcher.diagnostics.prepare import (
     KIND_CRASH_REPORT,
     KIND_DEBUG,
@@ -89,8 +102,11 @@ from launcher.diagnostics.prepare import (
     KIND_GAME,
     KIND_HS_ERR,
     KIND_LAUNCHER,
+    KIND_MODS,
+    KIND_STACK,
     KINDS,
     MATCHABLE_KINDS,
+    VIRTUAL_KINDS,
     WINDOWS,
     PreparedLog,
     decode_bytes,
@@ -106,16 +122,29 @@ from launcher.diagnostics.report import (
     sanitize,
 )
 from launcher.diagnostics.rules import (
+    ACTION_TYPES,
     RULE_FILE,
     Matcher,
     Rule,
+    RuleAction,
     RulesError,
     load_rules,
     referenced_keys,
     validate_rules,
 )
+from launcher.diagnostics.stack import (
+    CrashException,
+    CrashStack,
+    CrashStackAnalyzer,
+    MixinFailure,
+    StackFrame,
+)
 
 __all__ = [
+    "ACTION_TYPES",
+    "CAUSES",
+    "CAUSE_KEYS",
+    "CONFIDENCE_CERTAINTY",
     "CRASH_PREFIX",
     "ENV_FILENAME",
     "KINDS",
@@ -125,6 +154,8 @@ __all__ = [
     "KIND_GAME",
     "KIND_HS_ERR",
     "KIND_LAUNCHER",
+    "KIND_MODS",
+    "KIND_STACK",
     "LAUNCH_PREFIX",
     "MATCHABLE_KINDS",
     "MODS_FILENAME",
@@ -133,24 +164,39 @@ __all__ = [
     "RESERVED_CODES",
     "RULE_FILE",
     "UNKNOWN_CODE",
+    "VIRTUAL_KINDS",
     "WINDOWS",
+    "CrashException",
+    "CrashLogSet",
+    "CrashModIndex",
+    "CrashStack",
+    "CrashStackAnalyzer",
     "Diagnosis",
     "DiagnosisContext",
     "EnvironmentFacts",
     "Evidence",
     "Finding",
+    "JarMod",
     "LogCandidate",
     "Matcher",
+    "MixinFailure",
+    "ModAnomaly",
     "ModFact",
     "PreparedLog",
+    "ResolvedAction",
     "Rule",
+    "RuleAction",
     "RulesError",
+    "StackFrame",
+    "build_virtual_logs",
+    "cause_key",
     "collect_candidates",
     "collect_facts",
     "decode_bytes",
     "derive_version_facts",
     "diagnose",
     "environment_lines",
+    "environment_logs",
     "export_report",
     "load_rules",
     "mods_lines",
@@ -159,4 +205,5 @@ __all__ = [
     "render_lines",
     "sanitize",
     "validate_rules",
+    "virtual_log",
 ]

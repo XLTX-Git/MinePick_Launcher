@@ -31,19 +31,34 @@ empty and never has to invent wording of its own.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from launcher.diagnostics.causes import cause_key
 from launcher.diagnostics.codes import NOTHING_TO_ANALYSE_CODE, UNKNOWN_CODE
 from launcher.diagnostics.context import DiagnosisContext
 from launcher.diagnostics.facts import EnvironmentFacts, collect_facts
+from launcher.diagnostics.logset import (
+    CrashLogSet,
+    build_virtual_logs,
+    environment_logs,
+)
+from launcher.diagnostics.modindex import CrashModIndex
 from launcher.diagnostics.prepare import PreparedLog, prepare_logs
-from launcher.diagnostics.rules import Rule, RulesError, load_rules, split_advice
+from launcher.diagnostics.rules import (
+    Rule,
+    RulesError,
+    load_rules,
+    split_advice,
+)
+from launcher.diagnostics.stack import CrashStack, CrashStackAnalyzer
 
 _LOGGER = logging.getLogger(__name__)
 
 #: Ordered phase ladder (the launcher side always runs first).
 PHASES = ("launcher", "fatal", "primary", "secondary")
 CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2}
+#: Rule confidence -> the three certainty steps the UI shows (certain / suspected / info).
+CONFIDENCE_CERTAINTY = {"high": "certain", "medium": "suspected", "low": "info"}
 
 MAX_EVIDENCE_LINES = 3
 
@@ -65,6 +80,37 @@ class Evidence:
     log_kind: str
     line: str
     matched: str  # the substring / regex that hit this line
+    line_number: int | None = None  # 1-based line in the original file
+
+    @property
+    def location(self) -> str:
+        """``crash-….txt:37`` when the line number is known, else the file name."""
+        if self.line_number:
+            return f"{self.log_name}:{self.line_number}"
+        return self.log_name
+
+
+@dataclass(frozen=True)
+class ResolvedAction:
+    """An action a rule suggests, with its ``{}`` placeholders resolved."""
+
+    kind: str
+    params: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def i18n_key(self) -> str:
+        return f"diagnosis.action.{self.kind}"
+
+    def param(self, name: str) -> str:
+        for key, value in self.params:
+            if key == name:
+                return value
+        return ""
+
+    @property
+    def args(self) -> tuple[str, ...]:
+        """The parameter values in the order the language templates use them."""
+        return tuple(self.param(name) for name in ("mod", "memory", "topic") if self.param(name))
 
 
 @dataclass(frozen=True)
@@ -80,10 +126,16 @@ class Finding:
     codes: tuple[str, ...]  # every merged rule code (first one is `code`)
     order: int  # best rule order inside the phase, for stable sorting
     fallback: bool = False
+    actions: tuple[ResolvedAction, ...] = ()
 
     @property
     def rules_merged(self) -> bool:
         return len(self.codes) > 1
+
+    @property
+    def certainty(self) -> str:
+        """The three-step user-facing certainty (certain / suspected / info)."""
+        return CONFIDENCE_CERTAINTY.get(self.confidence, "info")
 
 
 @dataclass(frozen=True)
@@ -98,6 +150,8 @@ class Diagnosis:
     facts: EnvironmentFacts
     exit_code: int | None
     analysable: bool
+    mod_index: CrashModIndex | None = None
+    stack: CrashStack | None = None
 
     @property
     def primary(self) -> Finding:
@@ -134,13 +188,22 @@ def _evidence_of(hit: _Hit) -> list[Evidence]:
             if matcher.hits(line):
                 matched = matcher.pattern
                 break
+        index = next(
+            (position for position, text in enumerate(hit.log.lines) if text == line), -1
+        )
         out.append(
-            Evidence(log_name=hit.log.name, log_kind=hit.log.kind, line=line, matched=matched)
+            Evidence(
+                log_name=hit.log.name,
+                log_kind=hit.log.kind,
+                line=line,
+                matched=matched,
+                line_number=hit.log.number_at(index) if index >= 0 else None,
+            )
         )
     return out
 
 
-def _run_ladder(rules: tuple[Rule, ...], logs: list[PreparedLog]) -> list[_Hit]:
+def _run_ladder(rules: tuple[Rule, ...], logs: tuple[PreparedLog, ...]) -> list[_Hit]:
     """Walk the phase ladder; stop after a phase whose hit asked to stop."""
     hits: list[_Hit] = []
     for phase in PHASES:
@@ -149,7 +212,7 @@ def _run_ladder(rules: tuple[Rule, ...], logs: list[PreparedLog]) -> list[_Hit]:
             if rule.phase != phase:
                 continue
             for log in logs:
-                if log.kind != rule.source:
+                if log.kind not in rule.sources:
                     continue
                 lines = rule.match_lines(log.lines)
                 if lines is None:
@@ -164,11 +227,38 @@ def _run_ladder(rules: tuple[Rule, ...], logs: list[PreparedLog]) -> list[_Hit]:
     return hits
 
 
+def _resolve_actions(rule: Rule, facts: EnvironmentFacts) -> tuple[ResolvedAction, ...]:
+    resolved: list[ResolvedAction] = []
+    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+    for action in rule.actions:
+        params = tuple(
+            (key, value.format_map(_FactMap(facts)))
+            for key, value in action.params
+        )
+        key = (action.kind, params)
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(ResolvedAction(kind=action.kind, params=params))
+    return tuple(resolved)
+
+
+class _FactMap(dict):
+    """Lazy placeholder map: every name an action uses resolves through the facts."""
+
+    def __init__(self, facts: EnvironmentFacts) -> None:
+        super().__init__()
+        self._facts = facts
+
+    def __missing__(self, key: str) -> str:
+        return self._facts.placeholder(key)
+
+
 def _merge(hits: list[_Hit], facts: EnvironmentFacts) -> tuple[Finding, ...]:
     """Merge hits that share a cause (union of evidence) and rank the candidates."""
     groups: dict[str, list[_Hit]] = {}
     for hit in hits:
-        groups.setdefault(hit.rule.cause, []).append(hit)
+        groups.setdefault(cause_key(hit.rule.cause), []).append(hit)
 
     findings: list[Finding] = []
     for cause, group in groups.items():
@@ -176,13 +266,24 @@ def _merge(hits: list[_Hit], facts: EnvironmentFacts) -> tuple[Finding, ...]:
         codes: dict[str, None] = {}
         evidence: list[Evidence] = []
         seen_evidence: set[tuple[str, str]] = set()
+        seen_locations: set[tuple[str, int | str]] = set()
         for hit in sorted(group, key=_sort_key):
             codes.setdefault(hit.rule.code, None)
             for item in _evidence_of(hit):
                 key = (item.log_name, item.line)
                 if key in seen_evidence:
                     continue
+                # A real line and its synthesized stack view share the same file:line;
+                # show that location once, preferring the real text (it comes first).
+                location: tuple[str, int | str] = (
+                    (item.log_name, item.line_number)
+                    if item.line_number
+                    else (item.log_name, item.line)
+                )
+                if location in seen_locations:
+                    continue
                 seen_evidence.add(key)
+                seen_locations.add(location)
                 evidence.append(item)
         advice: list[AdviceItem] = []
         for key, args in split_advice(best.rule.advice):
@@ -193,11 +294,12 @@ def _merge(hits: list[_Hit], facts: EnvironmentFacts) -> tuple[Finding, ...]:
                 code=best.rule.code,
                 phase=best.rule.phase,
                 confidence=best.rule.confidence,
-                cause=cause,
+                cause=cause_key(cause),
                 advice=tuple(advice),
                 evidence=tuple(evidence),
                 codes=tuple(codes),
                 order=best.rule.order,
+                actions=_resolve_actions(best.rule, facts),
             )
         )
     findings.sort(
@@ -265,11 +367,14 @@ def diagnose(
     rules: tuple[Rule, ...] | None = None,
     facts: EnvironmentFacts | None = None,
     logs: list[PreparedLog] | None = None,
+    mod_index: CrashModIndex | None = None,
+    stack: CrashStack | None = None,
 ) -> Diagnosis:
     """Diagnose one launch (pure, local, no Qt and no network).
 
-    `rules` / `facts` / `logs` are injection points for tests; production callers
-    pass only the context.
+    `rules` / `facts` / `logs` / `mod_index` / `stack` are injection points for
+    tests; production callers pass only the context. The three analysis layers
+    run in a fixed order: logs -> mod index -> stack -> virtual logs -> rules.
     """
     resolved_rules: tuple[Rule, ...]
     if rules is not None:
@@ -285,14 +390,35 @@ def diagnose(
     resolved_facts = facts if facts is not None else collect_facts(context)
     resolved_logs = logs if logs is not None else prepare_logs(context)
 
-    matchable = [log for log in resolved_logs if log.is_matchable]
-    hits = _run_ladder(resolved_rules, matchable)
+    resolved_index = mod_index if mod_index is not None else CrashModIndex.from_context(context)
+    resolved_stack = (
+        stack if stack is not None else CrashStackAnalyzer(resolved_index).analyze(resolved_logs)
+    )
+    resolved_facts = replace(
+        resolved_facts,
+        suspect_id=resolved_stack.suspect_id,
+        suspect_name=resolved_stack.suspect_name,
+        suspect_file=resolved_stack.suspect_file,
+        suspect_frame=(
+            resolved_stack.suspect_frame.describe() if resolved_stack.suspect_frame else ""
+        ),
+    )
+    log_set = CrashLogSet.from_prepared(
+        resolved_logs,
+        virtual_logs=(
+            *build_virtual_logs(resolved_index, resolved_stack),
+            *environment_logs(context),
+        ),
+    )
+
+    real_logs = log_set.real_matching_logs()
+    hits = _run_ladder(resolved_rules, log_set.matching_logs())
     findings = _merge(hits, resolved_facts)
-    analysable = bool(matchable)
+    analysable = bool(real_logs)
     if not findings:
         findings = (_fallback(analysable=analysable),)
 
-    _log_findings(findings, matchable)
+    _log_findings(findings, real_logs)
     return Diagnosis(
         code=findings[0].code,
         phase=findings[0].phase,
@@ -302,4 +428,6 @@ def diagnose(
         facts=resolved_facts,
         exit_code=context.exit_code,
         analysable=analysable,
+        mod_index=resolved_index,
+        stack=resolved_stack,
     )

@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from launcher import paths
+from launcher.diagnostics.causes import is_known_cause
 from launcher.diagnostics.codes import validate_code
 from launcher.diagnostics.prepare import MATCHABLE_KINDS
 
@@ -56,7 +57,19 @@ PHASES = ("launcher", "fatal", "primary", "secondary")
 CONFIDENCES = ("high", "medium", "low")
 SOURCES = MATCHABLE_KINDS
 
-RULE_KEYS = frozenset({"code", "phase", "source", "match", "cause", "advice", "confidence", "stop"})
+#: Action types a rule may hand to the UI (the core only describes them).
+#: name -> required parameter names (``{}`` placeholders are resolved from facts).
+ACTION_TYPES: dict[str, frozenset[str]] = {
+    "disable_mod": frozenset({"mod"}),
+    "open_mods": frozenset(),
+    "set_memory": frozenset({"memory"}),
+    "open_help": frozenset({"topic"}),
+}
+ACTION_KEYS = frozenset({"type"}) | frozenset().union(*ACTION_TYPES.values())
+
+RULE_KEYS = frozenset(
+    {"code", "phase", "source", "sources", "match", "cause", "advice", "confidence", "stop", "actions"}
+)
 MATCH_KEYS = frozenset({"all", "any", "none"})
 TOP_KEYS = frozenset({"version", "rules"})
 MATCHER_KEYS = frozenset({"regex"})
@@ -94,20 +107,44 @@ class Matcher:
 
 
 @dataclass(frozen=True)
+class RuleAction:
+    """One suggested action: a type plus ``{}``-placeholder parameters."""
+
+    kind: str
+    params: tuple[tuple[str, str], ...] = ()
+
+    def param(self, name: str) -> str:
+        for key, value in self.params:
+            if key == name:
+                return value
+        return ""
+
+    @property
+    def i18n_key(self) -> str:
+        return f"diagnosis.action.{self.kind}"
+
+
+@dataclass(frozen=True)
 class Rule:
     """One knowledge-base entry (immutable; `order` is the file order)."""
 
     code: str
     phase: str
-    source: str
+    sources: tuple[str, ...]
     cause: str
     advice: tuple[str, ...]
     confidence: str
     stop: bool
     order: int
+    actions: tuple[RuleAction, ...] = ()
     all: tuple[Matcher, ...] = ()
     any: tuple[Matcher, ...] = ()
     none: tuple[Matcher, ...] = ()
+
+    @property
+    def source(self) -> str:
+        """The first source (back-compat for callers that only know one)."""
+        return self.sources[0]
 
     def match_lines(self, lines: Sequence[str]) -> list[str] | None:
         """Evidence lines when the rule matches, else None.
@@ -122,12 +159,13 @@ class Rule:
                 return None
             hits.append(line)
         if self.any:
+            matched_any = False
             for matcher in self.any:
                 line = matcher.find_line(lines)
                 if line is not None:
+                    matched_any = True
                     hits.append(line)
-                    break
-            else:
+            if not matched_any:
                 return None
         for matcher in self.none:
             if matcher.find_line(lines) is not None:
@@ -186,9 +224,7 @@ def _build_rule(raw: object, order: int) -> Rule:
     phase = raw.get("phase")
     if phase not in PHASES:
         _fail(f"{where}: unknown phase {phase!r} (expected one of {list(PHASES)})")
-    source = raw.get("source")
-    if source not in SOURCES:
-        _fail(f"{where}: unknown source {source!r} (expected one of {list(SOURCES)})")
+    sources = _build_sources(raw, where)
     confidence = raw.get("confidence")
     if confidence not in CONFIDENCES:
         _fail(f"{where}: unknown confidence {confidence!r} (expected one of {list(CONFIDENCES)})")
@@ -200,12 +236,15 @@ def _build_rule(raw: object, order: int) -> Rule:
     cause = raw.get("cause")
     if not isinstance(cause, str) or not cause:
         _fail(f"{where}: missing 'cause' i18n key")
+    if not is_known_cause(cause):
+        _fail(f"{where}: unknown cause {cause!r} (not declared in causes.py)")
     advice_raw = raw.get("advice")
     if not isinstance(advice_raw, list) or not advice_raw:
         _fail(f"{where}: 'advice' must be a non-empty list of i18n keys")
     for item in advice_raw:
         if not isinstance(item, str) or not item:
             _fail(f"{where}: 'advice' entries must be non-empty strings")
+    actions = _build_actions(raw.get("actions", []), where)
 
     match = raw.get("match")
     if not isinstance(match, dict):
@@ -227,16 +266,71 @@ def _build_rule(raw: object, order: int) -> Rule:
     return Rule(
         code=code,
         phase=phase,
-        source=source,
+        sources=sources,
         cause=cause,
         advice=tuple(advice_raw),
         confidence=confidence,
         stop=stop,
         order=order,
+        actions=actions,
         all=all_matchers,
         any=any_matchers,
         none=none_matchers,
     )
+
+
+def _build_sources(raw: dict, where: str) -> tuple[str, ...]:
+    """``source`` (one) or ``sources`` (many) — both name log kinds the rule may read."""
+    has_source = "source" in raw
+    has_sources = "sources" in raw
+    if has_source == has_sources:
+        _fail(f"{where}: requires exactly one of 'source' or 'sources'")
+    if has_source:
+        values = [raw.get("source")]
+    else:
+        values = raw.get("sources")
+        if not isinstance(values, list) or not values:
+            _fail(f"{where}: 'sources' must be a non-empty list")
+    out: list[str] = []
+    for value in values:
+        if value not in SOURCES:
+            _fail(f"{where}: unknown source {value!r} (expected one of {list(SOURCES)})")
+        if value not in out:
+            out.append(value)
+    return tuple(out)
+
+
+def _build_actions(raw: object, where: str) -> tuple[RuleAction, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        _fail(f"{where}: 'actions' must be a list")
+    actions: list[RuleAction] = []
+    for index, item in enumerate(raw):
+        at = f"{where}.actions[{index}]"
+        if not isinstance(item, dict):
+            _fail(f"{at}: expected an object")
+        kind = item.get("type")
+        if kind not in ACTION_TYPES:
+            _fail(f"{at}: unknown action type {kind!r} (expected one of {list(ACTION_TYPES)})")
+        unknown = set(item) - ACTION_KEYS
+        if unknown:
+            _fail(f"{at}: unknown keys {sorted(unknown)}")
+        required = ACTION_TYPES[kind]
+        params: list[tuple[str, str]] = []
+        for key, value in item.items():
+            if key == "type":
+                continue
+            if key not in required:
+                _fail(f"{at}: action {kind!r} does not take {key!r}")
+            if not isinstance(value, str) or not value:
+                _fail(f"{at}: parameter {key!r} must be a non-empty string")
+            params.append((key, value))
+        for key in required:
+            if key not in dict(params):
+                _fail(f"{at}: action {kind!r} requires parameter {key!r}")
+        actions.append(RuleAction(kind=kind, params=tuple(params)))
+    return tuple(actions)
 
 
 def validate_rules(data: object) -> tuple[Rule, ...]:

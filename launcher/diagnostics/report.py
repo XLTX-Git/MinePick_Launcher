@@ -132,6 +132,11 @@ def render_lines(diagnosis: Diagnosis, translate: Translate | None = None) -> li
     lines.append(tr("diagnosis.section.advice"))
     for key, args in primary.advice:
         lines.append("· " + tr(key, *args))
+    if primary.actions:
+        lines.append("")
+        lines.append(tr("diagnosis.section.actions"))
+        for action in primary.actions:
+            lines.append("· " + tr(action.i18n_key, *action.args))
 
     alternatives = diagnosis.alternatives
     if alternatives:
@@ -148,7 +153,12 @@ def render_lines(diagnosis: Diagnosis, translate: Translate | None = None) -> li
         lines.append(tr("diagnosis.section.evidence"))
         for item in primary.evidence:
             lines.append(
-                "· " + tr("diagnosis.evidence.item", _kind_label(item.log_kind, tr), item.line)
+                "· "
+                + tr(
+                    "diagnosis.evidence.item",
+                    _kind_label(item.log_kind, tr),
+                    f"{item.location}: {item.line}",
+                )
             )
 
     lines.append("")

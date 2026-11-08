@@ -82,6 +82,11 @@ class EnvironmentFacts:
     game_dir: str
     launch_dir: str
     mods: tuple[ModFact, ...]
+    # ---- filled by the analysis layers (stack / mod index) ----
+    suspect_id: str = ""
+    suspect_name: str = ""
+    suspect_file: str = ""
+    suspect_frame: str = ""
 
     # ---- display helpers (units / product names only, never prose) ----
     @property
@@ -105,10 +110,25 @@ class EnvironmentFacts:
     def mods_text(self) -> str:
         return str(len(self.mods))
 
+    @property
+    def suggested_memory(self) -> str:
+        """A heap size the memory rules can suggest (never more than the 64-bit ceiling)."""
+        if self.os_arch == "32-bit":
+            return "1"
+        current = self.memory_gb if self.memory_gb is not None else 4.0
+        if current >= 8:
+            return "8"
+        return f"{min(8, max(2, int(current) + 2)):g}"
+
+    @property
+    def suspect_text(self) -> str:
+        return self.suspect_name or self.suspect_id or UNKNOWN_VALUE
+
     def placeholder(self, name: str) -> str:
-        """Value of a ``{name}`` placeholder used in rule advice/keys."""
+        """Value of a ``{name}`` placeholder used in rule advice/actions."""
         values = {
             "memory": self.memory_text,
+            "suggested_memory": self.suggested_memory,
             "java": str(self.java_major) if self.java_major is not None else UNKNOWN_VALUE,
             "java_path": self.java_path or UNKNOWN_VALUE,
             "mc": self.mc_version or UNKNOWN_VALUE,
@@ -120,6 +140,11 @@ class EnvironmentFacts:
             "os_arch": self.os_arch,
             "game_dir": self.game_dir or UNKNOWN_VALUE,
             "launch_dir": self.launch_dir or UNKNOWN_VALUE,
+            "suspect": self.suspect_text,
+            "suspect_id": self.suspect_id or UNKNOWN_VALUE,
+            "suspect_mod": self.suspect_name or self.suspect_id or UNKNOWN_VALUE,
+            "suspect_file": self.suspect_file or UNKNOWN_VALUE,
+            "suspect_frame": self.suspect_frame or UNKNOWN_VALUE,
         }
         return values.get(name, UNKNOWN_VALUE)
 
