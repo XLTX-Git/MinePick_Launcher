@@ -1480,7 +1480,7 @@ class VersionsPage(QWidget):
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
         self._sync_row_selection(self._selected_id())
-        QTimer.singleShot(0, self.list.sync_item_widths)
+        QTimer.singleShot(0, self.list, self.list.sync_item_widths)
 
     def _append_search_batch(self, old: int, new: int) -> None:
         """Append the next ``old:new`` matches to the flat search list."""
@@ -1510,7 +1510,7 @@ class VersionsPage(QWidget):
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
         self._sync_row_selection(self._selected_id())
-        QTimer.singleShot(0, self.list.sync_item_widths)
+        QTimer.singleShot(0, self.list, self.list.sync_item_widths)
 
     def _ensure_version_visible(self, version_id: str) -> None:
         """Open the fold (and build enough rows) that holds ``version_id``, so its row exists.
@@ -1922,7 +1922,7 @@ class VersionsPage(QWidget):
         self._restore_scroll(scroll)
         # The page may still be inside its first layout pass here; re-apply the viewport width once
         # the widget hierarchy has settled (see _VersionList).
-        QTimer.singleShot(0, self.list.sync_item_widths)
+        QTimer.singleShot(0, self.list, self.list.sync_item_widths)
 
     def _new_row_item(
         self,
@@ -2045,7 +2045,9 @@ class VersionsPage(QWidget):
             bar.setValue(min(value, bar.maximum()))
 
         apply()
-        QTimer.singleShot(0, apply)
+        # The bar is the context object: if the page is torn down first (a language switch rebuilds
+        # every page), Qt drops the callback instead of calling into a deleted scroll bar.
+        QTimer.singleShot(0, bar, apply)
 
     def _select_version(self, version_id: str) -> None:
         index = self._row_index(version_id)
