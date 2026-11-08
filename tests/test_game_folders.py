@@ -408,7 +408,12 @@ def test_switching_the_folder_refreshes_instances_versions_and_the_status_label(
     window = MainWindow()
     try:
         window.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
-        app.processEvents()
+        # The page scans its folder off the GUI thread now; let that first scan land.
+        from PySide6.QtCore import QThreadPool
+
+        QThreadPool.globalInstance().waitForDone(5000)
+        for _ in range(6):
+            app.processEvents()
         instances = window.pages["instances"]
         assert instance_ids(instances) == {"1.20.1"}
         versions = window.pages["versions"]

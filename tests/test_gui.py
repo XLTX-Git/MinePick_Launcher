@@ -52,6 +52,15 @@ def _offline_manifest_fetch(monkeypatch):
     monkeypatch.setattr("gui.pages.java_page.list_java", lambda *a, **kw: [])
 
 
+def _wait_for_page_workers(app, timeout_ms: int = 5000) -> None:
+    """Let the pages' background work land (the instances scan runs off the GUI thread now)."""
+    from PySide6.QtCore import QThreadPool
+
+    QThreadPool.globalInstance().waitForDone(timeout_ms)
+    for _ in range(6):
+        app.processEvents()
+
+
 def test_window_pages_navigation(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data"))
     from gui.main_window import NAV_KEYS, MainWindow
@@ -654,6 +663,7 @@ def test_instance_name_via_userrole(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
+        _wait_for_page_workers(app)
         assert page.card_ids() == ["tricky"]
         assert page.select_instance("tricky")
         assert page._current_name() == "tricky"  # not misparsed because the note contains "   ["
@@ -1579,6 +1589,7 @@ def test_instances_page_lists_base_versions(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
+        _wait_for_page_workers(app)
         # One card per instance: the display name is the card's title, the version + loader line is
         # its meta, so the two old row-text facts still have to hold.
         names = [card.name_label.text() for card in page.cards()]
@@ -1853,6 +1864,7 @@ def test_instances_search_filters_the_list(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["instances"]
+        _wait_for_page_workers(app)
         assert len(page.cards()) == 2
         page.search_edit.setText("红石")
         page._on_search_changed()

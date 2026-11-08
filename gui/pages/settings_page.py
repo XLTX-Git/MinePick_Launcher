@@ -24,6 +24,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QColorDialog,
     QComboBox,
@@ -55,6 +56,7 @@ from gui.widgets import (
     style_form,
     style_page_layout,
 )
+from gui.workers import run_in_background
 from launcher import config, paths
 from launcher.mods import identity
 
@@ -113,6 +115,16 @@ COMMON_FONTS = (
     "Consolas",
     "Cascadia Mono",
 )
+
+
+def _installed_font_families() -> list[str]:
+    """Every installed font family; called on a worker, never while the page is being built.
+
+    ``QFontDatabase.families()`` is fast on a stock machine and hundreds of milliseconds to seconds
+    on one with a large font collection. The settings page used to call it synchronously in its
+    constructor, so merely opening 设置 paid that cost before the page could paint.
+    """
+    return list(QFontDatabase.families())
 
 
 class AccentPresetButton(QPushButton):
@@ -444,28 +456,14 @@ class SettingsPage(QWidget):
         ]
         self.accent_edit.textChanged.connect(self._update_accent_swatch)
 
-        # UI font: common families first, then every installed family; typing filters the list
+        # UI font: common families first, then every installed family; typing filters the list.
+        # The combo is usable from the first frame - the default plus the configured family - and the
+        # full installed list arrives from a worker (see _start_font_fill). Building the page must
+        # never wait for QFontDatabase.families().
         self.font_combo = QComboBox()
         self.font_combo.setEditable(True)
-        self.font_combo.addItem(tr("settings.font.default"), "")
-        families = QFontDatabase.families()
-        common = [name for name in COMMON_FONTS if name in families]
-        for family in common:
-            self.font_combo.addItem(family, family)
-        header_row = self.font_combo.count()  # remember where the section header lands
-        self.font_combo.addItem(tr("settings.font.common"), "")
-        for family in families:
-            if family not in common:
-                self.font_combo.addItem(family, family)
-        header_item = self.font_combo.model().item(header_row)
-        if header_item is not None:
-            header_item.setEnabled(False)  # a header row, not a choice
-        completer = QCompleter(families, self.font_combo)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.font_combo.setCompleter(completer)
         self.font_combo.setToolTip(tr("settings.font"))
+        self._fill_font_combo(self._placeholder_font_families())
 
         form = QFormLayout()
         style_form(form)
@@ -563,6 +561,7 @@ class SettingsPage(QWidget):
         self._reserve_memory_value_width()
         self.load()
         self._connect_autosave()
+        self._start_font_fill()
 
     def _reserve_memory_value_width(self) -> None:
         """Give the memory read-out the width of its widest value, so the row never re-flows.
@@ -642,6 +641,77 @@ class SettingsPage(QWidget):
         self.memory_slider.sliderReleased.connect(self.save)
         # A different Java can change the upper bound (a 32-bit JVM caps it at 1.5 GB).
         self.java_path_edit.editingFinished.connect(self._refresh_memory_bounds)
+
+    # ---------- UI font list (filled off the GUI thread) ----------
+
+    def _placeholder_font_families(self) -> list[str]:
+        """The families the combo can offer before the installed-font scan returns.
+
+        The default entry is always there, so the dropdown is never empty; the configured family and
+        the one the application is actually using are real, usable choices and are added when they
+        are known. Nothing is invented: the rest of the list follows from the worker.
+        """
+        cfg, _ = config.load()
+        names: list[str] = []
+        configured = str(cfg.ui_font or "").strip()
+        if configured:
+            names.append(configured)
+        application = QApplication.instance()
+        current = application.font().family().strip() if application is not None else ""
+        if current and current not in names:
+            names.append(current)
+        return names
+
+    def _fill_font_combo(self, families: list[str], *, complete: bool = False) -> None:
+        """Rebuild the font choice: default, common fonts, then every installed family.
+
+        ``complete`` distinguishes the worker's full list (adds the disabled 常用字体 header and the
+        completer) from the constructor's placeholder (only the default and the current family).
+        The user's selection is preserved, and no ``currentIndexChanged`` is emitted: filling the
+        list is not a settings change and must not write the config.
+        """
+        combo = self.font_combo
+        selected_data = str(combo.currentData() or "")
+        selected_text = combo.currentText().strip()
+        previous_block = combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(tr("settings.font.default"), "")
+        common = [name for name in families if name in COMMON_FONTS]
+        for family in common:
+            combo.addItem(family, family)
+        if complete:
+            header_row = combo.count()  # where the section header lands
+            combo.addItem(tr("settings.font.common"), "")
+            for family in families:
+                if family not in common:
+                    combo.addItem(family, family)
+            header_item = combo.model().item(header_row)
+            if header_item is not None:
+                header_item.setEnabled(False)  # a header row, not a choice
+            completer = QCompleter(families, combo)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            combo.setCompleter(completer)
+        else:
+            for family in families:
+                if family not in common:
+                    combo.addItem(family, family)
+        index = combo.findData(selected_data)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        elif selected_text and selected_text != tr("settings.font.default"):
+            combo.setEditText(selected_text)  # a typed/configured family the scan did not find
+        combo.blockSignals(previous_block)
+
+    def _start_font_fill(self) -> None:
+        """Ask a worker for the installed families; the combo keeps its placeholder until it lands."""
+        run_in_background(_installed_font_families, on_result=self._on_font_families)
+
+    def _on_font_families(self, families: list[str]) -> None:
+        """The worker's answer: replace the placeholder with the real list (GUI thread)."""
+        if families:
+            self._fill_font_combo(list(families), complete=True)
 
     def _apply_form_metrics(self, form: QFormLayout) -> None:
         """PCL's settings metrics: fixed left-aligned label column, 32px fields, 38px row pitch.

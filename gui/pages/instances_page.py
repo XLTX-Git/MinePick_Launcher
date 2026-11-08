@@ -38,6 +38,7 @@ never embed it, and the detail page is shown only after a deliberate drill-down.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
@@ -133,6 +134,30 @@ GROUP_TITLE_KEYS = {
 }
 #: Version categories that read as a snapshot. April Fools versions are snapshots with a joke id.
 SNAPSHOT_CATEGORIES = frozenset({"snapshot", "april_fools"})
+
+
+@dataclass(frozen=True)
+class _ScanData:
+    """One directory scan's result: everything the pane needs, with no Qt object in it.
+
+    The scan itself runs on a worker (the versions tree can be large and every row costs a version
+    JSON, a mods count and a saves count). This is the hand-off back to the GUI thread; the row
+    widgets and their pixmaps are still built on the GUI thread from this data.
+    """
+
+    generation: int
+    wanted: str | None
+    game_dir: Path
+    instances: dict = field(default_factory=dict)
+    folders: list = field(default_factory=list)
+    active_path: str = ""
+    counts: dict[str, int] = field(default_factory=dict)
+    #: instance id -> (minecraft version, loader, the card's 版本 · 加载器 line, group key)
+    meta: dict[str, tuple[str, str, str, str]] = field(default_factory=dict)
+    #: instance id -> (mods, saves)
+    numbers: dict[str, tuple[int, int]] = field(default_factory=dict)
+    current_id: str = ""
+    error: str = ""
 
 
 def instance_group(version: str, loader: str, game_dir: Path) -> str:
@@ -682,6 +707,11 @@ class InstancesPage(QWidget):
         #: The folder the card pane is showing, and the instances found in it by the last refresh.
         self._game_dir: Path | None = None
         self._instances: dict = {}
+        #: The newest applied scan, and a counter that decides which of two overlapping scans wins.
+        #: A page entry while the previous scan still runs bumps the counter, so the older answer is
+        #: dropped instead of overwriting the newer one.
+        self._last_scan: _ScanData | None = None
+        self._scan_generation = 0
         #: Set while a reveal still has to be scrolled into view once the layout has run.
         self._pending_reveal: str | None = None
         self._reveal_timer = QTimer(self)
@@ -726,10 +756,16 @@ class InstancesPage(QWidget):
 
         self.empty_folder = _FolderEmptyState(self)
         self.empty_search = EmptyState(tr("instances.search.none"), self)
+        #: Shown while the directory scan runs in the background: a hint, not an empty pane, and
+        #: never the previous folder's rows presented as the current state. It reuses the existing
+        #: (加载中...) string, so the waiting state needs no new translation.
+        self.loading_state = EmptyState(tr("instances.loading"), self)
+        self.loading_state.update_for(0)  # EmptyState starts hidden; the stack shows it on purpose
         self.list_stack = QStackedWidget(self)
         self.list_stack.addWidget(self.content_scroll)
         self.list_stack.addWidget(self.empty_folder)
         self.list_stack.addWidget(self.empty_search)
+        self.list_stack.addWidget(self.loading_state)
 
         self.sort_combo = QComboBox(self)
         self.sort_combo.addItem(tr("instances.sort.name"), "name")
@@ -824,7 +860,9 @@ class InstancesPage(QWidget):
         self.detail.changed.connect(self._on_detail_changed)
         self.detail.deleted.connect(self._on_detail_deleted)
         self.detail_page.back_requested.connect(self._on_back_clicked)
-        self.refresh()
+        # Building the page must not scan the versions tree on the GUI thread: the first scan runs
+        # on a worker and fills the pane when it comes back (see refresh_in_background).
+        self.refresh_in_background()
 
     # ---------- page navigation ----------
 
@@ -1034,41 +1072,126 @@ class InstancesPage(QWidget):
     # ---------- the card pane ----------
 
     def refresh(self, select: str | None = None) -> None:
-        """Rebuild the folder rail and the card pane; `select` forces a selection."""
+        """Rebuild synchronously; action paths and tests need the new state on return.
+
+        This reads the versions tree on the calling (GUI) thread. Page entry and construction use
+        :meth:`refresh_in_background` instead, so opening 实例 never waits for the disk.
+        """
+        self._scan_generation += 1
+        generation = self._scan_generation
         wanted = select if select is not None else self._selected_id
         cfg, _ = config.load()
+        folders, active, game_dir = self._scan_roots(cfg)
+        self._apply_scan(self._scan_task(generation, wanted, cfg, folders, active, game_dir))
+
+    def refresh_in_background(self, select: str | None = None) -> None:
+        """Scan the folder on a worker, then fill the pane with the answer (never block the GUI).
+
+        A page entry starts one, and so does construction. The generation counter makes only the
+        newest scan allowed to paint: a scan superseded by a newer entry - or by an action path's
+        synchronous refresh - drops its result instead of overwriting the newer state. Meanwhile the
+        pane shows the loading placeholder, which is neither blank nor a made-up list.
+        """
+        self._scan_generation += 1
+        generation = self._scan_generation
+        wanted = select if select is not None else self._selected_id
+        cfg, _ = config.load()
+        folders, active, game_dir = self._scan_roots(cfg)
+        self._show_scanning_state()
+        run_in_background(
+            self._scan_task,
+            generation,
+            wanted,
+            cfg,
+            folders,
+            active,
+            game_dir,
+            on_result=self._on_scan_ready,
+        )
+
+    @staticmethod
+    def _scan_roots(cfg) -> tuple[list, object, Path]:
+        """The folder facts a scan needs, resolved once so both refresh paths agree."""
         folders = ordered_folders(cfg.effective_game_folders())
         active = cfg.active_folder()
         if active is None and folders:
             active = folders[0]
         game_dir = Path(active.path) if active is not None else config.active_game_dir(cfg)
-        self._game_dir = game_dir
-        instances = list_instances(game_dir)
-        self._instances = instances
-        counts = {
-            str(folder.path): (
-                len(instances)
-                if active is not None and config.same_game_folder(folder.path, active.path)
-                else folder_instance_count(folder.path)
+        return folders, active, game_dir
+
+    def _scan_task(
+        self, generation: int, wanted: str | None, cfg, folders: list, active, game_dir: Path
+    ) -> _ScanData:
+        """Collect everything the pane draws from disk; runs on a worker and touches no widget."""
+        try:
+            instances = list_instances(game_dir)
+            active_path = str(active.path) if active is not None else ""
+            counts = {
+                str(folder.path): (
+                    len(instances)
+                    if active is not None and config.same_game_folder(folder.path, active.path)
+                    else folder_instance_count(folder.path)
+                )
+                for folder in folders
+            }
+            meta: dict[str, tuple[str, str, str, str]] = {}
+            numbers: dict[str, tuple[int, int]] = {}
+            for instance in instances.values():
+                version, loader, text = card_version_meta(instance, game_dir)
+                meta[instance.id] = (version, loader, text, instance_group(version, loader, game_dir))
+                numbers[instance.id] = instance_counts(instance, cfg, game_dir)
+        except Exception as exc:  # noqa: BLE001 - a broken tree is one reported state, never a crash
+            return _ScanData(
+                generation=generation, wanted=wanted, game_dir=game_dir, error=str(exc)
             )
-            for folder in folders
-        }
-        self.folder_rail.set_folders(
-            folders, active.path if active is not None else "", counts
+        return _ScanData(
+            generation=generation,
+            wanted=wanted,
+            game_dir=game_dir,
+            instances=instances,
+            folders=folders,
+            active_path=active_path,
+            counts=counts,
+            meta=meta,
+            numbers=numbers,
+            current_id=str(cfg.selected_instance or "").strip(),
         )
-        current_id = str(cfg.selected_instance or "").strip()
-        ordered = sorted(instances.values(), key=self._sort_key)
+
+    def _on_scan_ready(self, scan: _ScanData) -> None:
+        """A worker's scan came back (GUI thread): paint it only if it is still the newest one."""
+        if scan.generation != self._scan_generation:
+            return  # a newer entry/refresh already owns the pane
+        if scan.error:
+            set_app_status(self, tr("instances.fetch_fail", scan.error), "error")
+            self.loading_state.setText(tr("instances.fetch_fail", scan.error))
+            self.list_stack.setCurrentWidget(self.loading_state)
+            return
+        self._apply_scan(scan)
+
+    def _show_scanning_state(self) -> None:
+        """The in-between state: a hint that the list is being read, not an empty or stale pane."""
+        self.loading_state.setText(tr("instances.loading"))
+        self.loading_state.update_for(0)
+        self.list_stack.setCurrentWidget(self.loading_state)
+
+    def _apply_scan(self, scan: _ScanData) -> None:
+        """Paint one scan: the folder rail, the cards, the selection and the empty state."""
+        self._game_dir = scan.game_dir
+        self._instances = scan.instances
+        self._last_scan = scan
+        self.folder_rail.set_folders(scan.folders, scan.active_path, scan.counts)
+        ordered = sorted(scan.instances.values(), key=self._sort_key)
         needle = self.search_edit.text().strip().lower()
-        shown = self._build_cards(ordered, cfg, game_dir, current_id, needle)
-        self._update_list_state(len(instances), shown, bool(needle))
+        shown = self._build_cards(ordered, scan, needle)
+        self._update_list_state(len(scan.instances), shown, bool(needle))
         # After the pane is the current stack page, not before: showing a card while its scroll area
         # is hidden does not give it a position, and the reveal then cannot scroll to it.
         self._settle_layout()
-        self._select(wanted)
-        if not instances:
+        self._select(scan.wanted)
+        if not scan.instances:
             self.show_list()
 
-    def _build_cards(self, ordered, cfg, game_dir: Path, current_id: str, needle: str) -> int:
+    def _build_cards(self, ordered, scan: _ScanData, needle: str) -> int:
         """Draw the rows - grouped by type, or flat while searching - and return how many showed."""
         self.groups_view.clear(self._retired_groups)
         self.result_count.setVisible(bool(needle))
@@ -1077,8 +1200,8 @@ class InstancesPage(QWidget):
         for inst in ordered:
             if needle and needle not in self._haystack(inst):
                 continue
-            version, loader, meta = card_version_meta(inst, game_dir)
-            mods, saves = instance_counts(inst, cfg, game_dir)
+            _version, _loader, meta, group = scan.meta[inst.id]
+            mods, saves = scan.numbers[inst.id]
             counts = " · ".join(
                 part
                 for part in (
@@ -1091,19 +1214,19 @@ class InstancesPage(QWidget):
                 inst,
                 meta,
                 counts,
-                self._card_icon(inst, game_dir),
-                current=inst.id == current_id,
+                self._card_icon(inst, scan.game_dir),
+                current=inst.id == scan.current_id,
                 parent=self.groups_view,
             )
             card.use_requested.connect(self.instance_use_requested)
             card.manage_requested.connect(self._open_requested)
             # The card body's tooltip keeps the two facts the card itself elides: the profile label
             # beside the display name (when they differ) and the folder the instance lives in.
-            card.setToolTip(self._row_text(inst) + "\n" + str(instance_dir(game_dir, inst.id)))
+            card.setToolTip(self._row_text(inst) + "\n" + str(instance_dir(scan.game_dir, inst.id)))
             if needle:
                 flat.append(card)
             else:
-                grouped[instance_group(version, loader, game_dir)].append(card)
+                grouped[group].append(card)
         shown = 0
         if needle:
             # Searching does not group: one flat grid, introduced by the "N 个结果" line.

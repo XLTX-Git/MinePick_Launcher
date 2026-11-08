@@ -527,6 +527,7 @@ class MainWindow(QMainWindow):
         # somehow got back to a top-level page": the rail cannot stay hidden outside the detail view.
         self.set_nav_rail_visible(True)
         key = NAV_KEYS[row]
+        existed = self.pages.peek(key) is not None
         page = self.pages[key]  # first visit to a page is what constructs it
         self.stack.setCurrentWidget(page)
         self._apply_page_inset(key)
@@ -534,7 +535,10 @@ class MainWindow(QMainWindow):
             # auto-syncs the version dropdown after a loader/modpack install
             page.refresh_versions()
         elif key == "instances":
-            page.refresh()
+            # Every visit re-reads the instances folder - but off the GUI thread. A page that was
+            # just constructed already started its own scan, so only a re-entry needs this one.
+            if existed:
+                page.refresh_in_background()
             page.show_list()
         elif key == "versions":
             # a version can be deleted on the instances page: re-mark the installed column
@@ -670,8 +674,12 @@ class MainWindow(QMainWindow):
             self.build_pages()
             self.set_status(tr("status.ready"))
         self.pages["launch"].refresh_config()
-        # The instance registry lives in the game directory: refresh the list immediately
-        self.pages["instances"].refresh()
+        # The instance registry lives in the game directory: refresh the list immediately, but only
+        # when the page exists. A settings tweak has no business building the instances page; the
+        # page's own entry path (background scan) is where the GUI thread must not be blocked.
+        instances = self.pages.peek("instances")
+        if instances is not None:
+            instances.refresh()
         # A different current game folder is a different versions/ and mods/ tree, and these two pages
         # answer "what is installed there" from disk. They are refreshed only when they already exist
         # (peek never builds a page), so a settings change cannot make startup pay for pages the

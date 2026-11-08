@@ -393,13 +393,23 @@ def _settle_background_work():
         from PySide6.QtWidgets import QApplication
     except ImportError:  # no Qt in this environment: nothing to drain
         return
+    application = QApplication.instance()
+    if application is not None:
+        # Close and destroy this test's windows *before* waiting for the pool. A worker thread
+        # allocates, and allocation can run Python's cyclic GC on that thread; a widget whose C++
+        # object is still alive would then be destroyed from the worker thread - the exact undefined
+        # behaviour this fixture exists to prevent ("QBasicTimer::stop: Failed. Possibly trying to
+        # stop from a different thread", then an abort). Destroying them here keeps every
+        # destructor on the GUI thread, and the guarded worker callbacks can no longer reach them.
+        for widget in application.topLevelWidgets():
+            widget.close()
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        application.processEvents()
     QThreadPool.globalInstance().waitForDone(5000)
     application = QApplication.instance()
     if application is None:
         return
-    application.processEvents()
-    for widget in application.topLevelWidgets():
-        widget.close()
-        widget.deleteLater()
+    # Anything a worker scheduled for deletion while the pool drained still goes through this thread.
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     application.processEvents()
