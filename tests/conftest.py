@@ -112,6 +112,10 @@ def _no_startup_update_check(monkeypatch):
     covered by tests/test_updates.py and tests/test_locate.py.
     """
     monkeypatch.setattr("gui.pages.about_page.AboutPage.auto_check_on_start", lambda self: None)
+    # ... and the page-free startup check the window uses when About was never built.
+    monkeypatch.setattr(
+        "gui.pages.about_page.start_startup_update_check", lambda parent: None
+    )
     monkeypatch.setattr("gui.pages.java_page.list_java", lambda *args, **kwargs: [])
 
 

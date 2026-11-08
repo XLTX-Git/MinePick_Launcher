@@ -286,6 +286,7 @@ class MainWindow(QMainWindow):
         theme.register_self_styling(self)
         # Startup update check: delayed so the window is up first, once per session
         self._update_checked = False
+        self._startup_update_check = None  # the page-free check, kept alive while it runs
         QTimer.singleShot(2500, self._auto_check_updates)
 
     def on_theme_applied(self) -> None:
@@ -294,13 +295,22 @@ class MainWindow(QMainWindow):
         self._refresh_nav_icons()
 
     def _auto_check_updates(self) -> None:
-        """Let the About page run its startup check (it honours the configured update mode)."""
+        """Let the About page run its startup check (it honours the configured update mode).
+
+        The page is read with ``peek`` - the registry's non-building access - and the check runs
+        headless when the page has never been opened. ``pages.get("about")`` here used to build the
+        whole page (credits included) ~2.5s after startup for a session that never visited it.
+        """
         if self._update_checked:
             return
         self._update_checked = True
-        page = self.pages.get("about")
+        page = self.pages.peek("about")
         if page is not None:
             page.auto_check_on_start()
+            return
+        from gui.pages.about_page import start_startup_update_check
+
+        self._startup_update_check = start_startup_update_check(self)
 
     def set_status(self, text: str, level: str | None = None) -> None:
         """Single status line of the app: ``level`` is "info" (default), "warning" or "error".
@@ -1160,11 +1170,18 @@ class MainWindow(QMainWindow):
         from gui import workers
 
         workers.shutdown_game_processes()  # also covers a watcher whose page was rebuilt
+        # The About page may never have been built. When it exists, its in-memory download is the
+        # best source; otherwise the module-level path reads the staged update from disk. The old
+        # `pages.get("about")` here built the page on exit and then checked it for None (dead branch).
+        about = self.pages.peek("about")
+        if about is not None:
+            about.install_pending_on_exit()  # "download and install" mode swaps the EXE on exit
+        else:
+            from gui.pages.about_page import install_pending_on_exit
+
+            install_pending_on_exit()
         from launcher import config
 
-        page = self.pages.get("about")
-        if page is not None:
-            page.install_pending_on_exit()  # "download and install" mode swaps the EXE on exit
         cfg, cfg_path = config.load()
         if cfg.window_start_mode == "remember":
             geometry = self.normalGeometry() if self.isMaximized() else self.geometry()

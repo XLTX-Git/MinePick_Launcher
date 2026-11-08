@@ -28,7 +28,7 @@ import logging
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QObject, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -484,25 +484,8 @@ class AboutPage(QWidget):
         pending = self._staged_update()
         if pending is None:
             return
-        if not updates.can_self_update():
-            set_app_status(self, tr("about.update.install_manual"), "warning")
+        if not install_staged_update(self, pending):
             self.open_page_button.setVisible(True)
-            return
-        try:
-            script = updates.write_install_script(pending, Path(sys.executable), restart=True)
-        except OSError:
-            set_app_status(self, tr("about.update.install_manual"), "error")
-            self.open_page_button.setVisible(True)
-            return
-        if not updates.launch_install_script(script):
-            set_app_status(self, tr("about.update.install_manual"), "error")
-            self.open_page_button.setVisible(True)
-            return
-        updates.clear_pending()
-        set_app_status(self, tr("about.update.install_on_exit"))
-        application = QApplication.instance()
-        if application is not None:
-            QTimer.singleShot(200, application.quit)
 
     def has_pending_install(self) -> bool:
         """Whether an update is staged (the window uses this when deciding about installing on exit)."""
@@ -510,21 +493,8 @@ class AboutPage(QWidget):
 
     def install_pending_on_exit(self) -> None:
         """Install a staged update when the app closes (the "download and install" mode)."""
-        if self.current_mode() != "download_install" or not updates.can_self_update():
-            return
-        pending = self._staged_update()
-        if pending is None:
-            return
-        try:
-            script = updates.write_install_script(pending, Path(sys.executable), restart=False)
-        except OSError:
-            return  # closing must never raise; the staged update stays for the next start
-        if not updates.launch_install_script(script):
-            # The staged update stays pending, and the log records why: an update that silently
-            # does nothing is worse than one that fails loudly.
-            logging.getLogger(__name__).warning(
-                "could not start the update helper %s; the staged update stays pending", script
-            )
+        preferred = self._pending if self._pending is not None and self._pending.is_file() else None
+        install_pending_on_exit(preferred)
 
     def auto_check_on_start(self) -> None:
         """Startup check; the "off" mode really means no automatic check.
@@ -546,3 +516,224 @@ class AboutPage(QWidget):
     def refresh(self) -> None:
         """Reload the update settings (the window calls this whenever the page is shown)."""
         self.load()
+
+
+# --------------------------------------------------------------------------------------
+# The paths that must work without the page
+# --------------------------------------------------------------------------------------
+#
+# Startup used to ask the window's lazy registry for the About page just to run its update check, and
+# the close path did the same to install a staged update. Asking for a page with ``pages.get`` builds
+# it, so every session constructed the whole About page - credits included - about 2.5 seconds after
+# starting, and a close that never opened it built one only to destroy it immediately. The check and
+# the exit install need no page widgets, only a parent for their prompts and the window's status
+# line; the two entry points below are that page-free path. ``AboutPage.auto_check_on_start`` stays
+# for the case where the page does exist, so its labels and buttons keep reflecting the check.
+
+
+def install_staged_update(parent: QWidget, pending: Path) -> bool:
+    """Start the detached updater for ``pending``, then quit; shared by the page and the exit path.
+
+    Returns False when nothing was installed (the caller may want to offer the release page). This
+    is the page's old ``install_now`` body, moved out so "install on exit" never needs the page.
+    """
+    if not pending.is_file():
+        return False
+    if not updates.can_self_update():
+        set_app_status(parent, tr("about.update.install_manual"), "warning")
+        return False
+    try:
+        script = updates.write_install_script(pending, Path(sys.executable), restart=True)
+    except OSError:
+        set_app_status(parent, tr("about.update.install_manual"), "error")
+        return False
+    if not updates.launch_install_script(script):
+        set_app_status(parent, tr("about.update.install_manual"), "error")
+        return False
+    updates.clear_pending()
+    set_app_status(parent, tr("about.update.install_on_exit"))
+    application = QApplication.instance()
+    if application is not None:
+        QTimer.singleShot(200, application.quit)
+    return True
+
+
+def install_pending_on_exit(preferred: Path | None = None) -> bool:
+    """Install a staged update when the app closes ("download and install" mode), page or not.
+
+    Reads the mode from the config (the page's combo writes it there on every change), so it is the
+    same decision the page makes. ``preferred`` is the page's in-memory download when it still has
+    one; the on-disk staged update is the fallback, and the normal source when no page was built.
+    """
+    cfg, _ = config.load()
+    if AboutPage._valid_mode(cfg.auto_update_mode) != "download_install":
+        return False
+    if not updates.can_self_update():
+        return False
+    if preferred is not None and preferred.is_file():
+        pending = preferred
+    else:
+        staged = updates.load_pending()
+        if staged is None:
+            return False
+        pending = staged[0]
+    try:
+        script = updates.write_install_script(pending, Path(sys.executable), restart=False)
+    except OSError:
+        return False  # closing must never raise; the staged update stays for the next start
+    if not updates.launch_install_script(script):
+        # The staged update stays pending, and the log records why: an update that silently does
+        # nothing is worse than one that fails loudly.
+        logging.getLogger(__name__).warning(
+            "could not start the update helper %s; the staged update stays pending", script
+        )
+        return False
+    return True
+
+
+class StartupUpdateCheck(QObject):
+    """The startup update check without the About page.
+
+    Follows the same policy as :meth:`AboutPage.auto_check_on_start`: an update staged in an earlier
+    session is offered again (except in "install on exit" mode, which installs it at close), and the
+    configured mode decides whether a new release is downloaded, only announced, or ignored. What it
+    has no widgets for is the page's progress bar and labels: progress and results go to the window's
+    one status line, and the prompts are the same in-window dialogs every page uses.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._parent = parent
+        self._mode = AboutPage._valid_mode(config.load()[0].auto_update_mode)
+        self._downloading = False
+        self._pending_version = ""
+
+    def start(self) -> None:
+        """Run the session's startup policy: an offer for a staged update, else one check."""
+        updates.cleanup_backups(Path(sys.executable))
+        staged = updates.load_pending()
+        if staged is not None and self._mode != "off":
+            path, version = staged
+            if self._mode != "download_install":  # that mode installs it on exit
+                self._offer_install(path, version)
+            return
+        if self._mode == "off":
+            return
+        self._check()
+
+    # ---------- check ----------
+
+    def _check(self) -> None:
+        set_app_status(self._parent, tr("about.update.checking"))
+        run_in_background(
+            updates.check_for_update,
+            __version__,
+            on_result=self._on_check_result,
+        )
+
+    def _on_check_result(self, result: updates.UpdateCheck) -> None:
+        if result.status == "failed":
+            set_app_status(self._parent, tr(AboutPage._failure_key(result.error)), "error")
+            return
+        if result.status == "up_to_date":
+            set_app_status(self._parent, tr("about.update.up_to_date"))
+            return
+        set_app_status(self._parent, tr("about.update.available", result.latest))
+        if self._mode in ("download_install", "download_notify"):
+            self._download(result.release)
+        else:
+            self._offer_page(result.release)
+
+    def _offer_page(self, release: updates.ReleaseInfo | None) -> None:
+        page = release.page_url if release is not None else updates.RELEASES_PAGE
+        outcome = inwindow_dialog.confirm(
+            self._parent,
+            tr("about.update.prompt.title"),
+            tr("about.update.prompt.message", release.version if release is not None else ""),
+            accept_text=tr("about.update.open_page"),
+            reject_text=tr("about.update.prompt.later"),
+        )
+        if outcome is inwindow_dialog.Outcome.ACCEPTED:
+            QDesktopServices.openUrl(QUrl(page))
+
+    # ---------- download ----------
+
+    def _download(self, release: updates.ReleaseInfo | None) -> None:
+        if release is None or self._downloading:
+            return
+        self._downloading = True
+        self._pending_version = release.version
+        set_app_status(self._parent, tr("about.update.downloading", "0"))
+        bridge = ProgressBridge()
+        bridge.progress.connect(self._on_download_progress)
+
+        def do_download(progress) -> tuple[str, object]:
+            last = 0
+
+            def on_progress(done: int, total: int) -> None:
+                nonlocal last
+                if done - last >= PROGRESS_STEP or (total and done == total):
+                    last = done
+                    progress((done, total))
+
+            try:
+                path = updates.download_release_exe(
+                    release, updates.updates_dir(), on_progress=on_progress
+                )
+            except updates.UpdateError as exc:
+                return "failed", exc.code
+            return "ok", path
+
+        run_in_background(
+            do_download,
+            bridge,
+            on_result=self._on_download_result,
+            on_finished=self._on_download_finished,
+        )
+
+    def _on_download_finished(self) -> None:
+        self._downloading = False
+
+    def _on_download_progress(self, payload) -> None:
+        done, total = payload
+        percent = str(done * 100 // total) if total else "?"
+        set_app_status(self._parent, tr("about.update.downloading", percent))
+
+    def _on_download_result(self, payload) -> None:
+        status, value = payload
+        if status == "failed":
+            set_app_status(self._parent, tr(AboutPage._failure_key(str(value))), "error")
+            return
+        path = Path(value)
+        updates.save_pending(path, self._pending_version)
+        if self._mode == "download_install":
+            if not updates.can_self_update():
+                set_app_status(self._parent, tr("about.update.install_dev"), "warning")
+            else:
+                set_app_status(self._parent, tr("about.update.install_on_exit"))
+            return
+        set_app_status(self._parent, tr("about.update.downloaded", self._pending_version))
+        self._offer_install(path, self._pending_version)
+
+    # ---------- install ----------
+
+    def _offer_install(self, path: Path, version: str) -> None:
+        if not updates.can_self_update():
+            set_app_status(self._parent, tr("about.update.install_dev"), "warning")
+            return
+        outcome = inwindow_dialog.confirm(
+            self._parent,
+            tr("about.update.prompt.title"),
+            tr("about.update.downloaded", version),
+            accept_text=tr("about.update.install_now"),
+            reject_text=tr("about.update.install_later"),
+        )
+        if outcome is inwindow_dialog.Outcome.ACCEPTED:
+            install_staged_update(self._parent, path)
+
+
+def start_startup_update_check(parent: QWidget) -> StartupUpdateCheck:
+    """Create and start the page-free startup check; the caller keeps the returned object alive."""
+    check = StartupUpdateCheck(parent)
+    check.start()
+    return check
