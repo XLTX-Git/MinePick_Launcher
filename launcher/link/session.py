@@ -66,20 +66,49 @@ class LinkDifficulty(str, Enum):
 class LinkMember:
     """One person in the room.
 
-    ``avatar`` is an optional display initial. The page falls back to the first character of
-    ``name``; a backend that knows a different short form (the local player is "你" but its avatar
-    reads "我") can supply one here.
+    ``avatar`` is an optional display initial. The page falls back to the first ASCII letter or
+    digit of ``name``; a backend that knows a different short form can supply one here.
+
+    ``uuid`` and ``premium`` are only ever set by a backend that actually knows them. Terracotta
+    v0.4.2's ``profiles`` objects are ``{machine_id, name, vendor, kind}`` and carry no UUID, so a
+    real room member has neither and keeps the letter avatar. Offline accounts have no skin at all;
+    for them ``name`` is the only identifier.
     """
 
     name: str
     is_host: bool = False
     online: bool = True
     avatar: str = ""
+    uuid: str = ""
+    premium: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LinkDownloadProgress:
+    """One progress report: the project's 0..1000 scale plus the byte counts when they are known.
+
+    The percentage is always valid (the progress bar is driven by it); the byte counts let the
+    onboarding row print ``3.2 / 8.1 MB`` while a real download runs. The fake backend reports the
+    scale only, which is why the byte counts default to zero rather than to a made-up size.
+    """
+
+    permille: int = 0
+    done_bytes: int = 0
+    total_bytes: int = 0
+
+    @classmethod
+    def from_bytes(cls, done: int, total: int) -> LinkDownloadProgress:
+        """Build a report from byte counts, deriving the 0..1000 scale."""
+        done = max(0, int(done))
+        total = max(0, int(total))
+        permille = 0 if total <= 0 else max(0, min(1000, round(done * 1000 / total)))
+        return cls(permille=permille, done_bytes=done, total_bytes=total)
 
 
 #: Download progress is reported on the same 0..1000 scale as every other download in the launcher
-#: (``QProgressBar.setRange(0, 1000)`` and a tenth of a percent per step).
-ProgressCallback = Callable[[int], None]
+#: (``QProgressBar.setRange(0, 1000)`` and a tenth of a percent per step), plus byte counts when a
+#: real transfer knows them.
+ProgressCallback = Callable[[LinkDownloadProgress], None]
 #: Called after any observable property changes. May be invoked from a worker thread by a future real
 #: implementation, so a listener that touches widgets must marshal the change to the GUI thread.
 Listener = Callable[[], None]
@@ -131,10 +160,17 @@ class FakeLinkSession:
     The normal methods model what a user action does; ``set_state`` (and the convenience helpers
     ``publish`` / ``complete_join`` / ``fail``) model what an asynchronous backend would report a
     moment later. Nothing here sleeps, touches the network or starts a process.
+
+    The default member names are real Minecraft-shaped IDs, and the two demo skins use the community
+    default Steve/Alex UUIDs. Those two UUIDs are **demo data for this fake only**: the real session
+    never defaults to them, and a member without a backend-provided UUID keeps the letter avatar.
     """
 
     DEFAULT_ROOM_CODE = "U/8F3K-2QX9-7WMD-4TRA"
     DEFAULT_ADDRESS = "127.0.0.1:25566"
+    # Demo data for screenshots and fixtures only; not a product default.
+    DEMO_STEVE_UUID = "8667ba71-b85a-4004-af54-457a9734eed7"
+    DEMO_ALEX_UUID = "ec561538-f3fd-461d-aff5-086b22154bce"
 
     def __init__(
         self,
@@ -239,7 +275,7 @@ class FakeLinkSession:
         if self._state is not LinkState.NOT_DOWNLOADED:
             return
         for value in (0, 500, 1000):
-            progress_cb(value)
+            progress_cb(LinkDownloadProgress(permille=value))
         self._state = LinkState.IDLE
         self._failure_key = ""
         self._notify()
@@ -255,7 +291,16 @@ class FakeLinkSession:
         """Move from ``HOST_WAITING`` to ``HOST_READY`` (the LAN world was opened)."""
         self._room_code = room_code or self.DEFAULT_ROOM_CODE
         self._members = (
-            tuple(members) if members is not None else (LinkMember("你", is_host=True),)
+            tuple(members)
+            if members is not None
+            else (
+                LinkMember(
+                    "Steve",
+                    is_host=True,
+                    premium=True,
+                    uuid=self.DEMO_STEVE_UUID,
+                ),
+            )
         )
         self._difficulty = difficulty
         self._address = self.DEFAULT_ADDRESS
@@ -273,7 +318,15 @@ class FakeLinkSession:
         self._members = (
             tuple(members)
             if members is not None
-            else (LinkMember("你"), LinkMember("小王"))
+            else (
+                LinkMember("Alex", premium=True, uuid=self.DEMO_ALEX_UUID),
+                LinkMember(
+                    "Steve",
+                    is_host=True,
+                    premium=True,
+                    uuid=self.DEMO_STEVE_UUID,
+                ),
+            )
         )
         self._address = address or self.DEFAULT_ADDRESS
         self._failure_key = ""
@@ -324,9 +377,12 @@ class FakeLinkSession:
 
 
 def default_link_session() -> LinkSession:
-    """The session a freshly built page uses until the real backend lands.
+    """The real Terracotta backend.
 
-    It is the fake on purpose: this change is the UI skeleton, and a page that cannot render without
-    a subprocess would fail every audit and screenshot. The next change replaces this one factory.
+    Constructing it is safe even before the payload is downloaded: it reads the component state,
+    reports ``NOT_DOWNLOADED``, and starts no process and no thread. The import is local because
+    :mod:`launcher.link.terracotta` imports this module for the shared state model.
     """
-    return FakeLinkSession()
+    from launcher.link.terracotta import TerracottaLinkSession
+
+    return TerracottaLinkSession()

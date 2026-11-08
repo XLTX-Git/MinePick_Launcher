@@ -17,20 +17,30 @@
 
 """Multiplayer integration surface (Terracotta)."""
 
+from launcher.link.selfcheck import ComponentStatus, ProcessStatus, SelfCheckReport
 from launcher.link.session import (
     FakeLinkSession,
     LinkDifficulty,
+    LinkDownloadProgress,
     LinkMember,
     LinkSession,
     LinkState,
     default_link_session,
 )
+from launcher.link.stun import StunVerdict
+from launcher.link.terracotta import TerracottaLinkSession
 
 __all__ = [
+    "ComponentStatus",
     "FakeLinkSession",
     "LinkDifficulty",
+    "LinkDownloadProgress",
     "LinkMember",
     "LinkSession",
     "LinkState",
+    "ProcessStatus",
+    "SelfCheckReport",
+    "StunVerdict",
+    "TerracottaLinkSession",
     "default_link_session",
 ]
