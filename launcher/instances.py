@@ -575,6 +575,32 @@ def installed_identities(game_dir: Path) -> list[VersionIdentity]:
     return sorted(identities, key=lambda item: (item.minecraft.casefold(), item.version_id.casefold()))
 
 
+def core_profile_id(game_dir: Path, version_id: str) -> str:
+    """The profile folder the core is actually read from, following ``inheritsFrom``.
+
+    An instance normally runs its own folder, but a folder may hold nothing but a thin profile that
+    inherits a loader build (``红石包`` -> ``fabric-loader-0.19.3-1.21.11``). 修改 shows "which folder
+    the core comes from", and naming the thin stub would be the wrong folder in exactly that case.
+    The walk stops at the first id whose shape this launcher recognises (a loader build, which is
+    where the jar/libraries come from) or at the end of the chain, and a cycle ends it like
+    :func:`profile_identity` does. A missing parent returns the last readable id instead of raising:
+    the page has to keep rendering a broken profile.
+    """
+    seen: set[str] = set()
+    current = version_id
+    last = version_id
+    while current and current not in seen:
+        seen.add(current)
+        last = current
+        if _known_profile(current) is not None:
+            return current
+        parent = _profile_json(game_dir, current).get("inheritsFrom")
+        if not isinstance(parent, str) or not parent.strip():
+            break
+        current = parent.strip()
+    return last
+
+
 def switch_candidates(
     game_dir: Path, current_version_id: str, kind: str = SWITCH_VERSION
 ) -> list[VersionIdentity]:
