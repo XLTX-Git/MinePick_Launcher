@@ -98,7 +98,7 @@ def test_the_page_free_check_reports_on_the_status_line(window, monkeypatch, app
                 on_finished()
 
     monkeypatch.setattr(about, "run_in_background", sync_run)
-    monkeypatch.setattr(about.updates, "cleanup_backups", lambda *a, **k: None)
+    monkeypatch.setattr(about.updates, "cleanup_leftovers", lambda *a, **k: None)
     monkeypatch.setattr(about.updates, "load_pending", lambda: None)
     monkeypatch.setattr(
         about.updates,
@@ -112,37 +112,39 @@ def test_the_page_free_check_reports_on_the_status_line(window, monkeypatch, app
     session.start()
     app.processEvents()
 
-    assert window.status_label.text() == i18n.tr("about.update.up_to_date")
+    assert "最新版本" in window.status_label.text()  # "already up to date", with the check time
     assert window.pages.peek("about") is None
 
 
-def test_close_installs_a_staged_update_without_building_the_about_page(
-    window, monkeypatch, ws_tmp, app
-):
+def test_close_does_not_install_a_staged_update(window, monkeypatch, ws_tmp, app):
+    """Installing replaces the running executable, so it always needs the user's click.
+
+    The old behaviour installed a staged update while the window closed. That is an install the user
+    never confirmed, and it is gone: closing keeps the download for the next start's offer.
+    """
     cfg, cfg_path = config.load()
     cfg.auto_update_mode = "download_install"
     cfg.window_start_mode = "default"
     config.save(cfg, cfg_path)
     staged = ws_tmp / "staged-update.exe"
     staged.write_bytes(b"MZ")
-    script = ws_tmp / "update-helper.cmd"
-    script.write_text("", encoding="utf-8")
-    launched: list[object] = []
+    installed: list[object] = []
 
     import gui.pages.about_page as about
+    from launcher.update import install as install_mod
 
     monkeypatch.setattr(about.updates, "load_pending", lambda: (staged, "9.9.9"))
     monkeypatch.setattr(about.updates, "can_self_update", lambda: True)
-    monkeypatch.setattr(about.updates, "write_install_script", lambda *a, **k: script)
     monkeypatch.setattr(
-        about.updates, "launch_install_script", lambda value: launched.append(value) or True
+        install_mod, "apply_and_restart", lambda *a, **k: installed.append((a, k))
     )
 
     assert window.pages.peek("about") is None
     window.close()
     app.processEvents()
 
-    assert launched == [script], "the staged update was not handed to the install helper on exit"
+    assert installed == [], "closing the window installed an update without a click"
+    assert staged.is_file(), "the staged download must stay for the next start"
     assert window.pages.peek("about") is None, "closing built the About page"
 
 

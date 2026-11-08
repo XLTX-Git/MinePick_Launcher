@@ -1030,13 +1030,12 @@ def test_versions_refresh_does_not_park_focus_on_uninstall(app, monkeypatch, ws_
         apply_theme("dark")  # restore the default theme for other cases
 
 
-def test_about_page_modes_and_credits(app, monkeypatch, ws_tmp):
-    """The About page offers the four update modes, saves the choice and renders every credit."""
+def test_about_page_update_settings_and_credits(app, monkeypatch, ws_tmp):
+    """The About page offers the two update switches, saves the choice and renders every credit."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data19"))
     from PySide6.QtWidgets import QLabel
 
     import gui.pages.about_page as about
-    from gui.pages.about_page import MODE_KEYS
     from gui.theme import apply_theme
     from launcher import config as config_mod
     from launcher import notices
@@ -1048,12 +1047,26 @@ def test_about_page_modes_and_credits(app, monkeypatch, ws_tmp):
     try:
         window = MainWindow()
         page = window.pages["about"]
-        assert page.mode_combo.count() == len(MODE_KEYS) == 4
+        # The two switches read the one existing config key; the legacy automatic-install mode is
+        # read as "download and ask" because replacing the executable now always needs a click.
         assert page.current_mode() == "download_notify"  # the default the user picked
-        page.mode_combo.setCurrentIndex(page.mode_combo.findData("off"))
+        page.auto_check.setChecked(False)
         app.processEvents()
-        cfg, _ = config_mod.load()
+        cfg, cfg_path = config_mod.load()
         assert cfg.auto_update_mode == "off"
+        page.auto_check.setChecked(True)
+        app.processEvents()
+        assert config_mod.load()[0].auto_update_mode == "download_notify"
+        page.auto_download.setChecked(False)
+        app.processEvents()
+        assert config_mod.load()[0].auto_update_mode == "notify"
+
+        cfg, cfg_path = config_mod.load()
+        cfg.auto_update_mode = "download_install"  # a config written by the old version
+        config_mod.save(cfg, cfg_path)
+        page.load()
+        assert page.current_mode() == "download_notify"
+
         labels = [label.text() for label in page.findChildren(QLabel)]
         for entry in notices.all_entries():
             assert any(entry.name in text for text in labels), f"credit not rendered: {entry.name}"
@@ -1103,9 +1116,10 @@ def test_about_source_button_opens_the_repository(app, monkeypatch, ws_tmp):
 
 
 def test_about_check_download_and_install_refusal(app, monkeypatch, ws_tmp):
-    """A stub dispatcher keeps this synchronous: no threads, and the prompts never block."""
+    """A stub dispatcher keeps this synchronous: no threads, and the install never gets to swap."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data21"))
     import gui.pages.about_page as about
+    from gui import i18n
     from gui.theme import apply_theme
 
     apply_theme("dark")
@@ -1129,10 +1143,11 @@ def test_about_check_download_and_install_refusal(app, monkeypatch, ws_tmp):
         version="9.9.9",
         tag="v9.9.9",
         page_url="https://example.invalid/release",
-        notes="",
+        notes="## 更新内容\n- 修复了自动更新",
         exe_url="https://example.invalid/exe",
         exe_name="MinePick_Launcher.exe",
         exe_size=2,
+        published_at="2026-11-01T09:00:00Z",
     )
     monkeypatch.setattr(about, "run_in_background", _sync)
     monkeypatch.setattr(
@@ -1143,22 +1158,39 @@ def test_about_check_download_and_install_refusal(app, monkeypatch, ws_tmp):
         ),
     )
     monkeypatch.setattr(about.updates, "download_release_exe", lambda *a, **k: staged)
-    monkeypatch.setattr(about.AboutPage, "_prompt_install", lambda self, version: None)
     from gui.main_window import MainWindow
 
     window = None
     try:
         window = MainWindow()
         page = window.pages["about"]
-        page.mode_combo.setCurrentIndex(page.mode_combo.findData("download_notify"))
+        page.auto_download.setChecked(False)  # "notify": do not start the download automatically
         page.check_updates()
         app.processEvents()
         assert "9.9.9" in window.status_label.text()
+        assert "9.9.9" in page.state_label.text()
+        assert not page.download_button.isHidden()
+        assert not page.release_box.isHidden()
+        assert "2026-11-01" in page.published_label.text()
+        assert not page.notes_button.isHidden()  # clickable release notes, collapsed by default
+        assert page.notes_label.isHidden()
+        page.notes_button.click()
+        assert not page.notes_label.isHidden()
+
+        page.download_button.click()
+        app.processEvents()
         assert page.has_pending_install() is True
-        assert not page.open_page_button.isHidden()
+        assert not page.restart_button.isHidden()
+        # A source checkout can download but not install; say so before the click, not only after.
+        assert page.state_label.text() == i18n.tr("about.update.install.source")
+
         # installing must be refused from a source checkout instead of touching anything
-        page.install_now()
-        assert "无法自动安装" in window.status_label.text()
+        page.restart_button.click()
+        app.processEvents()
+        assert page.state_label.text() == i18n.tr("about.update.install.source")
+        assert not page.retry_button.isHidden()
+        assert staged.read_bytes() == b"MZ"  # the refused install never modified the download
+        assert not list(ws_tmp.glob("*.old"))
     finally:
         if window is not None:
             window.close()

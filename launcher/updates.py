@@ -15,10 +15,12 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Update check and self-update: query the GitHub release, compare versions, stage and swap the EXE.
+"""Update check and download: query the GitHub release, compare versions, stream and verify the EXE.
 
 GitHub Releases is the only source. Everything here is synchronous and Qt-free, so the GUI can run it
-on a worker thread and the tests can call it directly.
+on a worker thread and the tests can call it directly. The local half - replacing the running
+executable and restarting it - lives in :mod:`launcher.update.install`; this module never touches the
+install directory.
 
 Failure policy (see the standard process document, [P19]): whenever the download or the swap cannot be
 verified, nothing is installed and the caller is expected to offer the release page instead. A failed
@@ -69,11 +71,13 @@ ACCEPTED_SIGNATURE_STATUSES = {"valid", "unknownerror", "nottrusted"}
 
 
 class UpdateError(RuntimeError):
-    """Update failure carrying an i18n key suffix: network / http / parse / no_asset / size / signature.
+    """Update failure carrying an i18n key suffix: network / http / parse / no_asset / no_release / size / signature.
 
     ``signature`` is the existing "the download failed verification" bucket and also covers a
     SHA-256 digest mismatch: the GUI/i18n layer keys its message off it, and a download the release
-    did not publish is exactly what that message describes.
+    did not publish is exactly what that message describes. ``no_release`` means the requested
+    channel had no usable published release (stable's latest was a prerelease, or the beta list was
+    empty).
     """
 
     def __init__(self, code: str, detail: str = "") -> None:

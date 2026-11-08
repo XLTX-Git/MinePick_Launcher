@@ -72,9 +72,10 @@ def test_about_page_has_no_group_boxes_and_three_titled_cards(page):
     assert page.findChildren(QGroupBox) == [], (
         "the About page still builds a QGroupBox: its title would be painted on the frame again"
     )
-    # The group box used to supply this dropdown's accessible name; the card does not, so the
-    # page has to name the field itself (WCAG 4.1.2).
-    assert page.mode_combo.accessibleName() == i18n.tr("about.update.mode.title")
+    # The group box used to supply the old dropdown's accessible name; the card does not, so the
+    # page has to name each field itself (WCAG 4.1.2).
+    assert page.auto_check.accessibleName() == i18n.tr("about.update.auto_check")
+    assert page.auto_download.accessibleName() == i18n.tr("about.update.auto_download")
     cards = _cards(page)
     expected = [
         i18n.tr("about.info.title"),
