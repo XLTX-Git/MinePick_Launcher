@@ -246,6 +246,20 @@ def test_unknown_exception_type_falls_back_to_protocol_error(fake, session_facto
     assert session.failure_key() == "tools.fail.5"
 
 
+def test_a_stale_waiting_poll_cannot_clear_a_command_failure(fake, session_factory) -> None:
+    """A 400 from /state/guesting is not erased by the waiting response already in flight."""
+    session = session_factory(fake)
+    assert wait_until(lambda: session.state() is LinkState.IDLE)
+    client = TerracottaClient(fake.port, timeout=0.5)
+    try:
+        session._fail("tools.fail.bad_code")
+        session._consume_state({"state": "waiting", "index": 99}, client)
+        assert session.state() is LinkState.FAILED
+        assert session.failure_key() == "tools.fail.bad_code"
+    finally:
+        client.close()
+
+
 # ------------------------------------------------------------------ network failures
 
 

@@ -567,6 +567,11 @@ class TerracottaLinkSession:
         if isinstance(index, bool) or not isinstance(index, int) or not isinstance(name, str):
             raise TerracottaError("tools.fail.network", "malformed /state response")
         with self._lock:
+            # A command failure has to stay on screen until the user retries. The poller is
+            # stopped by _fail(), but one response can already be in flight; without this latch
+            # it would overwrite the failure with the stale "waiting" the command was sent from.
+            if self._state is LinkState.FAILED and self._failure_key:
+                return False
             if index <= self._index:
                 return False  # stale or repeated answer: the documented ignore rule
             self._index = index
