@@ -664,6 +664,9 @@ class InstancesPage(QWidget):
     instance_use_requested = Signal(str)
     #: The detail page's back control asks to return to the grid.
     back_requested = Signal()
+    #: The detail page's back control when the card was opened from the launch page: the window
+    #: returns to the launch page instead of the card grid, so the way in is the way out.
+    return_to_launch_requested = Signal()
     #: The detail view is on screen. The window uses this to hide the main navigation rail, because
     #: the detail page has an eight-entry sidebar of its own and two sidebars side by side do not fit.
     detail_shown = Signal()
@@ -825,11 +828,17 @@ class InstancesPage(QWidget):
 
     # ---------- page navigation ----------
 
-    def open_instance(self, instance_id: str) -> bool:
-        """Show one instance's detail page (the window calls this for every drill-down route)."""
+    def open_instance(self, instance_id: str, *, origin: str = "list") -> bool:
+        """Show one instance's detail page (the window calls this for every drill-down route).
+
+        ``origin`` names the page that asked for it, and only decides where the back control goes and
+        what it says: the card grid returns to the grid, the launch page returns to the launch page.
+        """
         found = self.select_instance(instance_id)
         if not found:
             return False
+        self._detail_origin = origin
+        self.detail_page.set_back_origin(origin)
         self.detail_page.detail_stack.setCurrentWidget(self.detail)
         self.view_stack.setCurrentWidget(self.detail_page)
         self.detail_page.focus_back_button()
@@ -915,8 +924,12 @@ class InstancesPage(QWidget):
         return self.view_stack.currentWidget()
 
     def _on_back_clicked(self) -> None:
+        origin = getattr(self, "_detail_origin", "list")
         self.show_list()
-        self.back_requested.emit()
+        if origin == "launch":
+            self.return_to_launch_requested.emit()
+        else:
+            self.back_requested.emit()
 
     def _open_requested(self, instance_id: str) -> None:
         self.instance_open_requested.emit(instance_id)

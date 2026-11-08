@@ -358,6 +358,7 @@ class MainWindow(QMainWindow):
                 ("back_requested", self._on_instances_back),
                 # The instance detail page replaces the main rail with its own sidebar: the page says
                 # which of its two views is on screen, and the window shows exactly one rail.
+                ("return_to_launch_requested", self._on_instance_detail_return_to_launch),
                 ("detail_shown", self._on_instance_detail_shown),
                 ("list_shown", self._on_instance_list_shown),
             ],
@@ -702,10 +703,15 @@ class MainWindow(QMainWindow):
         self.pages["launch"].set_version_id(instance_id)  # writes config.selected_instance
         self.sidebar.setCurrentRow(NAV_KEYS.index("launch"))
 
-    def _goto_instance(self, version_id: str) -> None:
+    def _goto_instance(self, version_id: str, origin: str = "list") -> None:
         """Open one instance's detail page, whichever page asked for it."""
         self.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
-        self.pages["instances"].open_instance(version_id)
+        self.pages["instances"].open_instance(version_id, origin=origin)
+
+    def _on_instance_detail_return_to_launch(self) -> None:
+        """The detail page was opened from the launch page: the way back is the launch page."""
+        self.set_nav_rail_visible(True)
+        self.sidebar.setCurrentRow(NAV_KEYS.index("launch"))
 
     def _on_instances_back(self) -> None:
         """The detail page's back control: return to the card grid on the instances page."""
@@ -717,7 +723,7 @@ class MainWindow(QMainWindow):
         """Open the per-instance settings card of the profile selected on the launch page."""
         from gui.pages.instance_detail import TAB_OVERVIEW
 
-        self._goto_instance(version_id)
+        self._goto_instance(version_id, origin="launch")
         self.pages["instances"].detail.set_tab(TAB_OVERVIEW)
 
     def _goto_account(self) -> None:

@@ -4774,6 +4774,12 @@ class InstanceDetailPage(QWidget):
         self.detail_stack.setCurrentWidget(self.detail)
         self.detail.set_instance(instance_id)
 
+    def set_back_origin(self, origin: str) -> None:
+        """Name the page the back control leads to: the card grid, or the launch page."""
+        key = "instances.detail.back.launch" if origin == "launch" else "instances.detail.back"
+        self.back_button.setText("← " + tr(key))
+        self.back_button.setAccessibleName(tr(key))
+
     def focus_back_button(self) -> None:
         """Keyboard users land on the way back, not on a card that is now hidden."""
         self.back_button.setFocus(Qt.FocusReason.OtherFocusReason)
