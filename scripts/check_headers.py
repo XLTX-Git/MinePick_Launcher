@@ -27,6 +27,7 @@ repository root takes precedence when present.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -75,7 +76,23 @@ def header_lines() -> list[str]:
 
 
 def iter_project_files() -> list[Path]:
-    """Every tracked .py file under the repository root, excluding build artifacts."""
+    """Every tracked .py file under the repository root, excluding build artifacts.
+
+    Asks ``git ls-files`` first. Walking the tree instead would demand a header from every local
+    scratch script too - the ignored ones (``_preview/``, ``tests/.work/``) are never committed, so
+    a red gate on them says nothing about the repository.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z", "*.py"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            check=True,
+        ).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    if out:
+        return sorted(PROJECT_ROOT / name for name in out.split("\0") if name)
     files = []
     for path in sorted(PROJECT_ROOT.rglob("*.py")):
         parts = path.relative_to(PROJECT_ROOT).parts
