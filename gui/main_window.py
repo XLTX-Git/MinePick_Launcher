@@ -365,6 +365,7 @@ class MainWindow(QMainWindow):
         """
         return {
             "account": [("account_changed", self._on_account_changed)],
+            "tools": [("open_multiplayer_requested", self._on_open_multiplayer_requested)],
             "launch": [
                 ("account_changed", self._on_launch_account_changed),
                 # 实例选择 opens the card grid (where an instance can actually be chosen), not the
@@ -655,6 +656,19 @@ class MainWindow(QMainWindow):
 
     def _on_versions_changed(self) -> None:
         self.pages["launch"].refresh_versions()
+
+    def _on_open_multiplayer_requested(self, address: str) -> None:
+        """The 联机 page's "打开多人游戏" can only hand the address over: Minecraft has no IPC.
+
+        Launching the instance again to reach its multiplayer screen would start a second game
+        process (and, for a host, a second world), which is not what the button means. Copying the
+        direct address and pointing at 多人游戏 › 直接连接 is the honest, working substitute.
+        """
+        address = str(address or "").strip()
+        if not address:
+            return
+        QApplication.clipboard().setText(address)
+        self.set_status(tr("tools.joined.copied", address))
 
     def _fade_in_current_page(self) -> None:
         """Short fade when switching pages: cheap, and it hides the layout jump.
@@ -1179,6 +1193,13 @@ class MainWindow(QMainWindow):
             stop_game = getattr(launch, "shutdown_game_process", None)
             if callable(stop_game):
                 stop_game()
+        # 工具 › 联机 polls Terracotta while its page exists. Closing the window stops the poller;
+        # the Terracotta process itself is detached on purpose, so the room survives the launcher.
+        tools = self.pages.peek("tools")
+        if tools is not None:
+            stop_tools = getattr(tools, "stop_background_work", None)
+            if callable(stop_tools):
+                stop_tools()
         from gui import workers
 
         workers.shutdown_game_processes()  # also covers a watcher whose page was rebuilt

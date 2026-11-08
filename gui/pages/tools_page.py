@@ -29,18 +29,23 @@ at paint time instead of carrying their own colours.
 from __future__ import annotations
 
 import logging
+import re
+import threading
 from collections.abc import Callable, Iterable
 
-from PySide6.QtCore import QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QSizePolicy,
     QStackedWidget,
     QTabWidget,
@@ -48,15 +53,28 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, theme
-from gui.widgets import add_page_top_inset, build_download_progress, style_page_layout
+from gui import i18n, paint_utils, theme
+from gui.widgets import (
+    add_page_top_inset,
+    build_download_progress,
+    style_page_layout,
+    widget_alive,
+)
+from gui.workers import run_in_background
 from launcher.link import (
+    ComponentStatus,
     LinkDifficulty,
+    LinkDownloadProgress,
     LinkMember,
     LinkSession,
     LinkState,
+    ProcessStatus,
+    SelfCheckReport,
+    StunVerdict,
     default_link_session,
+    skins,
 )
+from launcher.link.mirrors import MIRRORS, read_report
 
 tr = i18n.tr
 log = logging.getLogger(__name__)
@@ -72,6 +90,18 @@ SCREEN_STATES: tuple[LinkState, ...] = (
     LinkState.CONNECTING,
     LinkState.JOINED,
 )
+#: Member avatars use the height of the ready row (40 px) minus its 8 px vertical padding.
+MEMBER_AVATAR_SIZE = 24
+#: A Minecraft name is ASCII by rule; the letter avatar takes its first letter or digit.
+_AVATAR_LETTER = re.compile(r"[A-Za-z0-9]")
+_STUN_VERDICT_INDEX = {
+    StunVerdict.UNKNOWN: 0,
+    StunVerdict.CONE: 1,
+    StunVerdict.SYMMETRIC: 2,
+    StunVerdict.BLOCKED: 3,
+    StunVerdict.TIMEOUT: 4,
+    StunVerdict.ERROR: 5,
+}
 _DIFFICULTY_INDEX = {
     LinkDifficulty.EASY: 0,
     LinkDifficulty.MEDIUM: 1,
@@ -93,6 +123,62 @@ def _difficulty_labels() -> list[str]:
     """The three localized difficulty names, in ``LinkDifficulty`` order."""
     labels = _lines("tools.difficulty")
     return labels if len(labels) >= 3 else ["", "", ""]
+
+
+def _avatar_initial(member: LinkMember) -> str:
+    """The letter avatar's character: first ASCII letter or digit, upper-cased.
+
+    A Minecraft name is ``[A-Za-z0-9_]{3,16}``, so this only ever falls back for a value that is
+    not a player name (a server name, an author) or is malformed: a CJK character or an emoji would
+    otherwise become a tofu box. ``member.avatar`` is an explicit display initial; it goes through
+    the same rule so a backend cannot smuggle a glyph into the circle.
+    """
+    for candidate in (member.avatar, member.name):
+        match = _AVATAR_LETTER.search(str(candidate or ""))
+        if match:
+            return match.group(0).upper()
+    return "?"
+
+
+def _format_mb(byte_count: int) -> str:
+    """One decimal place, the same precision the onboarding copy uses ("约 8MiB")."""
+    return f"{max(0, int(byte_count)) / (1024 * 1024):.1f}"
+
+
+def _verdict_text(verdict: StunVerdict) -> str:
+    """The localized UDP verdict; index order matches ``tools.net.verdicts``."""
+    lines = _lines("tools.net.verdicts")
+    index = _STUN_VERDICT_INDEX.get(verdict, len(lines) - 1)
+    return lines[index] if index < len(lines) else ""
+
+
+def _download_icon(size: int = 24) -> QIcon:
+    """A white down-arrow for the primary download button.
+
+    Painted rather than typed as U+2193: the button's 4px border and 12px padding leave a 32px
+    control no room for a text glyph (measured: the arrow was clipped to nothing), and an icon
+    keeps the square primary button readable at its required 32x32 size. The colour is the theme's
+    ``FG_SELECTED`` token, i.e. the same ink the base ``QPushButton`` rule paints its label with.
+    """
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(_tokens().get("FG_SELECTED", "#ffffff")), max(1.5, size / 10.0))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    center = size / 2.0
+    painter.drawLine(center, size * 0.18, center, size * 0.78)
+    painter.drawLine(size * 0.28, size * 0.54, center, size * 0.78)
+    painter.drawLine(size * 0.72, size * 0.54, center, size * 0.78)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _chevron_icon(expanded: bool, size: int = 10) -> QPixmap:
+    """The disclosure arrow, drawn by the shared helper (no glyph fallback to a tofu box)."""
+    return paint_utils.chevron_pixmap(expanded, size)
 
 
 def _default_instances() -> list[tuple[str, str]]:
@@ -192,6 +278,102 @@ class _Spinner(QWidget):
         painter.end()
 
 
+class _MemberAvatar(QWidget):
+    """One member's 24px avatar: the real skin face for a premium UUID, a letter otherwise.
+
+    The letter is painted first and is exactly the disc/tint/letter the ready list always showed,
+    so an offline member (or a failed skin lookup) does not change size, position or colour. A
+    premium member's texture is fetched through the same :mod:`gui.paint_utils` cache the account
+    pages use: UUID -> session-server URL -> skin texture -> face crop, all on the worker pool. The
+    widget never waits for the network; it upgrades itself when the answer arrives.
+    """
+
+    def __init__(self, member: LinkMember, diameter: int = MEMBER_AVATAR_SIZE) -> None:
+        super().__init__()
+        self._member = member
+        self._diameter = diameter
+        self._face = None
+        self._skin_url = ""
+        self.setFixedSize(diameter, diameter)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    # -- paint ------------------------------------------------------------
+    def paintEvent(self, event) -> None:
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._face is not None:
+            path = QPainterPath()
+            path.addEllipse(QRectF(self.rect()))
+            painter.setClipPath(path)
+            painter.drawPixmap(self.rect(), self._face)
+            painter.end()
+            return
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(tokens["ACCENT_TINT"]))
+        painter.drawEllipse(self.rect())
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(QColor(tokens["ACCENT_TEXT"]))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, _avatar_initial(self._member))
+        painter.end()
+
+    # -- skin -------------------------------------------------------------
+    def load_skin(self) -> None:
+        """Kick off the background lookup when the member has a premium UUID."""
+        member = self._member
+        if not (member.premium and member.uuid):
+            return  # offline, or a backend (Terracotta v0.4.2) that provides no UUID
+        url = skins.cached_skin_url(member.uuid)
+        if url:
+            self._use_skin_url(url)
+            return
+        run_in_background(
+            lambda: skins.resolve_skin_url(member.uuid),
+            on_result=self._on_skin_url,
+        )
+
+    def _on_skin_url(self, url) -> None:
+        if not widget_alive(self) or not str(url or ""):
+            return
+        self._use_skin_url(str(url))
+
+    def _use_skin_url(self, url: str) -> None:
+        self._skin_url = url
+
+        def apply(source, expected: str = url) -> None:
+            if source is None or not widget_alive(self) or self._skin_url != expected:
+                return
+            face = paint_utils.skin_face_pixmap(source, self._diameter)
+            if face is None:
+                return  # not a skin texture: the letter stays
+            self._face = face
+            self.update()
+
+        if not paint_utils.watch_skin(url, apply):
+            return  # already cached (painted above) or another download will call back
+        run_in_background(
+            lambda: self._download_skin(url),
+            on_result=lambda data: paint_utils.finish_skin(url, data),
+            on_error=lambda _message: paint_utils.finish_skin(url, None),
+        )
+
+    @staticmethod
+    def _download_skin(url: str) -> bytes:
+        from launcher.meta.manifest import _new_client
+
+        client = _new_client()
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            return response.content
+        finally:
+            client.close()
+
+
+
 class ToolsPage(QWidget):
     """工具 › 联机: the page depends only on the :class:`LinkSession` interface."""
 
@@ -199,7 +381,9 @@ class ToolsPage(QWidget):
     #: safe later; with the fake everything happens on the GUI thread and is delivered immediately.
     session_changed = Signal()
     #: The progress callback is itself a signal so a real downloader may report from a worker.
-    download_progress = Signal(int)
+    download_progress = Signal(object)
+    #: The self-check worker's report, delivered from its thread as a queued signal.
+    self_check_ready = Signal(object)
     #: Reserved for the next change: opening multiplayer needs a real launch path.
     open_multiplayer_requested = Signal(str)
 
@@ -217,11 +401,22 @@ class ToolsPage(QWidget):
         self._unsubscribe: Callable[[], None] | None = None
         self._last_state: LinkState | None = None
         self._pages: dict[LinkState, QWidget] = {}
+        self._disposed = False
+        self._downloading = False
+        self._download_failure = ""
+        self._stun_verdict = StunVerdict.UNKNOWN
+        self._self_check_thread: threading.Thread | None = None
+        self._last_self_check: SelfCheckReport | None = None
+        self._selected_channel = ""
 
         self._build_ui()
         self.session_changed.connect(self._sync)
         self.download_progress.connect(self._on_download_progress)
-        self.destroyed.connect(self._on_destroyed)
+        self.self_check_ready.connect(self._on_self_check_ready)
+        # A bound method of the page itself is not called for its own `destroyed` signal: Qt has
+        # already severed the object's connections by then (measured with PySide6 6.11). The lambda
+        # is a plain callable, so it still runs and can stop the poller before the C++ object goes.
+        self.destroyed.connect(lambda *_args: self._dispose_session())
         self._attach_session(self._session)
         self._refresh_instances()
         self._sync()
@@ -256,7 +451,6 @@ class ToolsPage(QWidget):
 
         tab_layout.addWidget(self._build_banner())
         self.state_stack = QStackedWidget()
-        tab_layout.addWidget(self.state_stack, 1)
 
         self._pages[LinkState.NOT_DOWNLOADED] = self._build_onboarding_page()
         self._pages[LinkState.IDLE] = self._build_idle_page()
@@ -267,6 +461,17 @@ class ToolsPage(QWidget):
         self._failed_page = self._build_failed_page()
         for page in (*self._pages.values(), self._failed_page):
             self.state_stack.addWidget(page)
+
+        # The self-check card sits beside the state stack, not below it: four diagnostic rows under
+        # the layouts would push the page past the window's 610px height at the reviewed width.
+        # Beside it, the card costs horizontal room the tab has and no vertical room the pages lack.
+        content = QHBoxLayout()
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(8)
+        content.addWidget(self.state_stack, 1)
+        self.self_check_card = self._build_self_check_card()
+        content.addWidget(self.self_check_card, 0, Qt.AlignmentFlag.AlignTop)
+        tab_layout.addLayout(content, 1)
 
         self.tabs.addTab(tab_page, tr("tools.tab.link"))
         card_layout.addWidget(self.tabs, 1)
@@ -300,6 +505,63 @@ class ToolsPage(QWidget):
         layout.addStretch(1)
         layout.addWidget(disable)
         return footer
+
+    def _build_self_check_card(self) -> QFrame:
+        """The 网络自检 card: component, process, LAN world and the UDP hole-punch verdict.
+
+        Rows 1-2 and 3 are refreshed from the session on every state change; row 4 is only probed
+        when the user asks, because the probe sends two UDP datagrams to public STUN servers.
+        """
+        card = QFrame()
+        card.setObjectName("toolsInnerCard")
+        card.setMinimumWidth(270)
+        card.setMaximumWidth(320)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel(tr("tools.net.title"))
+        title.setObjectName("sectionTitle")
+        self.self_check_button = QPushButton(tr("tools.net.refresh"))
+        self.self_check_button.setObjectName("secondaryButton")
+        self.self_check_button.setFixedHeight(28)
+        self.self_check_button.clicked.connect(self._run_self_check)
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self.self_check_button)
+        layout.addLayout(header)
+
+        labels = _lines("tools.net.labels")
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(2)
+        self.self_check_values: list[QLabel] = []
+        for row, text in enumerate((labels + ["", "", "", ""])[:4]):
+            label = QLabel(text)
+            label.setObjectName("hint")
+            label.setMinimumWidth(96)
+            value = QLabel("\u2014")
+            value.setWordWrap(True)
+            grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(value, row, 1)
+            self.self_check_values.append(value)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+        self.self_check_component = self.self_check_values[0]
+        self.self_check_process = self.self_check_values[1]
+        self.self_check_lan = self.self_check_values[2]
+        self.self_check_udp = self.self_check_values[3]
+
+        note = QLabel(tr("tools.net.note"))
+        note.setObjectName("hint")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self._refresh_self_check_rows()
+        return card
 
     @staticmethod
     def _state_page() -> tuple[QWidget, QVBoxLayout]:
@@ -361,29 +623,33 @@ class ToolsPage(QWidget):
         row_title = QLabel(tr("tools.onboard.download"))
         row_title.setObjectName("toolsRowTitle")
         row_title.setWordWrap(True)
-        row_hint = QLabel(tr("tools.onboard.download_hint"))
-        row_hint.setObjectName("hint")
-        row_hint.setWordWrap(True)
+        self.download_status = QLabel(tr("tools.onboard.download_hint"))
+        self.download_status.setObjectName("hint")
+        self.download_status.setWordWrap(True)
         text_box.addWidget(row_title)
-        text_box.addWidget(row_hint)
+        text_box.addWidget(self.download_status)
         self.download_progress_row, self.download_progress_bar, _ = build_download_progress(
             "linkCoreProgress"
         )
         self.download_progress_bar.setRange(0, PROGRESS_MAX)
         self.download_progress_bar.setValue(0)
         self.download_progress_bar.setAccessibleName(tr("tools.onboard.download"))
-        text_box.addWidget(self.download_progress_row)
+        self.download_progress_row.setMinimumWidth(220)
+        self.download_progress_row.setMaximumWidth(340)
         row_layout.addLayout(text_box, 1)
+        row_layout.addWidget(self.download_progress_row, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.download_button = QPushButton("\u2193")
-        self.download_button.setObjectName("toolsIconButton")
-        self.download_button.setFixedSize(40, 40)
+        self.download_button = QPushButton()
+        # Deliberately no objectName: the base QPushButton rule is the primary (filled) style, and
+        # #secondaryButton is the outlined variant. The call to action is the primary one.
+        self.download_button.setFixedSize(32, 32)
         self.download_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.download_button.setAccessibleName(tr("tools.onboard.download"))
+        self.download_button.setIcon(_download_icon())
+        self.download_button.setIconSize(QSize(16, 16))
         self.download_button.clicked.connect(self._download_core)
         row_layout.addWidget(self.download_button, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(row)
-        layout.addStretch(1)
 
         self.channels_button = QPushButton()
         self.channels_button.setObjectName("toolsDisclosure")
@@ -397,22 +663,65 @@ class ToolsPage(QWidget):
         channels_layout.setSpacing(8)
         channels_label = QLabel(tr("tools.onboard.channels"))
         channels_label.setObjectName("toolsDisclosureText")
-        self.channels_arrow = QLabel("\u25be")
+        self.channels_arrow = QLabel()
         self.channels_arrow.setObjectName("toolsDisclosureArrow")
-        self.channels_arrow.setFixedWidth(16)
+        self.channels_arrow.setFixedSize(16, 16)
         self.channels_arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.channels_arrow.setPixmap(_chevron_icon(False))
         channels_layout.addWidget(channels_label)
         channels_layout.addStretch(1)
         channels_layout.addWidget(self.channels_arrow)
         self.channels_button.toggled.connect(self._on_channels_toggled)
         layout.addWidget(self.channels_button)
 
-        self.channels_detail = QLabel(tr("tools.onboard.channels_detail"))
-        self.channels_detail.setObjectName("hint")
-        self.channels_detail.setWordWrap(True)
+        self.channels_detail = self._build_channels()
         self.channels_detail.setVisible(False)
         layout.addWidget(self.channels_detail)
+        layout.addStretch(1)
         return page
+
+    def _build_channels(self) -> QWidget:
+        """The three official mirrors, their last measured latency and the manual-choice rows.
+
+        The manual choice is visual only in this round: the downloader still follows the race and
+        the environment override. The rows and the selection are here so the choice can be wired
+        without redesigning the card; the report says so explicitly.
+        """
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self.channel_buttons: dict[str, QRadioButton] = {}
+        self.channel_speed_labels: dict[str, QLabel] = {}
+        group = QButtonGroup(box)
+        group.setExclusive(True)
+        for mirror in MIRRORS:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            radio = QRadioButton(mirror.label)
+            radio.setAccessibleName(mirror.label)
+            radio.toggled.connect(
+                lambda checked, key=mirror.key: self._on_channel_toggled(key, checked)
+            )
+            speed = QLabel(tr("tools.onboard.channels.unmeasured"))
+            speed.setObjectName("hint")
+            speed.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            group.addButton(radio)
+            self.channel_buttons[mirror.key] = radio
+            self.channel_speed_labels[mirror.key] = speed
+            row_layout.addWidget(radio)
+            row_layout.addStretch(1)
+            row_layout.addWidget(speed)
+            layout.addWidget(row)
+        footer = QLabel(tr("tools.onboard.channels.footer"))
+        footer.setObjectName("hint")
+        footer.setWordWrap(True)
+        layout.addWidget(footer)
+        self._refresh_channel_speeds()
+        return box
+
 
     def _build_idle_page(self) -> QWidget:
         page, layout = self._state_page()
@@ -485,17 +794,17 @@ class ToolsPage(QWidget):
         heading.setSpacing(8)
         heading.addStretch(1)
         heading.addWidget(_Spinner())
-        title = QLabel(tr("tools.wait.title"))
-        title.setObjectName("toolsCenterTitle")
-        heading.addWidget(title)
+        self.wait_title = QLabel(tr("tools.wait.title"))
+        self.wait_title.setObjectName("toolsCenterTitle")
+        heading.addWidget(self.wait_title)
         heading.addStretch(1)
         layout.addLayout(heading)
 
-        hint = QLabel(tr("tools.wait.hint"))
-        hint.setObjectName("hint")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self.wait_hint = QLabel(tr("tools.wait.hint"))
+        self.wait_hint.setObjectName("hint")
+        self.wait_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.wait_hint.setWordWrap(True)
+        layout.addWidget(self.wait_hint)
 
         card = QFrame()
         card.setObjectName("toolsStepCard")
@@ -730,18 +1039,37 @@ class ToolsPage(QWidget):
     def _attach_session(self, session: LinkSession) -> None:
         self._detach_session()
         self._session = session
-        self._unsubscribe = session.add_listener(self.session_changed.emit)
+        self._unsubscribe = session.add_listener(self._emit_session_changed)
+
+    def _emit_session_changed(self) -> None:
+        """A session may notify from a worker thread; the signal queues it onto the GUI thread."""
+        if self._disposed:
+            return
+        try:
+            self.session_changed.emit()
+        except RuntimeError:
+            pass  # the page was destroyed between the notification and this call
 
     def _detach_session(self) -> None:
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
 
-    def _on_destroyed(self, *_args) -> None:
-        self._detach_session()
-
     def set_session(self, session: LinkSession) -> None:
         """Replace the backend, for tests and the screenshot tool."""
+        previous = getattr(self, "_session", None)
+        if previous is not None and previous is not session:
+            dispose = getattr(previous, "dispose", None)
+            if callable(dispose):
+                try:
+                    dispose()
+                except Exception:
+                    log.debug("停止旧联机会话失败", exc_info=True)
+        self._disposed = False
+        self._downloading = False
+        self._download_failure = ""
+        self._stun_verdict = StunVerdict.UNKNOWN
+        self._last_self_check = None
         self._attach_session(session)
         self._refresh_instances()
         self._sync()
@@ -753,6 +1081,10 @@ class ToolsPage(QWidget):
     def on_theme_applied(self) -> None:
         """The painted discs/spinner read tokens at paint time; one repaint is all they need."""
         self.update()
+        if self.download_button.text():
+            return  # the retry label is text, not a painted icon
+        self.download_button.setIcon(_download_icon())
+        self.channels_arrow.setPixmap(_chevron_icon(self.channels_button.isChecked()))
 
     # ------------------------------------------------------------------ state rendering
     def _sync(self) -> None:
@@ -761,6 +1093,8 @@ class ToolsPage(QWidget):
         self.state_stack.setCurrentWidget(page)
         if state is LinkState.HOST_READY:
             self._apply_ready()
+        elif state is LinkState.HOST_WAITING:
+            self._apply_waiting()
         elif state is LinkState.CONNECTING:
             self._apply_connecting()
         elif state is LinkState.JOINED:
@@ -777,11 +1111,37 @@ class ToolsPage(QWidget):
                 and self.instance_combo.count() == 0
             ):
                 self._refresh_instances()
+        self._sync_download_row(state)
+        self._refresh_self_check_rows()
+        self._refresh_channel_speeds()
         self._update_join_enabled()
         self.create_button.setEnabled(
             state is LinkState.IDLE and bool(self.instance_combo.currentData())
         )
         self._last_state = state
+
+    def _apply_waiting(self) -> None:
+        """``host-starting`` is the same layout as ``host-scanning`` with a different title."""
+        phase = ""
+        getter = getattr(self._session, "phase", None)
+        if callable(getter):
+            phase = str(getter() or "")
+        self.wait_title.setText(
+            tr("tools.wait.starting") if phase == "host-starting" else tr("tools.wait.title")
+        )
+
+    def _sync_download_row(self, state: LinkState) -> None:
+        """Keep the onboarding row truthful: progress while transferring, retry after a failure."""
+        if state is not LinkState.NOT_DOWNLOADED:
+            if self._downloading or self._download_failure:
+                self._reset_download_row()
+            return
+        failure = self._session.failure_key()
+        if self._downloading and failure:
+            self._show_download_failure(failure)
+        elif self._download_failure and not self._downloading:
+            # A failure stays on screen with its retry button until the user retries.
+            self.download_button.setEnabled(True)
 
     def _apply_ready(self) -> None:
         code = self._session.room_code()
@@ -843,15 +1203,8 @@ class ToolsPage(QWidget):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
         name = member.name.strip()
-        layout.addWidget(
-            _RoundBadge(
-                member.avatar or name[:1] or "?",
-                diameter=24,
-                fill="ACCENT_TINT",
-                ink="ACCENT_TEXT",
-                pixel_size=11,
-            )
-        )
+        avatar = _MemberAvatar(member)
+        layout.addWidget(avatar)
         name_label = QLabel(name or "?")
         name_label.setObjectName("toolsMemberName")
         layout.addWidget(name_label)
@@ -867,25 +1220,94 @@ class ToolsPage(QWidget):
             state_label = QLabel(tr("tools.ready.online"))
             state_label.setObjectName("toolsOnlineText")
             layout.addWidget(state_label)
+        # The letter is already painted; a premium UUID upgrades it when the texture arrives.
+        avatar.load_skin()
         return row
 
     # ------------------------------------------------------------------ actions
     def _download_core(self) -> None:
         if self._session.state() is not LinkState.NOT_DOWNLOADED:
             return
+        if self._downloading:
+            return
+        self._downloading = True
+        self._download_failure = ""
+        self._show_download_progress(LinkDownloadProgress(permille=0))
         self.download_button.setEnabled(False)
-        self.download_progress_row.setVisible(True)
-        self.download_progress_bar.setValue(0)
+        self.download_button.setVisible(False)
         try:
-            self._session.download_core(self.download_progress.emit)
+            self._session.download_core(self._emit_download_progress)
         except Exception:
             log.exception("link core download failed")
-        finally:
-            self.download_button.setEnabled(True)
+            self._show_download_failure("tools.fail.download")
 
-    def _on_download_progress(self, value: int) -> None:
+    def _emit_download_progress(self, progress: LinkDownloadProgress) -> None:
+        """Called from the download thread; the signal carries the value to the GUI thread."""
+        if self._disposed:
+            return
+        try:
+            self.download_progress.emit(progress)
+        except RuntimeError:
+            pass  # the page was destroyed while the download was running
+
+    def _show_download_progress(self, progress: LinkDownloadProgress) -> None:
         self.download_progress_row.setVisible(True)
-        self.download_progress_bar.setValue(max(0, min(PROGRESS_MAX, int(value))))
+        self.download_progress_bar.setValue(max(0, min(PROGRESS_MAX, int(progress.permille))))
+        if progress.total_bytes > 0:
+            self.download_status.setText(
+                tr(
+                    "tools.onboard.downloading",
+                    _format_mb(progress.done_bytes),
+                    _format_mb(progress.total_bytes),
+                )
+            )
+
+    def _on_download_progress(self, value) -> None:
+        if isinstance(value, LinkDownloadProgress):
+            progress = value
+        elif isinstance(value, (int, float)):
+            progress = LinkDownloadProgress(permille=int(value))
+        else:
+            return
+        if not self._downloading:
+            return
+        self._show_download_progress(progress)
+
+    def _show_download_failure(self, key: str) -> None:
+        """Show the reason and a retry control in the same row; never a dialog."""
+        self._downloading = False
+        self._download_failure = str(key or "tools.fail.download")
+        self.download_progress_row.setVisible(False)
+        self.download_button.setVisible(True)
+        self.download_button.setEnabled(True)
+        self.download_button.setText(tr("tasks.retry"))
+        self.download_button.setIcon(QIcon())
+        self.download_button.setFixedSize(64, 32)
+        self.download_button.setAccessibleName(tr("tasks.retry"))
+        self.download_status.setText(tr(self._download_failure))
+        self._set_status_level("statusWarning")
+
+    def _reset_download_row(self) -> None:
+        self._downloading = False
+        self._download_failure = ""
+        self.download_progress_row.setVisible(False)
+        self.download_progress_bar.setValue(0)
+        self.download_button.setVisible(True)
+        self.download_button.setEnabled(True)
+        self.download_button.setText("")
+        self.download_button.setIcon(_download_icon())
+        self.download_button.setIconSize(QSize(16, 16))
+        self.download_button.setFixedSize(32, 32)
+        self.download_button.setAccessibleName(tr("tools.onboard.download"))
+        self.download_status.setText(tr("tools.onboard.download_hint"))
+        self._set_status_level("hint")
+
+    def _set_status_level(self, object_name: str) -> None:
+        self.download_status.setObjectName(object_name)
+        style = self.download_status.style()
+        if style is not None:
+            style.unpolish(self.download_status)
+            style.polish(self.download_status)
 
     def _join(self) -> None:
         code = self.join_edit.text().strip()
@@ -950,7 +1372,129 @@ class ToolsPage(QWidget):
 
     def _on_channels_toggled(self, checked: bool) -> None:
         self.channels_detail.setVisible(checked)
-        self.channels_arrow.setText("\u25b4" if checked else "\u25be")
+        self.channels_arrow.setPixmap(_chevron_icon(checked))
+        if checked:
+            self._refresh_channel_speeds()
+
+    def _on_channel_toggled(self, key: str, checked: bool) -> None:
+        """Remember the visual choice; the downloader still follows the race this round."""
+        if checked:
+            self._selected_channel = key
+
+    def _refresh_channel_speeds(self) -> None:
+        """Show the last measured latency per mirror, or 未测 when no race has run yet."""
+        report = read_report()
+        for key, label in self.channel_speed_labels.items():
+            latency = report.latency(key)
+            if latency is None:
+                label.setText(tr("tools.onboard.channels.unmeasured"))
+            else:
+                label.setText(tr("tools.onboard.channels.latency", latency))
+
+    # ------------------------------------------------------------------ network self-check
+    def _run_self_check(self) -> None:
+        if self._self_check_thread is not None and self._self_check_thread.is_alive():
+            return
+        runner = getattr(self._session, "self_check", None)
+        if not callable(runner):
+            self._on_self_check_ready(None)
+            return
+        self.self_check_button.setEnabled(False)
+        self.self_check_udp.setText("\u2026")
+        thread = threading.Thread(
+            target=self._self_check_worker,
+            args=(runner,),
+            name="tools-self-check",
+            daemon=True,
+        )
+        self._self_check_thread = thread
+        thread.start()
+
+    def _self_check_worker(self, runner: Callable[[], SelfCheckReport]) -> None:
+        try:
+            report = runner()
+        except Exception:
+            log.debug("网络自检失败", exc_info=True)
+            report = None
+        if self._disposed:
+            return
+        try:
+            self.self_check_ready.emit(report)
+        except RuntimeError:
+            pass  # page destroyed between the check and the delivery
+
+    def _on_self_check_ready(self, report) -> None:
+        self.self_check_button.setEnabled(True)
+        if not isinstance(report, SelfCheckReport):
+            self._stun_verdict = StunVerdict.ERROR
+            self._refresh_self_check_rows()
+            return
+        self._last_self_check = report
+        self._stun_verdict = report.stun
+        self._apply_component_status(report.component)
+        self._apply_process_status(report.process)
+        self._refresh_self_check_rows()
+
+    def _refresh_self_check_rows(self) -> None:
+        component_getter = getattr(self._session, "component_status", None)
+        if callable(component_getter):
+            try:
+                self._apply_component_status(component_getter())
+            except Exception:
+                log.debug("读取联机组件状态失败", exc_info=True)
+        else:
+            downloaded = self._session.state() is not LinkState.NOT_DOWNLOADED
+            self.self_check_component.setText(
+                tr("tools.net.component.ready", "\u2014")
+                if downloaded
+                else tr("tools.net.component.missing")
+            )
+        process_getter = getattr(self._session, "process_status", None)
+        if callable(process_getter):
+            try:
+                self._apply_process_status(process_getter())
+            except Exception:
+                log.debug("读取联机进程状态失败", exc_info=True)
+        else:
+            self._apply_process_status(ProcessStatus(False, None))
+        self.self_check_lan.setText(tr("tools.net.lan.auto"))
+        self.self_check_udp.setText(_verdict_text(self._stun_verdict))
+
+    def _apply_component_status(self, status: ComponentStatus) -> None:
+        if status.downloaded:
+            self.self_check_component.setText(
+                tr("tools.net.component.ready", status.version or "\u2014")
+            )
+        else:
+            self.self_check_component.setText(tr("tools.net.component.missing"))
+
+    def _apply_process_status(self, status: ProcessStatus) -> None:
+        if status.running and status.port:
+            self.self_check_process.setText(tr("tools.net.process.running", status.port))
+        else:
+            self.self_check_process.setText(tr("tools.net.process.stopped"))
+
+    # ------------------------------------------------------------------ lifecycle
+    def cancel_running_task(self) -> None:
+        """Language switch: drop the poller, keep the room (the process is detached)."""
+        self._dispose_session()
+
+    def stop_background_work(self) -> None:
+        """Window close: stop polling; the detached Terracotta process keeps its room."""
+        self._dispose_session()
+
+    def _dispose_session(self) -> None:
+        if self._disposed:
+            return
+        self._disposed = True
+        self._detach_session()
+        dispose = getattr(self._session, "dispose", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except Exception:
+                log.debug("停止联机会话失败", exc_info=True)
+
 
     # ------------------------------------------------------------------ test helpers / introspection
     def current_state(self) -> LinkState:
