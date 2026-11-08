@@ -405,7 +405,7 @@ def test_download_progress_is_shown_in_the_same_row(app) -> None:
             3_200_000, 8_135_914
         ).permille
         text = page.download_status.text()
-        assert "3.1" in text and "7.8" in text
+        assert "3.2" in text and "8.1" in text
     finally:
         _close(app, page)
 

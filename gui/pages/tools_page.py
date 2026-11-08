@@ -141,8 +141,8 @@ def _avatar_initial(member: LinkMember) -> str:
 
 
 def _format_mb(byte_count: int) -> str:
-    """One decimal place, the same precision the onboarding copy uses ("约 8MiB")."""
-    return f"{max(0, int(byte_count)) / (1024 * 1024):.1f}"
+    """One decimal place, in the decimal MB the row's example uses ("3.2 / 8.1 MB")."""
+    return f"{max(0, int(byte_count)) / 1_000_000:.1f}"
 
 
 def _verdict_text(verdict: StunVerdict) -> str:
