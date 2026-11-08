@@ -25,6 +25,7 @@ the launch flow (prepare -> run -> exit code), crash report viewer.
 import faulthandler
 import json
 import os
+import sys
 import time
 from types import SimpleNamespace
 from typing import Self
@@ -419,7 +420,16 @@ def test_e2e_launch_flow_runs_and_reports_exit(app, monkeypatch, ws_tmp):
     import gui.pages.launch_page as launch_page_mod
 
     argv = ["java", "-version"]
-    run_calls = []  # (argv, cwd, on_started)
+    run_calls = []  # (argv, cwd, kwargs)
+    real_thread = launch_page_mod.GameProcessThread
+
+    def make_thread(thread_argv, thread_cwd, **kwargs):
+        run_calls.append((thread_argv, thread_cwd, kwargs))
+        # The game itself is a real, short-lived process: the thread's exit result is what this test
+        # verifies, not a fake return value. Exit 7 stands in for the game's exit code.
+        return real_thread(
+            [sys.executable, "-u", "-c", "import sys; sys.exit(7)"], thread_cwd, **kwargs
+        )
 
     def fake_prepare(*args, **kwargs):
         return SimpleNamespace(
@@ -430,14 +440,8 @@ def test_e2e_launch_flow_runs_and_reports_exit(app, monkeypatch, ws_tmp):
             isolated=False,
         )
 
-    def fake_run_process(process_argv, process_cwd, on_started=None, **_kwargs):
-        run_calls.append((process_argv, process_cwd, on_started))
-        if on_started is not None:  # the real runner signals "process is up" first
-            on_started()
-        return 7
-
     monkeypatch.setattr(launch_page_mod, "prepare_launch", fake_prepare)
-    monkeypatch.setattr(launch_page_mod, "run_process", fake_run_process)
+    monkeypatch.setattr(launch_page_mod, "GameProcessThread", make_thread)
 
     from gui.main_window import MainWindow
 
@@ -448,11 +452,11 @@ def test_e2e_launch_flow_runs_and_reports_exit(app, monkeypatch, ws_tmp):
             page = window.pages["launch"]
             page.set_version_id("1.20.1")
             page.launch()
-            # the prepared command really reaches the process runner
+            # the prepared command really reaches the dedicated game thread
             assert _wait_until(app, lambda: bool(run_calls))
             assert run_calls[0][0] == argv
             assert run_calls[0][1] == cwd
-            assert run_calls[0][2] is None  # default behavior "keep": no after-launch start hook
+            assert run_calls[0][2].get("capture_tail") is True
             # the exit code lands on the window's single status line and the button becomes usable again
             assert _wait_until(app, lambda: "退出码: 7" in window.status_label.text())
             assert _wait_until(app, lambda: page.launch_button.isEnabled())

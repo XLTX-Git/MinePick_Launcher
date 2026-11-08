@@ -54,7 +54,12 @@ from gui.widgets import (
     disable_keeping_focus,
     set_app_status,
 )
-from gui.workers import run_in_background
+from gui.workers import (
+    GameProcessThread,
+    GameRunResult,
+    run_in_background,
+    start_game_process,
+)
 from launcher import config, paths
 from launcher.accessibility import TriggerSource
 from launcher.auth import AccountStore
@@ -63,7 +68,6 @@ from launcher.launch import (
     find_new_crash_reports,
     prepare_launch,
     resolve_launch_account,
-    run_process,
 )
 from launcher.meta.version import version_json_path
 
@@ -189,6 +193,10 @@ class LaunchPage(QWidget):
         super().__init__()
         self._version_id = ""
         self._version_choices: list[tuple[str, str]] = []
+        #: The running game process's watcher (a dedicated thread, never a pool slot), if any.
+        self._game_thread: GameProcessThread | None = None
+        #: True once the launcher is closing: late game signals are dropped instead of drawing dialogs.
+        self._game_closing = False
         # The skin URL this page's avatar slot currently belongs to; a download that finishes after a
         # switch must not paint the previous account's face.
         self._avatar_skin_url = ""
@@ -831,34 +839,63 @@ class LaunchPage(QWidget):
             )
         )
 
-        # After-launch behavior (keep / hide / exit) is handled via a signal
-        # bridge back to the main thread once the game process starts.
-        from gui.workers import ProgressBridge
-
+        # The game process runs on a thread of its own, never on the shared QThreadPool: a game lasts
+        # hours, and a pool slot parked in process.wait() that long is one slot every download and
+        # update in the session loses (see gui.workers.GameProcessThread). Its result arrives back
+        # here through a queued signal, exactly like a worker result.
         cfg2, _ = config.load()
-        start_bridge = ProgressBridge()
-        if cfg2.after_launch_behavior != "keep":
-            start_bridge.progress.connect(self._on_game_started)
-
-        def do_run() -> object:
-            started = __import__("time").time()
-            run = run_process(
-                command.argv,
-                command.cwd,
-                on_started=start_bridge if cfg2.after_launch_behavior != "keep" else None,
-                capture_tail=True,  # the tail is the only trace when the game dies before logging
-            )
-            crashes = find_new_crash_reports(command.cwd, started)
-            return run, crashes, started
-
-        run_in_background(
-            do_run,
-            on_result=self._on_game_exit,
-            on_error=lambda m: (
-                set_app_status(self, tr("launch.msg.run_error", m), "error"),
-                show_fatal(self, tr("launch.msg.run_error", m)),
-            ),
+        thread = GameProcessThread(
+            command.argv,
+            command.cwd,
+            capture_tail=True,  # the tail is the only trace when the game dies before logging
         )
+        if cfg2.after_launch_behavior != "keep":
+            thread.started.connect(self._on_game_started)
+        thread.exited.connect(self._on_game_exited)
+        thread.failed.connect(self._on_game_run_error)
+        thread.finished.connect(self._on_game_thread_finished)
+        self._game_closing = False
+        self._game_thread = thread
+        start_game_process(thread)
+
+    def _on_game_exited(self, run: GameRunResult) -> None:
+        """The game ended: look for crash reports, then take the old result path on the GUI thread."""
+        if self._game_closing:
+            return  # the launcher is going away; the exit is not something left to report
+        crashes = find_new_crash_reports(run.cwd, run.started)
+        self._on_game_exit((run, crashes, run.started))
+
+    def _on_game_run_error(self, message: str) -> None:
+        """The process could not be started (missing Java, missing working directory, ...)."""
+        if self._game_closing:
+            return
+        text = tr("launch.msg.run_error", message)
+        set_app_status(self, text, "error")
+        show_fatal(self, text)
+
+    def _on_game_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is self._game_thread:
+            self._game_thread = None
+        if thread is not None:
+            thread.deleteLater()
+
+    def shutdown_game_process(self) -> None:
+        """Stop watching the game process without terminating it.
+
+        Called from the window's close path. The thread only polls, so releasing it makes it return
+        within one poll interval and the window can close immediately; the game is an independent OS
+        process and keeps running (the after-launch "exit" mode promises exactly that). Waiting is
+        bounded: a close must never block for the length of a game.
+        """
+        thread = getattr(self, "_game_thread", None)
+        if thread is None:
+            return
+        self._game_closing = True
+        self._game_thread = None
+        if thread.isRunning():
+            thread.release()
+            thread.wait(2000)
 
     def _on_game_started(self, _value=None) -> None:
         from PySide6.QtWidgets import QApplication

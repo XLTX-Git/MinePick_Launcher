@@ -1141,6 +1141,17 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._quit_confirmed = True
+        # Stop watching a running game before the window goes away. The game itself is an independent
+        # process and keeps running (gui.workers.GameProcessThread explains why this is not QProcess);
+        # the wait is bounded by one poll tick, so a close never blocks for the length of a game.
+        launch = self.pages.peek("launch")
+        if launch is not None:
+            stop_game = getattr(launch, "shutdown_game_process", None)
+            if callable(stop_game):
+                stop_game()
+        from gui import workers
+
+        workers.shutdown_game_processes()  # also covers a watcher whose page was rebuilt
         from launcher import config
 
         page = self.pages.get("about")
