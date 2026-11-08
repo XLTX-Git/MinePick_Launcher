@@ -169,11 +169,11 @@ def test_without_tasks_the_icon_does_not_exist(window, app) -> None:
 
 
 def test_the_download_page_is_not_a_rail_entry(window) -> None:
-    """Eight rail items and eight rail pages: the page is a ninth stack page with no destination."""
+    """Nine rail items and nine rail pages: the page is a tenth stack page with no destination."""
     from gui.main_window import NAV_KEYS
 
-    assert len(NAV_KEYS) == 8
-    assert window.sidebar.count() == 8
+    assert len(NAV_KEYS) == 9
+    assert window.sidebar.count() == 9
     assert window.downloads_page() is None
     assert window.stack.count() == len(window.pages.built_keys())
 

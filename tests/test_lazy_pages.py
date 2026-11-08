@@ -17,7 +17,7 @@
 
 """Pages are built on first visit, and iterating still means "give me all of them".
 
-Startup used to construct all eight pages (1457 widgets in the real window) before the window appeared,
+Startup used to construct all nine pages (1457 widgets in the real window) before the window appeared,
 and the application stylesheet polished every one of them. These tests pin both halves of the contract:
 the first page is built at startup, and the audits/tests that walk every page keep getting all eight.
 """

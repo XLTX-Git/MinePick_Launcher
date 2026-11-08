@@ -113,10 +113,10 @@ def test_gate_lists_elision_without_failing(app):
         page.deleteLater()
 
 
-def test_gate_ships_the_four_widths_and_nine_screens():
-    """The gate's own scope: four widths, the eight pages and the instance detail view."""
+def test_gate_ships_the_four_widths_and_ten_screens():
+    """The gate's own scope: four widths, the nine pages and the instance detail view."""
     assert audit.DEFAULT_WIDTHS == (1000, 1050, 1400, 1800)
-    assert len(audit.SCREENS) == 9
+    assert len(audit.SCREENS) == 10
     assert "instances/detail" in audit.SCREENS
     assert set(audit.SCREENS) >= {
         "launch",
@@ -125,6 +125,7 @@ def test_gate_ships_the_four_widths_and_nine_screens():
         "java",
         "account",
         "mods",
+        "tools",
         "settings",
         "about",
     }

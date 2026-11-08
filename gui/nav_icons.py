@@ -43,6 +43,8 @@ ICON_FILES: dict[str, str] = {
     "java": "coffee",
     "account": "user",
     "mods": "puzzle",
+    # 工具 uses the wrench the instance detail sidebar already ships as "modify".
+    "tools": "wrench",
     "settings": "settings",
     "about": "info",
     # Instance detail sidebar. The first four deliberately reuse glyphs the rail already ships; the

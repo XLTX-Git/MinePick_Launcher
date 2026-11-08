@@ -43,7 +43,7 @@ The first version measured every phase in one process. Its startup phase built t
 closed them with ``close() + deleteLater()``, draining only ``QApplication.processEvents()`` - which
 does **not** deliver ``QEvent::DeferredDelete``. Those windows stayed attached to the application, so
 every later ``setStyleSheet`` re-polished them as well. Measured offscreen with one window whose
-eight pages are built (``QApplication.allWidgets()`` = the population Qt re-polishes):
+nine pages are built (``QApplication.allWidgets()`` = the population Qt re-polishes):
 
 =================  =========================  ==================  ============================
 process history    live widgets while timing  median theme swap   probe
@@ -69,7 +69,7 @@ process per sample, because "startup" means the first window of a process, which
 launch builds.
 
 A second counting trap this rig avoids: ``len(window.findChildren(QWidget)) + 1`` is not the
-population Qt polishes. A window that visited all eight pages leaves **31 widgets** behind (three
+population Qt polishes. A window that visited all nine pages leaves **31 widgets** behind (three
 combo-box popup containers: 6 QScrollBar, 3 QListView, 3 QComboBox, 3 QFrame, 15 QWidget, 1 QLabel)
 that belong to no window and survive the window's destruction; they show up in
 ``QApplication.allWidgets()`` and are re-polished on every stylesheet swap (measured: 45 -> 47 for a
@@ -109,10 +109,10 @@ WHAT IS MEASURED (per mode: 3 runs; each run repeats every phase as documented)
   110+ ms for the first): the old rig's median came from its 2nd and 3rd windows, so this is the like
   for like bridge, not a headline. Window widgets are reported as ``findChildren+1`` **and** as the
   ``allWidgets()`` delta, which is what Qt polishes.
-* session - RSS at startup and after visiting all eight pages (working set, commit, peak; read
+* session - RSS at startup and after visiting all nine pages (working set, commit, peak; read
   in-process, and the run fails if the value cannot be read), per-page first-visit cost, and 60 s of
   idle CPU split into six slices so a spike - or the tail of the setup work - is visible.
-* theme - ten dark/light swaps at two widget scales (only the launch page built / all eight pages
+* theme - ten dark/light swaps at two widget scales (only the launch page built / all nine pages
   visited), each scale in its own process. Only ``apply_theme()`` is timed; the event drain that
   follows is timed separately, because the notification the theme code queues
   (``QTimer.singleShot(0, ...)``) lands there, not in the call. Each swap is split into the
@@ -142,16 +142,16 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-# The eight pages, in navigation order. Reading a page through the registry builds it on first access,
+# The nine pages, in navigation order. Reading a page through the registry builds it on first access,
 # which is exactly the cost we want to measure.
-NAV_KEYS = ["launch", "instances", "versions", "java", "account", "mods", "settings", "about"]
+NAV_KEYS = ["launch", "instances", "versions", "java", "account", "mods", "tools", "settings", "about"]
 THEME_SWAPS = 10
 IDLE_SECONDS = 60.0
 IDLE_WINDOWS = 6  # idle is reported as this many equal slices as well as one average
 MEMORY_SAMPLES = 5
 STARTUP_SAMPLES = 3
 VIRGIN_WIDGET_CAP = 8  # app-owned widgets before any window exists (measured: 2)
-# Widgets that outlive a window whose eight pages were visited: three combo-box popup containers,
+# Widgets that outlive a window whose nine pages were visited: three combo-box popup containers,
 # measured 31. A launch-page-only window releases exactly (measured +0), so this budget applies only
 # to full-scale windows, and the real number is always reported next to it.
 LEAK_BUDGET_AFTER_CLOSE = 48
@@ -766,7 +766,7 @@ def phase_session(idle_seconds: float) -> dict[str, Any]:
 def phase_theme(scale: str) -> dict[str, Any]:
     """Ten dark/light swaps at one widget scale, in a fresh process.
 
-    ``scale`` is "startup" (only the launch page is built) or "full" (all eight pages visited); the
+    ``scale`` is "startup" (only the launch page is built) or "full" (all nine pages visited); the
     two are different baselines and are never mixed.
     """
     from gui import theme

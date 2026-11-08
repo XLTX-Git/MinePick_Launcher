@@ -22,7 +22,7 @@ the other 1400. Two renders of the same build are not enough on their own - the 
 read by every ``QProgressBar``, and a rule added at the wrong nesting level or a token that stops
 resolving would show up somewhere else. So this writes, for one checkout state:
 
-  * ``pages_<theme>_<state>.png``  - the eight pages, grabbed per page;
+  * ``pages_<theme>_<state>.png``  - the nine pages, grabbed per page;
   * ``geometry_<theme>_<state>.json`` - type, objectName, class, geometry, font, and the text of every
     widget on each page, so a moved or resized control shows up as a number and not only as a diff.
 
@@ -176,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     def checkpoint() -> None:
         """Write the report after every page.
 
-        Not a nicety: closing this window hangs (measured - the eight pages are written, then
+        Not a nicety: closing this window hangs (measured - the nine pages are written, then
         ``window.close()`` never returns, so a report written only at the end is never written at all).
         Checkpointing means the files on disk are complete whether or not the teardown cooperates, and
         the final write after the loop is the same bytes.

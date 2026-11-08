@@ -47,12 +47,23 @@ from gui.pages.launch_page import LaunchPage
 from gui.pages.login_page import LoginPage
 from gui.pages.mods_page import ResourcesPage
 from gui.pages.settings_page import SettingsPage
+from gui.pages.tools_page import ToolsPage
 from gui.pages.versions_tasks import TaskAwareVersionsPage
 from gui.task_ui import TaskOverlay
 from gui.tasks import TaskCenter
 from gui.wizard_overlay import BulletList, OptionGrid, WizardOverlay, WizardStep
 
-NAV_KEYS = ["launch", "instances", "versions", "java", "account", "mods", "settings", "about"]
+NAV_KEYS = [
+    "launch",
+    "instances",
+    "versions",
+    "java",
+    "account",
+    "mods",
+    "tools",
+    "settings",
+    "about",
+]
 #: The download page's key. Deliberately *not* in :data:`NAV_KEYS`: it is a page of the stack without an
 #: entry in the rail, because it is not somewhere the launcher goes - it is where the corner icon takes
 #: you while something is downloading.
@@ -70,7 +81,7 @@ FOLDER_LABEL_MAX_WIDTH = 240
 class _LazyPages:
     """The window's page registry, building each page the first time it is asked for.
 
-    Startup used to construct all eight pages - 802 widgets offscreen, 1457 in the real window - before
+    Startup used to construct all nine pages - 802 widgets offscreen, 1457 in the real window - before
     the window was even up, and every one of them is polished by the application stylesheet at that
     cost. Only the first page is visible at that moment, so the other seven are now built on first use.
 
@@ -339,6 +350,7 @@ class MainWindow(QMainWindow):
             "java": JavaPage,
             "account": LoginPage,
             "mods": ResourcesPage,
+            "tools": ToolsPage,
             "settings": SettingsPage,
             "about": AboutPage,
         }
@@ -573,7 +585,7 @@ class MainWindow(QMainWindow):
 
         Built on demand for the same reason every other page is: it is a whole page of widgets and most
         sessions never open it. It is added straight to the stack - the registry ``pages`` only knows the
-        eight rail destinations - so it does not appear in the rail, in ``len(pages)``, or in any audit
+        nine rail destinations - so it does not appear in the rail, in ``len(pages)``, or in any audit
         that walks the navigation.
         """
         page = self._downloads
@@ -1045,7 +1057,7 @@ class MainWindow(QMainWindow):
 
         Why the minimum is enforced instead of left to Qt: with lazy page construction the layout's
         requirement is not known at startup - it is 547px for en_us while only the launch page exists and
-        1048px once all eight do (fr_fr: 657px then 1164px). Qt derives a widget's floor from the pages
+        1048px once all nine do (fr_fr: 657px then 1164px). Qt derives a widget's floor from the pages
         that happen to be built, so on its own the floor would depend on which pages the session has
         visited. Growing it as pages arrive is what this does, and it only ever grows: a floor that
         followed the layout back down would shrink the window under the page still in the stack.

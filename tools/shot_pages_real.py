@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Render the eight pages on the REAL Qt platform, without ever putting a window on screen.
+"""Render the nine pages on the REAL Qt platform, without ever putting a window on screen.
 
 `tools/shot_pages.py` forces `QT_QPA_PLATFORM=offscreen`, which uses a different Qt style, has no native
 popups, and - the reason this tool exists - starts from a different default palette. The light theme's

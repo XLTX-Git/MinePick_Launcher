@@ -78,7 +78,7 @@ def _measure_with_app(app, languages: Iterable[str]) -> list[Measurement]:
         # Every page first, then one real layout pass. The window states its floor from the layout, and
         # Qt only refreshes a top-level's minimum size hint on a layout pass: a window that is never
         # shown keeps reporting the launch page's own width (measured: 657px for fr_fr instead of the
-        # 1164px the layout needs once all eight pages exist). WA_DontShowOnScreen is the attribute the
+        # 1164px the layout needs once all nine pages exist). WA_DontShowOnScreen is the attribute the
         # render tools and tests/conftest.py use to lay out and paint a real window without putting it
         # on the desktop, so nothing here can reach a screen.
         for key in NAV_KEYS:
