@@ -588,7 +588,12 @@ def main() -> int:
     parser.add_argument(
         "--detail-shot",
         action="store_true",
-        help="also render the instance detail page (index 8) for the selected demo instance",
+        help="also render the instance detail page (next index after the nav pages) for the selected demo instance",
+    )
+    parser.add_argument(
+        "--tools-states",
+        action="store_true",
+        help="also render the six reviewed 联机 layouts of the tools page",
     )
     parser.add_argument(
         "--warm-cache",
@@ -801,9 +806,87 @@ def main() -> int:
         _render_dialog_shot(app, window, Path(game_dir), out_dir, prefix)
     if args.detail_shot:
         _render_detail_shot(app, window, out_dir, prefix)
+    if args.tools_states:
+        _render_tools_states(app, window, out_dir, prefix)
 
     window.close()
     return 0
+
+
+#: (filename suffix, state, FakeLinkSession keyword arguments) for the six reviewed layouts.
+TOOLS_STATE_SHOTS = (
+    ("1_onboarding", "NOT_DOWNLOADED", {}),
+    ("2_idle", "IDLE", {}),
+    ("3_host_wait", "HOST_WAITING", {}),
+    (
+        "4_host_ready",
+        "HOST_READY",
+        {
+            "room_code": "U/8F3K-2QX9-7WMD-4TRA",
+            "members": (("你", True, "我"), ("小王", False, "")),
+            "address": "127.0.0.1:25566",
+        },
+    ),
+    (
+        "5_connecting",
+        "CONNECTING",
+        {
+            "room_code": "U/8F3K-2QX9-7WMD-4TRA",
+            "difficulty": "TOUGH",
+        },
+    ),
+    (
+        "6_joined",
+        "JOINED",
+        {
+            "room_code": "U/8F3K-2QX9-7WMD-4TRA",
+            "members": (("你", False, "我"), ("小王", True, "")),
+            "address": "127.0.0.1:25566",
+        },
+    ),
+)
+
+
+def _render_tools_states(app, window, out_dir: Path, prefix: str) -> None:
+    """Render the six 联机 layouts by scripting a :class:`FakeLinkSession` per state.
+
+    Uses the same real window and the same screenshot pipeline as every other page: the tab bar,
+    banner, footer and navigation rail are the product's, not a reconstruction. The fake is also
+    what the page's own tests drive, so a picture that works here is a state the tests can reach.
+    """
+    from PySide6.QtCore import QThreadPool
+
+    from gui.main_window import NAV_KEYS
+    from launcher.link import FakeLinkSession, LinkDifficulty, LinkMember, LinkState
+
+    window.resize(1000, 610)
+    window.sidebar.setCurrentRow(NAV_KEYS.index("tools"))
+    for _ in range(8):
+        app.processEvents()
+        time.sleep(0.05)
+    wait_for_workers(app, QThreadPool.globalInstance(), 5.0)
+    page = window.pages["tools"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for suffix, state_name, options in TOOLS_STATE_SHOTS:
+        kwargs = dict(options)
+        if "members" in kwargs:
+            kwargs["members"] = tuple(
+                LinkMember(name, is_host=is_host, avatar=avatar)
+                for name, is_host, avatar in kwargs["members"]
+            )
+        if "difficulty" in kwargs:
+            kwargs["difficulty"] = LinkDifficulty[kwargs["difficulty"]]
+        session = FakeLinkSession(state=LinkState[state_name], **kwargs)
+        page.set_session(session)
+        for _ in range(10):
+            app.processEvents()
+            time.sleep(0.05)
+        defocus_for_shot(window, page)
+        assert_no_focus_mark(window, page)
+        image = render_page_image(window)
+        target = out_dir / f"{prefix}tools_{suffix}.png"
+        image.save(str(target))
+        print(f"saved {target} ({image.width()}x{image.height()})")
 
 
 def _render_detail_shot(app, window, out_dir: Path, prefix: str) -> None:
@@ -842,7 +925,7 @@ def _render_detail_shot(app, window, out_dir: Path, prefix: str) -> None:
     defocus_for_shot(window, page)
     assert_no_focus_mark(window, page)
     image = render_page_image(window)
-    target = out_dir / f"{prefix}8_instance_detail.png"
+    target = out_dir / f"{prefix}{len(NAV_KEYS)}_instance_detail.png"
     image.save(str(target))
     print(f"saved {target} ({image.width()}x{image.height()})")
 
@@ -885,7 +968,7 @@ def _render_dialog_shot(app, window, game_dir: Path, out_dir: Path, prefix: str)
     defocus_for_shot(window, dialog)
     assert_no_focus_mark(window, dialog)
     image = render_page_image(window)
-    target = out_dir / f"{prefix}9_dialog.png"  # index 9 keeps the driver's name pattern intact
+    target = out_dir / f"{prefix}{len(NAV_KEYS) + 1}_dialog.png"
     image.save(str(target))
     print(f"saved {target} ({image.width()}x{image.height()})")
     dialog.close()
