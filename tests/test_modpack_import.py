@@ -735,7 +735,12 @@ def test_curseforge_without_a_key_says_so_and_skips_nothing(
 
 
 def test_instances_page_offers_the_import_entry(app, monkeypatch, ws_tmp):
-    """The page has one button for pack imports, and it starts exactly one background job."""
+    """The page has one 导入 menu with both entries, and it starts exactly one background job.
+
+    The two entries share one button on purpose: a third full-width button pushed the page's
+    minimum width past the product's 1000px window floor in Japanese, and both entries are the same
+    kind of action (bring content from outside into this page).
+    """
     from PySide6.QtCore import QThreadPool
     from PySide6.QtWidgets import QWidget
 
@@ -764,9 +769,21 @@ def test_instances_page_offers_the_import_entry(app, monkeypatch, ws_tmp):
     host = _Host()
     page = instances_page.InstancesPage()
     page.setParent(host)
-    assert page.import_pack_button.text() == i18n.tr("instances.import_pack")
-    assert page.import_pack_button.toolTip() == i18n.tr("instances.import_pack.hint")
-    assert page.import_pack_button.isEnabled()
+    assert page.import_button.text() == i18n.tr("instances.import_menu")
+    assert page.import_button.menu() is page.import_menu
+    labels = [action.text() for action in page.import_menu.actions()]
+    assert labels == [i18n.tr("instances.import"), i18n.tr("instances.import_pack")]
+    assert page.import_pack_action.toolTip() == i18n.tr("instances.import_pack.hint")
+    assert page.import_button.isEnabled()
+
+    # Each menu entry is wired to its own handler (neither opens a dialog here: both are replaced).
+    calls: list[str] = []
+    monkeypatch.setattr(page, "_import", lambda *args: calls.append("instance"))
+    monkeypatch.setattr(page, "_import_modpack", lambda *args: calls.append("pack"))
+    page.import_instance_action.trigger()
+    page.import_pack_action.trigger()
+    assert calls == ["instance", "pack"]
+
     started_paths: list = []
 
     def fake_import(path, **kwargs):
@@ -793,7 +810,7 @@ def test_instances_page_offers_the_import_entry(app, monkeypatch, ws_tmp):
     assert started_paths and started_paths[0].name == "pack.mrpack"
     done_text = i18n.tr("instances.import_pack.done", "Imported", 2)
     assert any(text == done_text for text, _level in host.messages)
-    assert page.import_pack_button.isEnabled()
+    assert page.import_button.isEnabled()
     assert [task.state for task in host.tasks.tasks()] == ["done"]
     page.deleteLater()
     host.deleteLater()
