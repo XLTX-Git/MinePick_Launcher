@@ -852,6 +852,7 @@ class KeyboardFocusTracker(QObject):
         QFrame,  # the instance rows are focusable surfaces; their whole-row ring lives in style.qss
         QLineEdit,
         QPlainTextEdit,
+        QTabBar,  # the tools page's single tab is a focus stop of its own
         QTabWidget,  # the resource tabs: the widget is the stop, its tab bar draws the tabs
         QTextEdit,
     )

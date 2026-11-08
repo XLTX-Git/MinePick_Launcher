@@ -1614,3 +1614,154 @@ QPlainTextEdit#instanceLogView {
     selection-background-color: __ACCENT_SEL__;
     selection-color: __ACCENT_SEL_TEXT__;
 }
+
+/* ---------- tools page: the 联机 tab ---------- */
+
+QWidget#toolsPage QLabel#toolsPageTitle {
+    color: __FG_PAGE_TITLE__;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+QWidget#toolsPage QTabWidget::pane {
+    background: transparent;
+    border: none;
+    border-top: 1px solid __BORDER_TABLE__;
+}
+QWidget#toolsPage QTabBar::tab {
+    padding: 4px 16px;
+    font-size: 13px;
+}
+
+QFrame#toolsBanner, QFrame#toolsInfoPanel {
+    background: __ACCENT_TINT__;
+    border: 1px solid __ACCENT_SOFT__;
+    border-radius: __RADIUS_LG__;
+}
+QLabel#toolsBannerText { color: __FG_TEXT__; font-size: 12px; }
+
+QFrame#toolsInnerCard, QFrame#toolsRow, QFrame#toolsStepCard, QFrame#toolsMemberPanel {
+    background: __BG_SECTION__;
+    border: 1px solid __BORDER_TABLE__;
+    border-radius: __RADIUS_LG__;
+}
+QFrame#toolsRoomCode {
+    background: __ACCENT_TINT__;
+    border: 1px solid __ACCENT_SOFT__;
+    border-radius: __RADIUS_LG__;
+}
+QFrame#toolsMemberRow {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid __BORDER_TABLE__;
+}
+QFrame#toolsFooter {
+    background: transparent;
+    border: none;
+    border-top: 1px solid __BORDER_TABLE__;
+}
+QLabel#toolsFooterText, QLabel#toolsFooterLink { color: __FG_HINT__; font-size: 12px; }
+
+QLabel#toolsRowTitle { color: __FG_TEXT__; font-size: 13px; font-weight: 600; }
+QLabel#toolsStepText { color: __FG_TEXT__; font-size: 13px; }
+QLabel#toolsCenterTitle { color: __FG_TEXT__; font-size: 16px; font-weight: 600; }
+QLabel#toolsRoomCodeText {
+    color: __FG_TEXT__;
+    font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
+    font-size: 24px;
+    font-weight: 600;
+}
+QLabel#toolsAddressText {
+    color: __FG_TEXT__;
+    font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
+    font-size: 16px;
+    font-weight: 600;
+}
+QLabel#toolsMemberName { color: __FG_TEXT__; font-size: 13px; }
+QLabel#toolsHostBadge {
+    background: __ACCENT_SOFT__;
+    color: __ACCENT_TEXT__;
+    border-radius: __RADIUS_XS__;
+    padding: 0 4px;
+    font-size: 11px;
+}
+QLabel#toolsOnlineDot { color: __ACCENT__; font-size: 10px; }
+QLabel#toolsOnlineText { color: __FG_HINT__; font-size: 12px; }
+
+QLabel#toolsDifficultyText { color: __FG_HINT__; font-size: 13px; }
+QLabel#toolsDifficultyPill {
+    background: __BG_SECTION__;
+    color: __FG_TEXT__;
+    border: 1px solid __BORDER_LIST__;
+    border-radius: __RADIUS_XS__;
+    padding: 0 8px;
+    font-size: 12px;
+}
+QLabel#toolsDifficultyPill[level="tough"] {
+    color: __FG_STATUS_WARNING__;
+    border-color: __FG_STATUS_WARNING__;
+}
+
+QWidget#toolsPage QPushButton#toolsIconButton {
+    background: __BG_LIST__;
+    color: __FG_BUTTON_SECONDARY__;
+    border: 1px solid __BORDER_BUTTON_SECONDARY__;
+    border-radius: __RADIUS_SM__;
+    padding: 0;
+    font-size: 16px;
+}
+QWidget#toolsPage QPushButton#toolsIconButton:hover {
+    background: __BG_BUTTON_SECONDARY__;
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QWidget#toolsPage QPushButton#toolsIconButton:pressed {
+    background: __BG_BUTTON_SECONDARY_2__;
+}
+QWidget#toolsPage QPushButton#toolsIconButton:disabled {
+    background: __BG_DISABLED__;
+    color: __FG_DISABLED__;
+    border-color: __BORDER_BUTTON_SECONDARY_2__;
+}
+QWidget#toolsPage QPushButton#toolsIconButton[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+
+QWidget#toolsPage QPushButton#toolsDisclosure {
+    background: transparent;
+    color: __FG_TEXT__;
+    border: 1px solid transparent;
+    border-radius: __RADIUS_SM__;
+    padding: 4px 0;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+}
+QWidget#toolsPage QPushButton#toolsDisclosure:hover {
+    color: __ACCENT_TEXT__;
+}
+QWidget#toolsPage QPushButton#toolsDisclosure[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}
+QWidget#toolsPage QLabel#toolsDisclosureText {
+    color: __FG_TEXT__;
+    font-size: 13px;
+    font-weight: 600;
+}
+QWidget#toolsPage QLabel#toolsDisclosureArrow {
+    color: __FG_HINT__;
+    font-size: 12px;
+}
+
+QWidget#toolsPage QTabWidget[keyboardFocus="true"]::pane {
+    border: 1px solid __FOCUS_RING__;
+}
+
+QTabBar {
+    border: 1px solid transparent;
+    border-radius: __RADIUS_SM__;
+}
+
+QTabBar[keyboardFocus="true"] {
+    border-color: __FOCUS_RING__;
+}

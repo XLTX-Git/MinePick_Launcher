@@ -277,7 +277,61 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "a11y.accent_preset": "强调色 {}",
         "nav.java": "Java",
         "nav.mods": "资源",
+        "nav.tools": "工具",
         "nav.settings": "设置",
+        # Tools › multiplayer (Terracotta). Concise on purpose: the panel is dense and the six
+        # states were reviewed at 1000px in every supported language.
+        "tools.banner": "联机质量取决于双方网络，连不上可以试试换一边当房主",
+        "tools.tab.link": "联机",
+        "tools.footer.provided": "联机由 Terracotta | 陶瓦联机 提供",
+        "tools.footer.disable": "停用联机功能",
+        "tools.onboard.title": "未下载联机核心",
+        "tools.onboard.body": (
+            "首次使用联机前，需要先下载约 8MiB 的联机核心。\n\n"
+            "• 陶瓦联机（Terracotta）是第三方开源免费软件，反馈与支持请走其官方渠道。\n"
+            "• 联机使用 P2P 直连，大厅内的用户彼此连接，不经过第三方服务器转发。"
+        ),
+        "tools.onboard.download": "下载联机核心",
+        "tools.onboard.download_hint": "约 8MiB，下载后即可创建或加入大厅。",
+        "tools.onboard.channels": "其他下载渠道",
+        "tools.onboard.channels_detail": (
+            "部分地区默认渠道可能不稳定或连接缓慢。\nGitHub Releases · Gitee 镜像 · 官方文档"
+        ),
+        "tools.join.title": "加入大厅",
+        "tools.join.body": "输入朋友发来的大厅编号。\n启动游戏，进入「多人游戏」，加入大厅。",
+        "tools.join.placeholder": "大厅编号（如 U/XXXX-XXXX-XXXX-XXXX）",
+        "tools.join.clear": "清除",
+        "tools.join.paste": "粘贴",
+        "tools.join.submit": "加入",
+        "tools.host.title": "创建大厅",
+        "tools.host.body": (
+            "进入世界后，在游戏菜单选择「对局域网开放」。\n"
+            "在下方选择要作为房主的实例。\n"
+            "创建大厅，成功后把大厅编号发给朋友。"
+        ),
+        "tools.host.instance": "房主实例",
+        "tools.host.submit": "创建",
+        "tools.wait.title": "正在等待你开放局域网…",
+        "tools.wait.hint": "大厅已经准备好，只等在游戏里把局域网开放出来。",
+        "tools.wait.steps": (
+            "进入游戏\n按 Esc 打开暂停菜单\n点击「对局域网开放」，端口保持默认即可"
+        ),
+        "tools.ready.status": "大厅已就绪 · 等待朋友加入",
+        "tools.ready.code_hint": "大厅编号 · 把这串编号发给朋友，他们即可加入",
+        "tools.ready.copy": "复制",
+        "tools.ready.members_count": "成员 · {} 人在线",
+        "tools.ready.host_badge": "房主",
+        "tools.ready.online": "在线",
+        "tools.ready.close": "关闭大厅",
+        "tools.connecting.title": "正在连接",
+        "tools.connecting.hint": "正在通过 P2P 与房主建立连接，请稍候…",
+        "tools.connecting.difficulty": "打洞难度：{}",
+        "tools.connecting.warning": "打洞难度较高，可能要等久一点。",
+        "tools.joined.status": "已加入\nP2P 连接已建立",
+        "tools.joined.address_label": "直连地址",
+        "tools.joined.note": "在多人游戏里双击「陶瓦联机大厅」即可进入（该入口不校验正版）。",
+        "tools.joined.open": "打开多人游戏",
+        "tools.difficulty": "简单\n中等\n困难",
         "mods.page.title": "资源",
         "mods.source": "资源来源",
         "mods.source.modrinth": "Modrinth",
@@ -1319,7 +1373,74 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "a11y.accent_preset": "Accent color {}",
         "nav.java": "Java",
         "nav.mods": "Resources",
+        "nav.tools": "Tools",
         "nav.settings": "Settings",
+        # Tools › multiplayer (Terracotta).
+        "tools.banner": (
+            "Connection quality depends on both sides' networks. If you cannot connect, try hosting "
+            "on the other side."
+        ),
+        "tools.tab.link": "Multiplayer",
+        "tools.footer.provided": "Multiplayer is provided by Terracotta | 陶瓦联机",
+        "tools.footer.disable": "Disable multiplayer",
+        "tools.onboard.title": "Multiplayer core not downloaded",
+        "tools.onboard.body": (
+            "Before using multiplayer, download the ~8 MiB core.\n\n"
+            "• Terracotta (陶瓦联机) is free third-party open-source software; send feedback and "
+            "support requests through its official channels.\n"
+            "• Multiplayer uses direct P2P connections: players in a room connect to each other, "
+            "not through a third-party relay."
+        ),
+        "tools.onboard.download": "Download multiplayer core",
+        "tools.onboard.download_hint": "About 8 MiB. Once downloaded, you can create or join rooms.",
+        "tools.onboard.channels": "Other download channels",
+        "tools.onboard.channels_detail": (
+            "The default channel can be unstable or slow in some regions.\n"
+            "GitHub Releases · Gitee mirror · Official docs"
+        ),
+        "tools.join.title": "Join a room",
+        "tools.join.body": (
+            "Enter the room code your friend sent you.\n"
+            "Start the game, open Multiplayer, and join the room."
+        ),
+        "tools.join.placeholder": "Room code (e.g. U/XXXX-XXXX-XXXX-XXXX)",
+        "tools.join.clear": "Clear",
+        "tools.join.paste": "Paste",
+        "tools.join.submit": "Join",
+        "tools.host.title": "Create a room",
+        "tools.host.body": (
+            "After entering a world, choose Open to LAN from the game menu.\n"
+            "Select the instance to host below.\n"
+            "Create the room, then send the room code to your friends."
+        ),
+        "tools.host.instance": "Host instance",
+        "tools.host.submit": "Create",
+        "tools.wait.title": "Waiting for you to open LAN…",
+        "tools.wait.hint": "The room is ready. Just open it to LAN in the game.",
+        "tools.wait.steps": (
+            "Enter the game\n"
+            "Press Esc to open the pause menu\n"
+            "Choose Open to LAN and keep the default port"
+        ),
+        "tools.ready.status": "Room ready · waiting for friends",
+        "tools.ready.code_hint": "Room code · send it to your friends so they can join",
+        "tools.ready.copy": "Copy",
+        "tools.ready.members_count": "Members · {} online",
+        "tools.ready.host_badge": "Host",
+        "tools.ready.online": "Online",
+        "tools.ready.close": "Close room",
+        "tools.connecting.title": "Connecting",
+        "tools.connecting.hint": "Establishing a P2P connection to the host, please wait…",
+        "tools.connecting.difficulty": "NAT traversal difficulty: {}",
+        "tools.connecting.warning": "High NAT traversal difficulty; this may take a while.",
+        "tools.joined.status": "Joined\nP2P connection established",
+        "tools.joined.address_label": "Direct address",
+        "tools.joined.note": (
+            "In Multiplayer, double-click \"Terracotta Room\" to enter (this entry does not check "
+            "for a premium account)."
+        ),
+        "tools.joined.open": "Open Multiplayer",
+        "tools.difficulty": "Easy\nMedium\nHard",
         "mods.page.title": "Resources",
         "mods.source": "Source",
         "mods.source.modrinth": "Modrinth",
