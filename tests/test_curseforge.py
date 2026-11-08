@@ -25,6 +25,15 @@ from launcher.mods.loaders import ModsError
 from launcher.mods.models import ModSearchHit
 
 
+@pytest.fixture(autouse=True)
+def _isolated_key_state(monkeypatch):
+    """No test may inherit an exported key or the previous test's 401/403 latch."""
+    monkeypatch.delenv(cf.CF_KEY_ENV, raising=False)
+    cf.reset_session_state()
+    yield
+    cf.reset_session_state()
+
+
 def test_loader_ids_include_quilt() -> None:
     assert cf.LOADER_IDS["quilt"] == 5
     assert cf.LOADER_IDS["fabric"] == 4
@@ -173,4 +182,59 @@ def test_effective_key_prefers_config(monkeypatch, ws_tmp):
     cfg.curseforge_api_key = ""
     config.save(cfg, cfg_path)
     assert cf.effective_api_key() == "bundled-key"
+
+
+def test_environment_key_overrides_config_and_bundled_key(monkeypatch, ws_tmp):
+    """MCLAUNCHER_CF_KEY wins over both stored and bundled values; blank means unset."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp))
+    monkeypatch.setattr(cf, "_bundled_key", lambda: "bundled-key")
+    from launcher import config
+
+    cfg, cfg_path = config.load()
+    cfg.curseforge_api_key = "user-key"
+    config.save(cfg, cfg_path)
+
+    monkeypatch.setenv(cf.CF_KEY_ENV, "env-key")
+    assert cf.effective_api_key() == "env-key"
+    # An exported-but-empty variable must not shadow a working key.
+    monkeypatch.setenv(cf.CF_KEY_ENV, "   ")
+    assert cf.effective_api_key() == "user-key"
+
+
+def test_missing_key_is_unavailable_and_makes_no_request(monkeypatch) -> None:
+    """The no-key state is a capability answer, not an error the user discovers by searching."""
+    monkeypatch.setattr(cf, "effective_api_key", lambda: "")
+    opened = []
+    monkeypatch.setattr(cf, "_new_client", lambda: opened.append("client"))
+
+    assert cf.key_status() == cf.KEY_STATUS_MISSING
+    assert not cf.has_key()
+    assert not cf.available()
+    with pytest.raises(ModsError) as excinfo:
+        cf.search_projects("sodium")
+    assert "MCLAUNCHER_CF_KEY" in str(excinfo.value)
+    assert opened == []  # refused before the shared client (and therefore any request)
+
+
+def test_403_latches_the_source_off_for_the_rest_of_the_session(monkeypatch) -> None:
+    monkeypatch.setattr(cf, "effective_api_key", lambda: "session-key")
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(403, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert cf.available()
+    with pytest.raises(ModsError):
+        cf.search_projects("x", client=client)
+    assert len(calls) == 1
+    assert cf.key_status() == cf.KEY_STATUS_REJECTED
+    assert not cf.available()
+
+    # From now on the normal (page) path refuses before creating a request at all.
+    monkeypatch.setattr(cf, "_new_client", lambda: calls.append("client"))
+    with pytest.raises(ModsError):
+        cf.search_projects("x")
+    assert len(calls) == 1  # the one 403 request; the latch stopped the next call
 

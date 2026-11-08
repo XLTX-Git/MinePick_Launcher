@@ -41,6 +41,17 @@ def app():
     yield application
 
 
+@pytest.fixture(autouse=True)
+def _curseforge_key(monkeypatch):
+    """Give every page test a configured key, then clear the 401/403 latch after it."""
+    from launcher.mods import curseforge as cf
+
+    monkeypatch.setattr(cf, "effective_api_key", lambda: "test-key")
+    cf.reset_session_state()
+    yield
+    cf.reset_session_state()
+
+
 def _hit(slug: str, title: str, source: str) -> ModSearchHit:
     return ModSearchHit(slug=slug, title=title, source=source)
 
@@ -342,6 +353,68 @@ def test_source_combo_offers_all_and_is_not_height_pinned(app) -> None:
         finally:
             combo.hidePopup()
             app.processEvents()
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_without_a_key_curseforge_is_absent_and_no_request_is_made(app, monkeypatch) -> None:
+    """No key: the source is not offered at all (not greyed out), and searching never calls it."""
+    from gui import i18n
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+    from launcher.mods import curseforge as cf
+
+    monkeypatch.setattr(cf, "effective_api_key", lambda: "")
+    cf.reset_session_state()
+    requests: list[int] = []
+    monkeypatch.setattr(cf, "search_projects", lambda *a, **k: requests.append(1))
+    monkeypatch.setattr(mods_page, "search_projects", lambda *a, **k: SearchHits([], total=0))
+    monkeypatch.setattr(mods_page, "run_in_background", _sync_runner)
+
+    page = ResourcesPage()
+    try:
+        labels = [page.source_combos[0].itemText(i) for i in range(page.source_combos[0].count())]
+        assert labels == [i18n.tr("mods.source.modrinth")]
+        for combo in page.source_combos:
+            assert combo.findData("curseforge") == -1
+            assert combo.findData("all") == -1
+        page.mods_tab.load_initial()
+        assert page.mods_tab.list.count() == 0
+        assert requests == []
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_403_removes_the_source_and_stops_further_requests(app, monkeypatch) -> None:
+    """A rejected key drops CurseForge from every dropdown and no later page load asks again."""
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+    from launcher.mods import curseforge as cf
+
+    calls: list[int] = []
+
+    def rejected(*_args, **_kwargs):
+        calls.append(1)
+        cf._mark_key_rejected()
+        raise ModsError(cf.tr_core("mods.cf_key_invalid"))
+
+    monkeypatch.setattr(cf, "search_projects", rejected)
+    monkeypatch.setattr(mods_page, "search_projects", lambda *a, **k: SearchHits([], total=0))
+    monkeypatch.setattr(mods_page, "run_in_background", _sync_runner)
+
+    page = ResourcesPage()
+    try:
+        combo = page.source_combos[0]
+        combo.setCurrentIndex(combo.findData("curseforge"))
+        assert calls == [1]
+        for other in page.source_combos:
+            assert other.findData("curseforge") == -1
+            assert other.findData("all") == -1
+            assert other.currentData() == "modrinth"
+        page.mods_tab.load_initial()
+        assert calls == [1]
     finally:
         page.deleteLater()
         app.processEvents()

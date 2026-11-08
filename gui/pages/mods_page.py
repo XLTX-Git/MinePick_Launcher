@@ -105,6 +105,17 @@ from launcher.net import downloader
 tr = i18n.tr
 
 
+def _curseforge_available() -> bool:
+    """Whether the CurseForge source may be offered (a key is configured and not rejected).
+
+    The answer is read from :mod:`launcher.mods.curseforge`, never cached here: the module owns the
+    process-wide 401/403 latch, and the page re-reads it whenever it shows or reloads.
+    """
+    from launcher.mods import curseforge
+
+    return curseforge.available()
+
+
 # ---------- human-readable numbers for the result rows ----------
 
 #: Chinese counts read in 万 / 亿, the rest of the interface uses the SI K / M / B suffixes. The unit
@@ -1664,6 +1675,11 @@ class _ContentTab(QWidget):
         self._load_page()
 
     def _load_page(self) -> None:
+        # A key can appear (settings/env) or be rejected since this tab last loaded; re-sync first so
+        # a stale "CurseForge" selection cannot outlive the source it names.
+        page = getattr(self, "page", None)
+        if page is not None:
+            page._sync_source_combos()
         source = self._source_mode()
         query = self._query
         sort = self._sort_key()
@@ -1693,20 +1709,23 @@ class _ContentTab(QWidget):
                         lambda: self._modrinth_page(
                             query, offset, ALL_PAGE_SIZE, sort, project_type
                         ),
-                    ),
-                    (
-                        tr("mods.source.curseforge"),
-                        lambda: cf.search_projects(
-                            query,
-                            limit=ALL_PAGE_SIZE,
-                            offset=offset,
-                            sort=sort,
-                            kind=self.kind,
-                            game_version=game_version,
-                            loader=loader,
-                        ),
-                    ),
+                    )
                 ]
+                if cf.available():
+                    sources.append(
+                        (
+                            tr("mods.source.curseforge"),
+                            lambda: cf.search_projects(
+                                query,
+                                limit=ALL_PAGE_SIZE,
+                                offset=offset,
+                                sort=sort,
+                                kind=self.kind,
+                                game_version=game_version,
+                                loader=loader,
+                            ),
+                        )
+                    )
                 pages, errors = collect_all_sources(sources)
                 # Deliberately no de-duplication: "Sodium" from both sources stays two rows, and the
                 # merge puts them next to each other with Modrinth first. Ranking runs before the
@@ -1723,15 +1742,20 @@ class _ContentTab(QWidget):
             if source == "curseforge":
                 from launcher.mods import curseforge as cf
 
-                hits = cf.search_projects(
-                    query,
-                    limit=PAGE_SIZE,
-                    offset=offset,
-                    sort=sort,
-                    kind=self.kind,
-                    game_version=game_version,
-                    loader=loader,
-                )
+                # The combo is rebuilt when the 403 lands; a request already queued at that moment
+                # must still not touch the API the service just refused.
+                if cf.available():
+                    hits = cf.search_projects(
+                        query,
+                        limit=PAGE_SIZE,
+                        offset=offset,
+                        sort=sort,
+                        kind=self.kind,
+                        game_version=game_version,
+                        loader=loader,
+                    )
+                else:
+                    hits = self._modrinth_page(query, offset, PAGE_SIZE, sort, project_type)
             else:
                 hits = self._modrinth_page(query, offset, PAGE_SIZE, sort, project_type)
             return PageOutcome(
@@ -1805,7 +1829,14 @@ class _ContentTab(QWidget):
         seen = {h.slug for h in local_hits}
         return local_hits + [h for h in hits if h.slug not in seen]
 
+    def _sync_source_availability(self) -> None:
+        """Let the page drop a source that a request just proved unusable (a 401/403)."""
+        page = getattr(self, "page", None)
+        if page is not None:
+            page._sync_source_combos()
+
     def _on_page_ok(self, outcome: PageOutcome, request_id: int) -> None:
+        self._sync_source_availability()
         if request_id != self._request_id:
             return
         self._has_next = bool(outcome.has_next)
@@ -1832,6 +1863,7 @@ class _ContentTab(QWidget):
         self._update_pager()
 
     def _on_page_error(self, message: str, request_id: int) -> None:
+        self._sync_source_availability()
         if request_id != self._request_id:
             return
         self._has_next = False
@@ -2024,6 +2056,11 @@ class _ContentTab(QWidget):
         from launcher.mods import curseforge as cf
         from launcher.mods import resolve_content_dir
 
+        if not cf.available():
+            # A row from an earlier successful page can survive a 403; never start a request for it.
+            self._sync_source_availability()
+            return
+
         choice = None
         if self.kind == "mod":
             choice = self._pick_instance(hit.title, [str(item) for item in hit.loaders])
@@ -2059,9 +2096,14 @@ class _ContentTab(QWidget):
             on_result=lambda result: self._on_cf_installed(
                 result, choice.name if choice is not None else ""
             ),
-            on_error=lambda m: set_app_status(self, tr("mods.cf.fail", m), "error"),
+            on_error=self._on_cf_install_error,
             on_finished=lambda: self.install_button.setEnabled(True),
         )
+
+    def _on_cf_install_error(self, message: str) -> None:
+        """Show the failure and drop the source if the service just refused the key."""
+        self._sync_source_availability()
+        set_app_status(self, tr("mods.cf.fail", message), "error")
 
     def _on_cf_installed(self, result, instance_name: str = "") -> None:
         target, _picked = result
@@ -2402,6 +2444,7 @@ class ResourcesPage(QWidget):
         self.chip_group.idClicked.connect(self._on_chip_clicked)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
+        self._cf_available = _curseforge_available()
         self.source_combos: list[QComboBox] = []
         for tab in (
             self.mods_tab,
@@ -2411,19 +2454,16 @@ class ResourcesPage(QWidget):
         ):
             tab.page = self
             combo = _PopupFitCombo()
-            combo.addItem(tr("mods.source.modrinth"), "modrinth")
-            combo.addItem(tr("mods.source.curseforge"), "curseforge")
-            combo.addItem(tr("mods.source.all"), "all")
             # WCAG 4.1.2: it sits in the search row with no adjacent label at all, and the four tabs
             # each own one, so the name says both what it is and which tab it belongs to.
             combo.setAccessibleName(
                 tr(_ContentTab.KIND_TITLE_KEY[tab.kind]) + " · " + tr("mods.source")
             )
-            # Wide enough for "CurseForge" plus the arrow and generous padding. Minimum, not fixed:
-            # a pinned size made QComboBox size its popup list from the closed field, so even a
-            # three-item dropdown grew a vertical scrollbar.
+            self._populate_source_combo(combo)
+            # Minimum, not fixed: a pinned size made QComboBox size its popup list from the closed
+            # field, so even a three-item dropdown grew a vertical scrollbar.
             combo.ensurePolished()
-            combo.setMinimumWidth(combo.fontMetrics().horizontalAdvance("CurseForge") + 60)
+            self._fit_source_combo_width(combo)
             combo.setMinimumHeight(36)  # PCL field metric, same as the search field beside it
             combo.currentIndexChanged.connect(self._on_source_changed)
             tab._search_row.insertWidget(0, combo)
@@ -2444,7 +2484,56 @@ class ResourcesPage(QWidget):
     def showEvent(self, event) -> None:
         """Load the first page on first show instead of at construction (lazy page data)."""
         super().showEvent(event)
+        # A key may have been added in Settings (or exported as MCLAUNCHER_CF_KEY) while this page
+        # was hidden; re-read the source list before the first request of this visit.
+        self._sync_source_combos()
         self._on_tab_changed(self.tabs.currentIndex())
+
+    def _populate_source_combo(self, combo: QComboBox) -> None:
+        """Rebuild one source dropdown from the sources that are usable right now.
+
+        Without a key - or after the service rejected one - CurseForge is not a disabled entry: it
+        is absent, and so is "All", which would only promise a merge that cannot happen. A selection
+        whose data disappeared falls back to Modrinth instead of leaving the combo blank.
+        """
+        current = combo.currentData() or "modrinth"
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem(tr("mods.source.modrinth"), "modrinth")
+            if self._cf_available:
+                combo.addItem(tr("mods.source.curseforge"), "curseforge")
+                combo.addItem(tr("mods.source.all"), "all")
+            index = combo.findData(current)
+            combo.setCurrentIndex(max(index, 0))
+        finally:
+            combo.blockSignals(False)
+
+    def _fit_source_combo_width(self, combo: QComboBox) -> None:
+        """Size the closed field for its longest current item (plus arrow and padding)."""
+        widest = max(
+            (
+                combo.fontMetrics().horizontalAdvance(combo.itemText(index))
+                for index in range(combo.count())
+            ),
+            default=0,
+        )
+        combo.setMinimumWidth(widest + 60)
+
+    def _sync_source_combos(self) -> None:
+        """Re-read the CurseForge availability and rebuild the four dropdowns when it changed.
+
+        Called on show, before every page load, and after a request failed. Rebuilding only on a
+        change keeps an open popup and the user's current selection from being disturbed by an
+        unrelated page load.
+        """
+        available = _curseforge_available()
+        if available == self._cf_available:
+            return
+        self._cf_available = available
+        for combo in self.source_combos:
+            self._populate_source_combo(combo)
+            self._fit_source_combo_width(combo)
 
     def current_source(self) -> str:
         return self.source_combo.currentData() or "modrinth"

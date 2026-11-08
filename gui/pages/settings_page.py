@@ -348,6 +348,12 @@ class SettingsPage(QWidget):
         self.cf_key_edit = QLineEdit()
         self.cf_key_edit.setPlaceholderText(tr("settings.cf_key.hint"))
         self.cf_key_edit.setClearButtonEnabled(True)
+        # The resources page hides CurseForge when there is no key; this line is where the user can
+        # see that rule instead of wondering why the source is missing. It also reflects the
+        # process-wide 403 latch, which survives until a restart.
+        self.cf_key_status = QLabel("")
+        self.cf_key_status.setObjectName("hint")
+        self.cf_key_status.setWordWrap(True)
         self.speed_limit_spin = NoWheelSpinBox()
         self.speed_limit_spin.setRange(0, 1_048_576)
         self.speed_limit_spin.setSingleStep(100)
@@ -488,6 +494,7 @@ class SettingsPage(QWidget):
         form.addRow("", self.source_hint)
         form.addRow(tr("settings.proxy"), self.proxy_edit)
         form.addRow(tr("settings.cf_key"), self.cf_key_edit)
+        form.addRow("", self.cf_key_status)
         form.addRow("", self.online_identity_box)
         form.addRow(tr("settings.window_mode"), self.window_mode_combo)
         form.addRow(tr("settings.theme"), self.theme_combo)
@@ -746,6 +753,15 @@ class SettingsPage(QWidget):
             self.font_combo.setEditText(cfg.ui_font)
         self.proxy_edit.setText(cfg.http_proxy or "")
         self.cf_key_edit.setText(cfg.curseforge_api_key or "")
+        self._update_cf_key_status()
+
+    def _update_cf_key_status(self) -> None:
+        """Reflect whether the resources page can offer CurseForge (missing / set / rejected)."""
+        from launcher.mods import curseforge
+
+        self.cf_key_status.setText(
+            tr("settings.cf_key.status." + curseforge.key_status())
+        )
 
     # ---------- online recognition / image cache ----------
 
@@ -891,6 +907,7 @@ class SettingsPage(QWidget):
         from launcher.meta.manifest import reset_http_client
 
         reset_http_client()
+        self._update_cf_key_status()
         self._update_encrypt_button()
         set_app_status(
             self,

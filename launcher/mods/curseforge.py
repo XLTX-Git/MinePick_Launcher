@@ -17,13 +17,21 @@
 
 """CurseForge content source: search / popular / file listing / download.
 
-API key priority: user-entered in the settings page > the bundled key injected at
-build time (build/cf_key.txt, kept out of the repo and source tree to avoid leaking
-the key; neither the GUI nor the docs display the key value).
+API key priority: the ``MCLAUNCHER_CF_KEY`` environment variable > the key entered in
+the settings page > the bundled key injected at build time (build/cf_key.txt, kept out
+of the repo and source tree to avoid leaking the key; neither the GUI nor the docs
+display the key value). The environment variable is how a build or a CI run injects a
+key without writing it into the user's config file - the same idea as HMCL's
+``-Dhmcl.curseforge.apikey``.
+
+A missing key is not an error state: :func:`available` returns False and the resources
+page simply does not offer the source. A key the service rejects (401/403) latches the
+source off for the rest of the process, so one bad key cannot cause a request per click.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +44,16 @@ from launcher.mods.loaders import ModsError
 from launcher.mods.models import ModSearchHit, SearchHits
 
 CURSEFORGE_API = "https://api.curseforge.com"
+#: Environment variable that overrides the stored and bundled keys. Blank means unset, so an
+#: exported-but-empty variable cannot silently disable a working key.
+CF_KEY_ENV = "MCLAUNCHER_CF_KEY"
+#: The states :func:`key_status` reports; the settings page maps each one to its own hint.
+KEY_STATUS_MISSING = "missing"
+KEY_STATUS_SET = "set"
+KEY_STATUS_REJECTED = "rejected"
+#: Set for the rest of the process once the service answers 401/403. The resources page hides the
+#: source from then on, so a rejected key cannot cause one request per click.
+_key_rejected = False
 GAME_ID = 432  # Minecraft
 # classId: mod 6 / resourcepack 12 / shaderpack 6552 / modpack 4471
 CLASS_IDS = {"mod": 6, "resourcepack": 12, "shaderpack": 6552, "modpack": 4471}
@@ -82,18 +100,61 @@ def _bundled_key() -> str:
 
 
 def effective_api_key() -> str:
-    """The effective API key: user-entered first, then the bundled default."""
+    """The effective API key: environment first, then the user-entered, then the bundled default."""
+    env_key = os.environ.get(CF_KEY_ENV, "").strip()
+    if env_key:
+        return env_key
     cfg, _ = config.load()
     return (cfg.curseforge_api_key or _bundled_key()).strip()
 
 
 def has_key() -> bool:
+    """Whether a key is configured (a key the service rejected still counts here)."""
     return bool(effective_api_key())
 
 
+def key_status() -> str:
+    """What the settings page should say: missing / set / rejected for this process."""
+    if not effective_api_key():
+        return KEY_STATUS_MISSING
+    return KEY_STATUS_REJECTED if _key_rejected else KEY_STATUS_SET
+
+
+def available() -> bool:
+    """Whether the resources page may offer the CurseForge source right now."""
+    return key_status() == KEY_STATUS_SET
+
+
+def reset_session_state() -> None:
+    """Clear the 401/403 latch.
+
+    The latch is process-lifetime on purpose: after a rejection, every further request would get
+    the same answer. Tests are the only caller that clears it (so one test cannot poison the next).
+    """
+    global _key_rejected
+    _key_rejected = False
+
+
+def _mark_key_rejected() -> None:
+    """Latch the source off after the service refused the key."""
+    global _key_rejected
+    _key_rejected = True
+
+
+def _require_key() -> str:
+    """The key to send, or a refusal before any request is made."""
+    if _key_rejected:
+        raise ModsError(tr_core("mods.cf_key_invalid"))
+    key = effective_api_key()
+    if not key:
+        raise ModsError(tr_core("mods.cf_key_missing"))
+    return key
+
+
 def _client() -> httpx.Client:
+    key = _require_key()  # refuse before touching the shared pool, so "no key" costs no request
     client = _new_client()
-    client.headers["x-api-key"] = effective_api_key()
+    client.headers["x-api-key"] = key
     return client
 
 
@@ -101,6 +162,7 @@ def _check(resp: httpx.Response, message: str) -> dict:
     # 403 is the key the API rejects; 401 is a missing key. Both need the same advice, so one
     # message names the fix ("enter your own key in Settings") instead of only the HTTP status.
     if resp.status_code in (401, 403):
+        _mark_key_rejected()
         raise ModsError(tr_core("mods.cf_key_invalid"))
     if resp.status_code == 429:
         raise ModsError(tr_core("mods.cf_rate_limited"))
