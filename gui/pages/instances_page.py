@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -778,15 +779,24 @@ class InstancesPage(QWidget):
         self.sort_combo.setAccessibleName(tr("instances.sort.label"))
 
         self.create_button = QPushButton(tr("instances.create_copy"), self)
-        self.import_button = QPushButton(tr("instances.import"), self)
+        # One 导入 entry with a menu. Both entries bring outside content into this page, and a third
+        # full-width button pushed the page's minimum width past the 1000px product floor in Japanese
+        # (インスタンスをインポート… / MODパックをインポート…): a menu keeps both actions and their
+        # own labels without spending a second button's width on the action row.
+        self.import_button = QPushButton(tr("instances.import_menu"), self)
         self.import_button.setObjectName("secondaryButton")
-        # The way in for a pack that was downloaded somewhere else (Modrinth .mrpack / CurseForge /
-        # MultiMC). It sits next to the instance-zip import because both bring outside content into
-        # this page; the button is a secondary action like its sibling, not a new primary one.
-        self.import_pack_button = QPushButton(tr("instances.import_pack"), self)
-        self.import_pack_button.setObjectName("secondaryButton")
-        self.import_pack_button.setToolTip(tr("instances.import_pack.hint"))
-        self.import_pack_button.setAccessibleName(tr("instances.import_pack"))
+        self.import_button.setAccessibleName(tr("instances.import_menu"))
+        self.import_menu = QMenu(self.import_button)
+        # The pack entry's hint is inside the menu rather than on the button: the menu is what tells
+        # the two entries apart, and "supports .mrpack / CurseForge / MultiMC" belongs to the entry
+        # that offers them.
+        self.import_menu.setToolTipsVisible(True)
+        self.import_instance_action = self.import_menu.addAction(tr("instances.import"))
+        self.import_instance_action.triggered.connect(self._import)
+        self.import_pack_action = self.import_menu.addAction(tr("instances.import_pack"))
+        self.import_pack_action.setToolTip(tr("instances.import_pack.hint"))
+        self.import_pack_action.triggered.connect(self._import_modpack)
+        self.import_button.setMenu(self.import_menu)
         #: The running pack import: its task, progress bridge, stop flag and rate tracker (all None
         #: between imports). The worker removes a half-created instance itself, so 取消 needs no
         #: cleanup here.
@@ -846,7 +856,6 @@ class InstancesPage(QWidget):
         actions.addStretch(1)
         actions.addWidget(self.create_button)
         actions.addWidget(self.import_button)
-        actions.addWidget(self.import_pack_button)
         pane.addLayout(actions)
         pane.addWidget(self.result_count)
         pane.addWidget(self.list_stack, 1)
@@ -862,8 +871,6 @@ class InstancesPage(QWidget):
         layout.addWidget(self.view_stack)
 
         self.create_button.clicked.connect(self._create)
-        self.import_button.clicked.connect(self._import)
-        self.import_pack_button.clicked.connect(self._import_modpack)
         self.sort_combo.currentIndexChanged.connect(lambda _i: self.refresh())
         # Debounce: refilter only after 200ms of typing inactivity
         self._search_timer = QTimer(self)
@@ -1619,7 +1626,7 @@ class InstancesPage(QWidget):
             if center is not None
             else None
         )
-        self.import_pack_button.setEnabled(False)
+        self.import_button.setEnabled(False)
         set_app_status(self, tr("instances.import_pack.working", pack_path.name))
         run_in_background(
             partial(
@@ -1726,4 +1733,4 @@ class InstancesPage(QWidget):
     def _on_modpack_import_finished(self) -> None:
         self._import_busy = False
         self._import_stop = None
-        self.import_pack_button.setEnabled(True)
+        self.import_button.setEnabled(True)
