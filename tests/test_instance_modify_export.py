@@ -76,6 +76,10 @@ def _offline(monkeypatch):
         raise RuntimeError("offline test")
 
     monkeypatch.setattr("gui.pages.versions_page.fetch_manifest", _fail)
+    # The 修改 chooser asks for the official catalog and for downloadable loaders in the
+    # background; without these stubs every dialog in this file would wait on a real request.
+    monkeypatch.setattr(instance_detail, "fetch_catalog", _fail)
+    monkeypatch.setattr(instance_detail, "loader_install_options", lambda *a, **kw: ([], []))
     monkeypatch.setattr("launcher.mods.modrinth._client", _fail)
     monkeypatch.setattr("gui.pages.java_page.list_java", lambda *a, **kw: [])
 
