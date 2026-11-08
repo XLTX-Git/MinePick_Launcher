@@ -535,21 +535,24 @@ class ToolsPage(QWidget):
         layout.addLayout(header)
 
         labels = _lines("tools.net.labels")
+        # The card is a narrow column (226px) so each of the four facts is a label above its
+        # value. A two-column row would leave the value ~70px wide and break "端口" mid-word;
+        # stacked, every value gets the full card width. The card is still four facts, and it is
+        # shorter than the 339px state column, so it does not change the page height.
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(12)
+        grid.setHorizontalSpacing(0)
         grid.setVerticalSpacing(2)
         self.self_check_values: list[QLabel] = []
         for row, text in enumerate((labels + ["", "", "", ""])[:4]):
             label = QLabel(text)
             label.setObjectName("hint")
-            label.setMinimumWidth(96)
             value = QLabel("\u2014")
             value.setWordWrap(True)
-            grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
-            grid.addWidget(value, row, 1)
+            grid.addWidget(label, row * 2, 0)
+            grid.addWidget(value, row * 2 + 1, 0)
             self.self_check_values.append(value)
-        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(0, 1)
         layout.addLayout(grid)
         self.self_check_component = self.self_check_values[0]
         self.self_check_process = self.self_check_values[1]
