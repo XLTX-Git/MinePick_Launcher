@@ -30,6 +30,7 @@ import logging
 import shutil
 import threading
 import time
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
@@ -89,6 +90,10 @@ from gui.pages.instance_files import (
     scan_content_files,
     scan_saves,
 )
+from gui.pages.versions_install_flow import (
+    install_selection,
+    loader_install_options,
+)
 from gui.tasks import CANCELLED, task_center_of
 from gui.view_state import STATE_FILENAME
 from gui.widgets import (
@@ -98,15 +103,18 @@ from gui.widgets import (
     NoWheelDoubleSpinBox,
     add_search_icon,
     apply_no_focus_outline,
+    build_download_progress,
     disable_keeping_focus,
     set_app_status,
     style_form,
     style_page_layout,
+    widget_alive,
 )
 from gui.workers import ProgressBridge, RateTracker, run_in_background
 from launcher import config, paths
 from launcher.accessibility import TriggerSource
 from launcher.auth import AccountStore
+from launcher.install import list_installed_versions
 from launcher.instances import (
     ISOLATION_FOLLOW,
     ISOLATION_OFF,
@@ -114,6 +122,8 @@ from launcher.instances import (
     SWITCH_LOADER,
     SWITCH_VERSION,
     InstancesError,
+    SwitchOutcome,
+    core_profile_id,
     delete_instance,
     display_version_name,
     export_instance,
@@ -137,13 +147,14 @@ from launcher.launch import (
     resolve_launch_account,
     run_process,
 )
-from launcher.meta import block_textures
+from launcher.meta import block_textures, fetch_manifest, version_category
 from launcher.meta.version import version_json_path
 from launcher.mods import identity
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
 from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
 from launcher.mods.zh_names import zh_name
-from launcher.net import http_cache
+from launcher.net import downloader, http_cache
+from launcher.net.downloader import DownloadCancelled
 
 tr = i18n.tr
 
@@ -1090,33 +1101,190 @@ CHOICE_ROW_RADIUS = 8
 CHOICE_ROW_CHEVRON = 12
 #: The picker's list scrolls instead of growing the card past the window.
 CHOICE_LIST_MAX_HEIGHT = 320
+#: Catalog rows built at a time. The official manifest holds ~900 versions; building one widget per
+#: entry in a dialog would repeat the stall the versions page fixes with its batches. Search reads the
+#: whole catalog, and the "load more" row appends the next batch, so no version is unreachable.
+CHOICE_PAGE = 60
+
+#: Version category -> the label the chooser prints under the id.
+_VERSION_TYPE_LABELS = {
+    "release": "versions.type.release",
+    "snapshot": "versions.type.snapshot",
+    "old_beta": "versions.type.old_beta",
+    "old_alpha": "versions.type.old_alpha",
+    "april_fools": "versions.group.april",
+}
+
+#: What the chooser rows stand for. ``installed`` means "point at it"; ``loader_version`` means
+#: "download this loader through its own installer, then point at the profile it creates".
+@dataclass(frozen=True)
+class _SwitchChoice:
+    version_id: str
+    minecraft: str
+    loader: str = ""
+    installed: bool = False
+    meta: str = ""
+    loader_version: object | None = None
+
+    @property
+    def label(self) -> str:
+        """``1.21.11 · Fabric 0.19.3`` - what the row's first line says."""
+        loader = self.loader or tr("instances.detail.modify.vanilla")
+        return f"{self.minecraft} · {loader}"
+
+    @property
+    def needs_install(self) -> bool:
+        """True for anything this game folder cannot point at yet."""
+        return not self.installed
+
+    @property
+    def is_loader_install(self) -> bool:
+        return self.loader_version is not None
+
+    def installer_identity(self) -> str:
+        """The id or loader name the progress line can name before the profile exists."""
+        if self.loader_version is not None:
+            return self.loader
+        return self.version_id
+
+
+def _catalog_cache_path() -> Path:
+    return paths.launcher_dir() / "cache" / "version_manifest.json"
+
+
+#: The official manifest of this session, once a page or this dialog has read it.
+_CATALOG_CACHE: list | None = None
+
+
+def _catalog_from_cache() -> list | None:
+    """The manifest entries when they are already on disk; never waits for the network.
+
+    The choices dialog opens synchronously, so a cold cache must not block it on a 278KB request.
+    The caller fills the installed profiles at once and asks a worker for the catalog; a warm cache
+    (the normal case after the versions page has ever been opened) answers here instead, which is
+    what makes the list complete on the first paint and deterministic in tests.
+    """
+    global _CATALOG_CACHE
+    if _CATALOG_CACHE is not None:
+        return _CATALOG_CACHE
+    cache = _catalog_cache_path()
+    if not cache.is_file():
+        return None
+    try:
+        manifest = fetch_manifest(cache_path=cache)
+    except Exception:  # noqa: BLE001 - any unreadable cache falls back to the background fetch
+        return None
+    _CATALOG_CACHE = list(manifest.versions)
+    return _CATALOG_CACHE
+
+
+def fetch_catalog() -> list:
+    """Fetch (or read) the official manifest for the chooser; the worker half of the same seam."""
+    global _CATALOG_CACHE
+    manifest = fetch_manifest(cache_path=_catalog_cache_path())
+    _CATALOG_CACHE = list(manifest.versions)
+    return _CATALOG_CACHE
+
+
+def _catalog_choices(
+    versions: list, *, installed_ids: set[str], current_version_id: str, current_minecraft: str
+) -> list[_SwitchChoice]:
+    """The official versions 修改 does not already offer as an installed profile.
+
+    A version that is installed is already in the first part of the list with its real loader, so the
+    catalog entry would only be a second row for the same folder. The current Minecraft version is
+    excluded for the same reason the installed candidates exclude it: changing the loader is the other
+    button, and this list is about a different game version.
+    """
+    out: list[_SwitchChoice] = []
+    for version in versions:
+        version_id = getattr(version, "id", "")
+        if not version_id or version_id == current_version_id or version_id == current_minecraft:
+            continue
+        if version_id in installed_ids:
+            continue
+        category = version_category(version_id, getattr(version, "type", "release"))
+        type_label = tr(_VERSION_TYPE_LABELS.get(category, "versions.type.release"))
+        released = str(getattr(version, "release_time", "") or "")[:10]
+        out.append(
+            _SwitchChoice(
+                version_id=version_id,
+                minecraft=version_id,
+                installed=False,
+                meta=" · ".join(part for part in (type_label, released) if part),
+            )
+        )
+    return out
+
+
+def _loader_choices(
+    options: list[tuple[str, object]], installed: list[_SwitchChoice], minecraft: str
+) -> list[_SwitchChoice]:
+    """The newest downloadable loader of each kind, minus the version already installed.
+
+    ``installed`` carries the display labels of the profiles this game version already has ("Fabric
+    0.19.3"); a downloadable row whose label matches is the same loader build, so offering it would
+    be a download that changes nothing. A newer build than the installed one still gets a row.
+    """
+    from launcher.mods.loaders import display_loader_name
+
+    installed_labels = {choice.loader for choice in installed if choice.loader}
+    out: list[_SwitchChoice] = []
+    for loader_key, loader_version in options:
+        label = f"{display_loader_name(loader_key)} {loader_version.version}"
+        if label in installed_labels:
+            continue
+        out.append(
+            _SwitchChoice(
+                version_id="",
+                minecraft=minecraft,
+                loader=label,
+                installed=False,
+                meta=tr("instances.detail.modify.status.download_loader"),
+                loader_version=loader_version,
+            )
+        )
+    return out
 
 
 class _VersionChoiceRow(QAbstractButton):
-    """One installed version the instance can be pointed at: its identity over its profile id.
+    """One version the instance can be pointed at: its identity, its state and its profile id.
 
     A real ``QAbstractButton``: it is one Tab stop, Space/Enter activate it and assistive technology
     reads both lines as the button's name. Painted rather than composed for the reason the versions
     page paints its loader rows: the text has to elide on one line instead of reporting an unwrapped
     width, which would widen the dialog for the longest id.
+
+    ``installed`` frames the row as "point here"; a catalog entry says "未安装 · 将下载" and the page
+    treats it as a request to install first. The state is painted, not a second widget, so a list of
+    hundreds of manifest entries stays one widget each.
     """
 
-    def __init__(self, identity, parent: QWidget | None = None) -> None:
+    def __init__(self, choice: _SwitchChoice, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.identity = identity
+        self.identity = choice
+        self.choice = choice
         self.setObjectName("versionChoiceRow")
         self.setFixedHeight(CHOICE_ROW_HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._hover = False
-        self.setAccessibleName(self.label_text())
-        self.setAccessibleDescription(identity.version_id)
-        self.setToolTip(identity.version_id)
+        self.setAccessibleName(f"{self.label_text()} · {self.status_text()}")
+        self.setAccessibleDescription(self.meta_text())
+        self.setToolTip(self.meta_text())
 
     def label_text(self) -> str:
         """``1.21.11 · Fabric 0.19.3`` - what the instance would run, in one line."""
-        loader = self.identity.loader or tr("instances.detail.modify.vanilla")
-        return f"{self.identity.minecraft} · {loader}"
+        return self.choice.label
+
+    def status_text(self) -> str:
+        if not self.choice.installed:
+            return tr("instances.detail.modify.status.download")
+        return tr("instances.detail.modify.status.installed")
+
+    def meta_text(self) -> str:
+        """The second line: the profile id, or the catalog's type/date for a version to download."""
+        return self.choice.meta or self.choice.version_id or self.choice.loader
 
     # ---------- interaction ----------
 
@@ -1157,12 +1325,21 @@ class _VersionChoiceRow(QAbstractButton):
 
         chevron_left = self.width() - CHOICE_ROW_PADDING - CHOICE_ROW_CHEVRON
         text_left = CHOICE_ROW_PADDING
-        text_width = max(0, chevron_left - 12 - text_left)
         title_font = QFont(self.font())
         title_font.setPixelSize(15)
         title_font.setWeight(QFont.Weight.DemiBold)
         meta_font = QFont(self.font())
         meta_font.setPixelSize(12)
+        status_font = QFont(self.font())
+        status_font.setPixelSize(12)
+        status_metrics = QFontMetrics(status_font)
+        status_text = self.status_text()
+        status_width = min(
+            status_metrics.horizontalAdvance(status_text) + 2,
+            max(0, chevron_left - text_left - 60),
+        )
+        status_left = chevron_left - 12 - status_width
+        text_width = max(0, status_left - 12 - text_left)
 
         painter.setFont(title_font)
         painter.setPen(QColor(tokens.get("FG_TEXT", "#1f2a36")))
@@ -1179,8 +1356,21 @@ class _VersionChoiceRow(QAbstractButton):
             QRectF(text_left, 28, text_width, 18),
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
             QFontMetrics(meta_font).elidedText(
-                self.identity.version_id, Qt.TextElideMode.ElideMiddle, int(text_width)
+                self.meta_text(), Qt.TextElideMode.ElideMiddle, int(text_width)
             ),
+        )
+
+        status_colour = (
+            tokens.get("ACCENT_TEXT", tokens.get("FG_HINT", "#4f6070"))
+            if self.choice.needs_install
+            else tokens.get("FG_HINT", "#4f6070")
+        )
+        painter.setFont(status_font)
+        painter.setPen(QColor(status_colour))
+        painter.drawText(
+            QRectF(status_left, 0, status_width, CHOICE_ROW_HEIGHT),
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            status_metrics.elidedText(status_text, Qt.TextElideMode.ElideRight, int(status_width)),
         )
 
         # A drawn chevron: the UI font has no guaranteed U+203A, and a missing glyph would be a tofu
@@ -1205,11 +1395,17 @@ class _VersionChoiceRow(QAbstractButton):
 
 
 class _VersionChoiceDialog(inwindow_dialog.InWindowDialog):
-    """The installed-version list: one row per candidate, then 取消.
+    """The version list: installed profiles first, then the official catalog, each with its state.
 
-    Choosing a row closes the card and returns the identity; the page then asks the second question
+    Choosing a row closes the card and returns the choice; the page then asks the second question
     (the confirmation with the backup option). Nothing is written here - this dialog is a list, and
-    the only thing it decides is which profile the user wants.
+    the only thing it decides is which profile the user wants, or which version to download first.
+
+    The catalog arrives after the dialog is already open (the page reads a warm disk cache
+    synchronously and fetches a cold one in the background), so ``add_choices`` is part of the
+    interface: the installed rows are usable immediately, and the official rows appear when they are
+    known. The list never builds the whole manifest at once: it shows ``CHOICE_PAGE`` rows and a
+    "load more" row, and the search field filters the whole catalog without rendering it.
     """
 
     def __init__(
@@ -1218,13 +1414,22 @@ class _VersionChoiceDialog(inwindow_dialog.InWindowDialog):
         *,
         title: str,
         hint: str,
-        identities: list,
+        choices: list[_SwitchChoice],
         empty_text: str,
+        searchable: bool = False,
+        loading_text: str = "",
     ) -> None:
         super().__init__(parent, title=title, severity="question")
-        self.chosen = None
+        self.chosen: _SwitchChoice | None = None
         self.rows: list[_VersionChoiceRow] = []
         self.list_area: QScrollArea | None = None
+        self.search_edit: QLineEdit | None = None
+        self.more_button: QPushButton | None = None
+        self._choices = list(choices)
+        self._empty_text = empty_text
+        self._limit = CHOICE_PAGE
+        self._rebuilding = False
+
         # A plain label, not add_body(): the body helper builds a *scroll area* with stretch 1, which
         # took the whole card and left the list a clipped strip at the bottom (measured on the
         # 更换游戏版本 shot). The hint is one sentence; it needs no scroller.
@@ -1233,47 +1438,142 @@ class _VersionChoiceDialog(inwindow_dialog.InWindowDialog):
         hint_label.setWordWrap(True)
         hint_label.setAccessibleName(title)
         self.card_layout.addWidget(hint_label)
-        if identities:
-            area = QScrollArea()
-            area.setObjectName("overlayScroll")
-            area.setWidgetResizable(True)
-            area.setFrameShape(QFrame.Shape.NoFrame)
-            area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            # The list sizes itself to its rows until it would take over the window, then it scrolls.
-            rows_height = len(identities) * CHOICE_ROW_HEIGHT + max(0, len(identities) - 1) * 8
-            area.setFixedHeight(min(rows_height, CHOICE_LIST_MAX_HEIGHT))
-            # The rows are the Tab stops; the viewport itself must not be one more invisible stop.
-            area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        if searchable:
+            self.search_edit = QLineEdit()
+            self.search_edit.setObjectName("inWindowInput")
+            self.search_edit.setPlaceholderText(tr("instances.detail.modify.search"))
+            self.search_edit.setAccessibleName(tr("instances.detail.modify.search"))
+            self.search_edit.setClearButtonEnabled(True)
+            self.search_edit.textChanged.connect(self._on_search)
+            self.card_layout.addWidget(self.search_edit)
+
+        area = QScrollArea()
+        area.setObjectName("overlayScroll")
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        area.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.card_layout.addWidget(area)
+        self.list_area = area
+
+        self.empty_label = QLabel(empty_text)
+        self.empty_label.setObjectName("overlayBody")
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setAccessibleName(empty_text)
+        self.card_layout.addWidget(self.empty_label)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("overlayBody")
+        self.status_label.setWordWrap(True)
+        self.status_label.setVisible(bool(loading_text))
+        self.status_label.setText(loading_text)
+        self.card_layout.addWidget(self.status_label)
+
+        self.add_buttons(
+            [(tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED)], default=None
+        )
+        self._rebuild()
+
+    # ---------- data ----------
+
+    def add_choices(self, choices: list[_SwitchChoice]) -> None:
+        """Append rows that arrived after the dialog opened (a catalog fetch / loader probe)."""
+        if not choices:
+            self._rebuild()
+            return
+        self._choices.extend(choices)
+        self._rebuild()
+
+    def set_status_text(self, text: str) -> None:
+        """One line under the list: what is loading, failed, or could not be found."""
+        self.status_label.setText(text)
+        self.status_label.setVisible(bool(text))
+
+    def _on_search(self, _text: str) -> None:
+        self._limit = CHOICE_PAGE
+        self._rebuild()
+
+    def _visible_choices(self) -> list[_SwitchChoice]:
+        search_edit = self.search_edit
+        needle = search_edit.text().strip().casefold() if search_edit is not None else ""
+        if not needle:
+            return list(self._choices)
+        return [
+            choice
+            for choice in self._choices
+            if needle in choice.version_id.casefold()
+            or needle in choice.minecraft.casefold()
+            or needle in choice.loader.casefold()
+        ]
+
+    # ---------- construction ----------
+
+    def _rebuild(self) -> None:
+        """Rebuild the visible page of rows (a catalog answer, a search keystroke, "load more")."""
+        if self._rebuilding or self.list_area is None:
+            return
+        self._rebuilding = True
+        try:
+            focused = QApplication.focusWidget()
+            focus_index = next(
+                (index for index, row in enumerate(self.rows) if row is focused), None
+            )
+            visible = self._visible_choices()
+            shown = visible[: self._limit]
             body = QWidget()
             layout = QVBoxLayout(body)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(8)
-            for identity in identities:
-                row = _VersionChoiceRow(identity)
-                row.clicked.connect(partial(self._choose, identity))
+            self.rows = []
+            for choice in shown:
+                row = _VersionChoiceRow(choice)
+                row.clicked.connect(partial(self._choose, choice))
                 layout.addWidget(row)
                 self.rows.append(row)
+            self.more_button = None
+            if len(visible) > len(shown):
+                self.more_button = QPushButton(
+                    tr("instances.detail.modify.load_more", len(visible) - len(shown))
+                )
+                self.more_button.setObjectName("secondaryButton")
+                self.more_button.setAccessibleName(self.more_button.text())
+                self.more_button.clicked.connect(self._load_more)
+                layout.addWidget(self.more_button)
             layout.addStretch(1)
-            area.setWidget(body)
-            self.card_layout.addWidget(area)
-            self.list_area = area
-        else:
-            empty = QLabel(empty_text)
-            empty.setObjectName("overlayBody")
-            empty.setWordWrap(True)
-            empty.setAccessibleName(empty_text)
-            self.card_layout.addWidget(empty)
-        self.add_buttons(
-            [(tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED)], default=None
-        )
+            self.list_area.setWidget(body)
+            extra = 48 if self.more_button is not None else 0
+            height = len(shown) * CHOICE_ROW_HEIGHT + max(0, len(shown) - 1) * 8 + extra
+            self.list_area.setFixedHeight(min(max(height, CHOICE_ROW_HEIGHT), CHOICE_LIST_MAX_HEIGHT))
+            self.list_area.setVisible(bool(visible))
+            empty_key = (
+                self._empty_text
+                if not self._choices
+                else tr("instances.detail.modify.empty.search")
+            )
+            self.empty_label.setText(empty_key)
+            self.empty_label.setVisible(not visible)
+            if focus_index is not None and focus_index < len(self.rows):
+                self.rows[focus_index].setFocus(Qt.FocusReason.TabFocusReason)
+            if self.isVisible():
+                self._place_card()
+        finally:
+            self._rebuilding = False
 
-    def _choose(self, identity) -> None:
+    def _load_more(self) -> None:
+        self._limit += CHOICE_PAGE
+        self._rebuild()
+
+    def _choose(self, choice: _SwitchChoice) -> None:
         """One click is the whole choice: remember the row and close."""
-        self.chosen = identity
+        self.chosen = choice
         self._finish(inwindow_dialog.Outcome.ACCEPTED)
 
     def _focus_initial(self) -> None:
-        if self.rows:
+        if self.search_edit is not None:
+            self.search_edit.setFocus(Qt.FocusReason.TabFocusReason)
+        elif self.rows:
             self.rows[0].setFocus(Qt.FocusReason.TabFocusReason)
         else:
             super()._focus_initial()
@@ -1294,27 +1594,39 @@ class _SwitchConfirmDialog(inwindow_dialog.InWindowDialog):
     the user asked for one switch, and the copy that protects it belongs to that one answer. Enter
     activates 取消 on purpose - re-pointing a working instance is not something a stray Return should
     do, so the safe answer is the default one.
+
+    A target that is not installed yet gets the longer body: the core is downloaded and written to
+    ``versions/`` before the pointer moves, so "what happens" is more than one field this time.
     """
 
-    def __init__(self, parent: QWidget | None, *, current: str, target: str) -> None:
+    def __init__(
+        self, parent: QWidget | None, *, current: str, target: str, needs_install: bool = False
+    ) -> None:
         super().__init__(
             parent,
             title=tr("instances.detail.modify.confirm.title"),
             severity="question",
         )
-        self.add_body(tr("instances.detail.modify.confirm.body", target, current))
+        body_key = (
+            "instances.detail.modify.confirm.body_install"
+            if needs_install
+            else "instances.detail.modify.confirm.body"
+        )
+        self.add_body(tr(body_key, target, current))
         self.backup_check = QCheckBox(tr("instances.detail.modify.confirm.backup"))
         self.backup_check.setChecked(True)
         self.backup_check.setAccessibleName(tr("instances.detail.modify.confirm.backup"))
         self.backup_check.setToolTip(tr("instances.detail.modify.confirm.backup"))
         self.card_layout.addWidget(self.backup_check)
+        accept_key = (
+            "instances.detail.modify.confirm.accept_install"
+            if needs_install
+            else "instances.detail.modify.confirm.accept"
+        )
         self.add_buttons(
             [
                 (tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED),
-                (
-                    tr("instances.detail.modify.confirm.accept"),
-                    inwindow_dialog.Outcome.ACCEPTED,
-                ),
+                (tr(accept_key), inwindow_dialog.Outcome.ACCEPTED),
             ],
             default=inwindow_dialog.Outcome.REJECTED,
         )
@@ -1322,6 +1634,93 @@ class _SwitchConfirmDialog(inwindow_dialog.InWindowDialog):
     @property
     def wants_backup(self) -> bool:
         return self.backup_check.isChecked()
+
+
+@dataclass(frozen=True)
+class _SwitchRun:
+    """The result of one install-then-point job (what the page announces when it is done)."""
+
+    outcome: SwitchOutcome
+    backup_path: Path | None
+    installed_profile: str
+
+
+def _perform_switch(
+    instance_id: str,
+    choice: _SwitchChoice,
+    game_dir: Path,
+    *,
+    backup_dir: Path | None,
+    stop: threading.Event,
+    report: ProgressBridge,
+    cache_dir: Path | None,
+    runtime_dir: Path | None,
+    concurrency: int,
+) -> _SwitchRun:
+    """Back up (optionally), install what is missing, then move the pointer - in that order.
+
+    The order is the failure contract: the zip exists before a byte is written, the profile exists
+    before ``base_version`` names it, and anything that fails leaves the pointer where it was. A
+    cancelled transfer never reaches the last step, so 取消 cannot half-switch an instance.
+
+    This runs on a worker thread. ``report`` is a ``ProgressBridge`` (its call is queued to the main
+    thread), and every path that touches Qt-owned state stays out of here.
+    """
+    backup_path: Path | None = None
+    if backup_dir is not None:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_path = Path(backup_dir) / f"{instance_id}-{stamp}.zip"
+        try:
+            export_instance(
+                instance_id,
+                backup_path,
+                game_dir,
+                on_progress=lambda done, total: report(("backup", done, total)),
+                should_stop=stop.is_set,
+            )
+        except Exception as exc:  # any backup failure must stop before the install
+            if stop.is_set():
+                raise DownloadCancelled("cancelled") from exc
+            raise InstancesError(
+                tr("instances.detail.modify.backup_failed", str(exc))
+            ) from exc
+    if stop.is_set():
+        raise DownloadCancelled("cancelled")
+
+    if choice.installed:
+        # The pointer move is the whole operation: no download, no copy. This is the behaviour the
+        # page had before the chooser learned to offer the official catalog.
+        profile_id = choice.version_id
+    else:
+        if choice.is_loader_install:
+            base_id = choice.minecraft
+            # A loader installer inherits from the game version; installing its files again would only
+            # download the same version JSON and skip every verified file.
+            install_base = version_json_path(instance_dir(game_dir, base_id)) is None
+        else:
+            base_id = choice.version_id
+            install_base = True
+        installed = install_selection(
+            base_id,
+            loader_version=choice.loader_version,
+            install_base=install_base,
+            game_dir=game_dir,
+            cache_dir=cache_dir,
+            runtime_dir=runtime_dir,
+            concurrency=concurrency,
+            auto_install_java=True,
+            progress=lambda progress: report(("install", progress)),
+            should_stop=stop.is_set,
+        )
+        if stop.is_set():
+            raise DownloadCancelled("cancelled")
+        profile_id = installed.profile_id
+    outcome = switch_instance_version(instance_id, profile_id, game_dir)
+    return _SwitchRun(
+        outcome=outcome,
+        backup_path=backup_path,
+        installed_profile=profile_id,
+    )
 
 
 class InstanceDetail(QWidget):
@@ -1357,6 +1756,13 @@ class InstanceDetail(QWidget):
         self._badge_counts: dict[str, int] = {key: 0 for key in _BADGED_SECTIONS}
         #: 修改: one switch runs at a time, and its two buttons stay disabled while it does.
         self._switch_busy = False
+        #: The running switch's task (the window's download list), its progress bridge, its stop
+        #: event and its rate tracker. All None between switches.
+        self._switch_task = None
+        self._switch_bridge: ProgressBridge | None = None
+        self._switch_stop: threading.Event | None = None
+        self._switch_rate: RateTracker | None = None
+        self._switch_cancelled = False
         #: 导出: the running export's task, its progress bridge, its stop flag and its destination.
         self._export_task = None
         self._export_bridge: ProgressBridge | None = None
@@ -1650,6 +2056,8 @@ class InstanceDetail(QWidget):
         for key, label_key in (
             ("version", "instances.detail.row.version"),
             ("profile", "instances.detail.row.profile"),
+            ("loader", "instances.detail.row.loader"),
+            ("core_dir", "instances.detail.row.core_dir"),
             ("game_dir", "instances.detail.row.game_dir"),
             ("isolation", "instances.detail.row.isolation"),
             ("java", "instances.detail.row.java"),
@@ -1662,7 +2070,9 @@ class InstanceDetail(QWidget):
             value = ElidedLabel(
                 tr("instances.detail.value.none"),
                 elide_mode=(
-                    Qt.TextElideMode.ElideLeft if key == "game_dir" else Qt.TextElideMode.ElideMiddle
+                    Qt.TextElideMode.ElideLeft
+                    if key in ("game_dir", "core_dir")
+                    else Qt.TextElideMode.ElideMiddle
                 ),
             )
             self.overview_values[key] = value
@@ -1976,10 +2386,13 @@ class InstanceDetail(QWidget):
         return page
 
     def _build_modify(self) -> QWidget:
-        """修改: what the instance runs now, and the two ways to point it at something else.
+        """修改: what the instance runs now, and the two ways to change the core it runs.
 
-        The page is read-only rows plus two buttons, because a switch is one field in the instance's
-        own metadata (``base_version``): there is nothing else to configure and no migration to run.
+        The read-only rows name the core the launch path really resolves (version, loader, folder).
+        The two buttons open a chooser that offers both installed profiles and versions that are not
+        installed yet; a version from the catalog is downloaded through the versions page's install
+        path, then the instance's ``base_version`` points at the profile that install produced. An
+        installed profile needs neither step - it is only the pointer that moves.
         """
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1995,11 +2408,17 @@ class InstanceDetail(QWidget):
             ("game_version", "instances.detail.modify.game_version"),
             ("loader", "instances.detail.modify.loader"),
             ("point_to", "instances.detail.modify.point_to"),
+            ("core_dir", "instances.detail.row.core_dir"),
         ):
             title = QLabel(tr(label_key))
             title.setObjectName("hint")
             value = ElidedLabel(
-                tr("instances.detail.value.none"), elide_mode=Qt.TextElideMode.ElideMiddle
+                tr("instances.detail.value.none"),
+                elide_mode=(
+                    Qt.TextElideMode.ElideLeft
+                    if key == "core_dir"
+                    else Qt.TextElideMode.ElideMiddle
+                ),
             )
             self.modify_values[key] = value
             form.addRow(title, value)
@@ -2009,6 +2428,14 @@ class InstanceDetail(QWidget):
         self.modify_hint.setObjectName("hint")
         self.modify_hint.setWordWrap(True)
         card_layout.addWidget(self.modify_hint)
+
+        #: The last failure, in place: a status line is overwritten by the next message, and "the
+        #: instance still runs the old core because the download failed" is information to keep.
+        self.modify_error = QLabel("")
+        self.modify_error.setObjectName("hint")
+        self.modify_error.setWordWrap(True)
+        self.modify_error.setVisible(False)
+        card_layout.addWidget(self.modify_error)
 
         self.change_version_button = QPushButton(tr("instances.detail.modify.change_version"))
         self.change_version_button.setObjectName("secondaryButton")
@@ -2023,6 +2450,32 @@ class InstanceDetail(QWidget):
         buttons.addWidget(self.change_loader_button)
         buttons.addStretch(1)
         card_layout.addLayout(buttons)
+
+        # The install half of a switch reports in two places: this row (what the next second is
+        # doing, with a cancel button) and the window's task list (the same numbers, surviving a
+        # page change). Both read the one ProgressBridge, so they cannot disagree.
+        self.switch_state_label = QLabel("")
+        self.switch_state_label.setObjectName("hint")
+        self.switch_state_label.setWordWrap(True)
+        self.switch_state_label.setVisible(False)
+        card_layout.addWidget(self.switch_state_label)
+        self.switch_progress_row, self.switch_progress_bar, self.switch_progress_text = (
+            build_download_progress("switchProgress")
+        )
+        self.switch_cancel_button = QPushButton(tr("instances.detail.modify.cancel"))
+        self.switch_cancel_button.setObjectName("secondaryButton")
+        self.switch_cancel_button.setAccessibleName(tr("instances.detail.modify.cancel"))
+        self.switch_cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.switch_cancel_button.clicked.connect(self.cancel_switch)
+        progress_row = QWidget()
+        progress_layout = QHBoxLayout(progress_row)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(8)
+        progress_layout.addWidget(self.switch_progress_row, 1)
+        progress_layout.addWidget(self.switch_cancel_button)
+        progress_row.setVisible(False)
+        self.switch_progress_container = progress_row
+        card_layout.addWidget(progress_row)
 
         layout.addWidget(card)
         layout.addStretch(1)
@@ -2438,6 +2891,11 @@ class InstanceDetail(QWidget):
         for value in self.modify_values.values():
             value.setText(tr("instances.detail.value.none"))
             value.setToolTip("")
+        self.modify_error.setText("")
+        self.modify_error.setVisible(False)
+        self.switch_progress_row.setVisible(False)
+        self.switch_progress_container.setVisible(False)
+        self.switch_state_label.setVisible(False)
         self.change_version_button.setEnabled(False)
         self.change_loader_button.setEnabled(False)
         for key in _BADGED_SECTIONS:
@@ -2453,8 +2911,13 @@ class InstanceDetail(QWidget):
         inst = self.instance
         cfg, _ = config.load()
         values = self.overview_values
-        values["version"].setText(inst.id)
-        values["profile"].setText(display_version_name(inst.id))
+        version_id = self.resolved.version_id
+        values["version"].setText(version_id)
+        values["profile"].setText(display_version_name(version_id))
+        values["loader"].setText(self._loader_text(version_id))
+        core_folder = instance_dir(self.game_dir, core_profile_id(self.game_dir, version_id))
+        values["core_dir"].setText(str(core_folder))
+        values["core_dir"].setToolTip(str(core_folder))
         values["game_dir"].setText(str(self.resolved.launch_dir))
         state = tr("common.on") if self.resolved.isolated else tr("common.off")
         values["isolation"].setText(state + " — " + self._isolation_reason())
@@ -2507,6 +2970,13 @@ class InstanceDetail(QWidget):
             return tr("instances.detail.java.follow_global", str(global_java))
         return tr("instances.detail.java.follow_auto")
 
+    def _loader_text(self, version_id: str) -> str:
+        """The loader a profile runs, or the honest "cannot read it" for a missing/broken profile."""
+        if version_json_path(instance_dir(self.game_dir, version_id)) is None:
+            return tr("instances.detail.modify.unknown")
+        identity = profile_identity(self.game_dir, version_id)
+        return identity.loader or tr("instances.detail.modify.vanilla")
+
     def _fill_banners(self) -> None:
         isolated = bool(self.resolved and self.resolved.isolated)
         shared = str(self.resolved.game_dir) if self.resolved else ""
@@ -2522,7 +2992,7 @@ class InstanceDetail(QWidget):
             banner.setVisible(True)
 
     def _fill_modify(self) -> None:
-        """Show what the instance would launch now: game version, loader and the profile it points at.
+        """Show what the instance would launch now: game version, loader, profile and core folder.
 
         Every value comes from the profile the launch path will read (``resolved.version_id``,
         followed through ``inheritsFrom``), so the page cannot claim a version the launcher would not
@@ -2539,7 +3009,10 @@ class InstanceDetail(QWidget):
         version_id = self.resolved.version_id
         values["point_to"].setText(version_id)
         values["point_to"].setToolTip(version_id)
-        if version_json_path(instance_dir(self.game_dir, version_id)) is None:
+        core_folder = instance_dir(self.game_dir, core_profile_id(self.game_dir, version_id))
+        values["core_dir"].setText(str(core_folder))
+        values["core_dir"].setToolTip(str(core_folder))
+        if version_json_path(core_folder) is None:
             unknown = tr("instances.detail.modify.unknown")
             values["game_version"].setText(unknown)
             values["loader"].setText(unknown)
@@ -2552,11 +3025,11 @@ class InstanceDetail(QWidget):
         self.change_loader_button.setEnabled(enabled)
 
     def change_game_version(self) -> None:
-        """更换游戏版本: the other Minecraft versions already installed in this game folder."""
+        """更换游戏版本: installed profiles of other versions, plus the official catalog."""
         self._choose_switch_target(SWITCH_VERSION)
 
     def change_loader(self) -> None:
-        """更换加载器: the other profiles of the same Minecraft version (another loader, or none)."""
+        """更换加载器: this game version's profiles, plus the loaders that can be downloaded."""
         self._choose_switch_target(SWITCH_LOADER)
 
     def _identity_text(self, version_id: str) -> str:
@@ -2565,12 +3038,33 @@ class InstanceDetail(QWidget):
         loader = identity.loader or tr("instances.detail.modify.vanilla")
         return f"{identity.minecraft} · {loader}"
 
+    @staticmethod
+    def _choice_for_identity(identity) -> _SwitchChoice:
+        """An installed profile as a chooser row: the pointer move is the whole operation."""
+        return _SwitchChoice(
+            version_id=identity.version_id,
+            minecraft=identity.minecraft,
+            loader=identity.loader,
+            installed=True,
+            meta=identity.version_id,
+        )
+
     def _choose_switch_target(self, kind: str) -> None:
-        """Open the candidate list for one kind of switch, then ask for confirmation."""
+        """Open the candidate list for one kind of switch, then ask for confirmation.
+
+        The list is complete before it is useful: installed profiles are local and shown at once, and
+        the downloadable half (the official catalog, or each loader's newest build) is requested in
+        the background while the dialog is already open. Nothing here downloads anything - a click
+        only records the choice.
+        """
         if self._require_instance() is None or self.resolved is None or self._switch_busy:
             return
         is_loader = kind == SWITCH_LOADER
-        candidates = switch_candidates(self.game_dir, self.resolved.version_id, kind)
+        current = profile_identity(self.game_dir, self.resolved.version_id)
+        installed = [
+            self._choice_for_identity(identity)
+            for identity in switch_candidates(self.game_dir, self.resolved.version_id, kind)
+        ]
         dialog = _VersionChoiceDialog(
             self,
             title=tr(
@@ -2583,13 +3077,23 @@ class InstanceDetail(QWidget):
                 if is_loader
                 else "instances.detail.modify.hint.version"
             ),
-            identities=candidates,
+            choices=installed,
             empty_text=tr(
                 "instances.detail.modify.empty.loader"
                 if is_loader
                 else "instances.detail.modify.empty.version"
             ),
+            searchable=not is_loader,
+            loading_text=tr(
+                "instances.detail.modify.loading_loaders"
+                if is_loader
+                else "instances.detail.modify.loading_versions"
+            ),
         )
+        if is_loader:
+            self._probe_loader_choices(dialog, current, installed)
+        else:
+            self._load_catalog_choices(dialog, current)
         dialog.ask()
         chosen = dialog.chosen
         dialog.deleteLater()
@@ -2597,68 +3101,303 @@ class InstanceDetail(QWidget):
             return
         self._confirm_switch(chosen)
 
+    def _load_catalog_choices(self, dialog: _VersionChoiceDialog, current) -> None:
+        """Fill the official half of the version chooser (cache now, network only when cold)."""
+        installed_ids = set(list_installed_versions(self.game_dir))
+        current_version_id = self.resolved.version_id if self.resolved is not None else ""
+
+        def add(versions: list) -> None:
+            if not widget_alive(dialog):
+                return
+            dialog.add_choices(
+                _catalog_choices(
+                    versions,
+                    installed_ids=installed_ids,
+                    current_version_id=current_version_id,
+                    current_minecraft=current.minecraft,
+                )
+            )
+            dialog.set_status_text("")
+
+        cached = _catalog_from_cache()
+        if cached is not None:
+            add(cached)
+            return
+
+        def on_error(message: str) -> None:
+            if widget_alive(dialog):
+                dialog.set_status_text(tr("instances.detail.modify.loading_failed", message))
+
+        run_in_background(fetch_catalog, on_result=add, on_error=on_error)
+
+    def _probe_loader_choices(
+        self, dialog: _VersionChoiceDialog, current, installed: list[_SwitchChoice]
+    ) -> None:
+        """Fill the downloadable half of the loader chooser (one background probe)."""
+
+        def on_result(payload) -> None:
+            if not widget_alive(dialog):
+                return
+            try:
+                options, failures = payload
+            except (TypeError, ValueError):
+                return
+            choices = _loader_choices(options, installed, current.minecraft)
+            dialog.add_choices(choices)
+            if failures and not options:
+                dialog.set_status_text(
+                    tr("instances.detail.modify.loaders_failed", failures[0])
+                )
+            elif choices:
+                dialog.set_status_text("")
+            elif not failures:
+                dialog.set_status_text(tr("instances.detail.modify.loaders_none"))
+
+        def on_error(message: str) -> None:
+            if widget_alive(dialog):
+                dialog.set_status_text(tr("instances.detail.modify.loaders_failed", message))
+
+        run_in_background(
+            partial(loader_install_options, current.minecraft),
+            on_result=on_result,
+            on_error=on_error,
+        )
+
     def _confirm_switch(self, target) -> None:
         """The second question: what the switch does, and whether to back the instance up first."""
         if self._require_instance() is None or self.resolved is None:
             return
+        if not isinstance(target, _SwitchChoice):
+            # ``VersionIdentity`` is the core's installed-profile record; tests and older callers
+            # hand one straight to this method, and it means the same installed row.
+            target = _SwitchChoice(
+                version_id=target.version_id,
+                minecraft=target.minecraft,
+                loader=target.loader,
+                installed=True,
+                meta=target.version_id,
+            )
         dialog = _SwitchConfirmDialog(
             self,
             current=self._identity_text(self.resolved.version_id),
-            target=f"{target.minecraft} · "
-            + (target.loader or tr("instances.detail.modify.vanilla")),
+            target=target.label,
+            needs_install=target.needs_install,
         )
         outcome = dialog.ask()
         wants_backup = dialog.wants_backup
         dialog.deleteLater()
         if outcome is not inwindow_dialog.Outcome.ACCEPTED:
             return
-        self._start_switch(target.version_id, backup=wants_backup)
+        self._start_switch(target, backup=wants_backup)
 
-    def _start_switch(self, target_version_id: str, *, backup: bool) -> None:
-        """Run the switch (and the optional backup) in the background, never on the UI thread."""
+    def _start_switch(self, target, *, backup: bool) -> None:
+        """Run the install/switch (and the optional backup) in the background, never on the UI thread."""
         instance_id = self.instance_id
-        if instance_id is None or self._switch_busy:
+        if instance_id is None or self._switch_busy or self.resolved is None:
             return
+        if isinstance(target, str):
+            target = _SwitchChoice(
+                version_id=target,
+                minecraft=profile_identity(self.game_dir, target).minecraft,
+                installed=True,
+                meta=target,
+            )
+        if not isinstance(target, _SwitchChoice):
+            raise TypeError(f"unsupported switch target: {target!r}")
         self._switch_busy = True
+        self._switch_cancelled = False
         self.change_version_button.setEnabled(False)
         self.change_loader_button.setEnabled(False)
+        self.modify_error.setVisible(False)
+        self._switch_stop = threading.Event()
+        self._switch_rate = RateTracker()
+        self._switch_bridge = ProgressBridge()
+        self._switch_bridge.progress.connect(self._on_switch_progress)
+        self.switch_state_label.setText(
+            tr(
+                "instances.detail.modify.installing"
+                if target.needs_install
+                else "instances.detail.modify.switching",
+                target.label,
+            )
+        )
+        self.switch_state_label.setVisible(True)
+        self.switch_progress_bar.setRange(0, 0)
+        self.switch_progress_text.setVisible(False)
+        self.switch_progress_row.setVisible(True)
+        self.switch_progress_container.setVisible(True)
+        self.switch_cancel_button.setEnabled(True)
         backup_dir = (paths.launcher_dir() / "backups") if backup else None
-        set_app_status(self, tr("instances.detail.modify.switching", target_version_id))
+        cfg, _ = config.load()
+        center = task_center_of(self)
+        self._switch_task = (
+            center.add_task(
+                "tasks.title.install",
+                target.installer_identity(),
+                cancel=self._cancel_switch_job,
+            )
+            if center is not None
+            else None
+        )
+        set_app_status(
+            self,
+            tr(
+                "instances.detail.modify.installing"
+                if target.needs_install
+                else "instances.detail.modify.switching",
+                target.label,
+            ),
+        )
         run_in_background(
             partial(
-                switch_instance_version,
+                _perform_switch,
                 instance_id,
-                target_version_id,
+                target,
                 self.game_dir,
                 backup_dir=backup_dir,
+                stop=self._switch_stop,
+                report=self._switch_bridge,
+                cache_dir=paths.launcher_dir() / "cache",
+                runtime_dir=paths.launcher_dir() / "runtime",
+                concurrency=cfg.max_concurrent_downloads,
             ),
             on_result=self._on_switched,
             on_error=self._on_switch_failed,
             on_finished=self._on_switch_finished,
         )
 
-    def _on_switched(self, outcome) -> None:
+    def _on_switch_progress(self, payload) -> None:
+        """A progress tick from the worker: the inline row and the task list see the same numbers."""
+        task = self._switch_task
+        phase = payload[0] if isinstance(payload, (tuple, list)) and payload else ""
+        if phase == "backup":
+            try:
+                _done, done, total = payload
+            except (TypeError, ValueError):
+                return
+            self.switch_progress_bar.setRange(0, 0)
+            self.switch_progress_text.setVisible(False)
+            self.switch_state_label.setText(tr("instances.detail.modify.backing_up"))
+            if task is not None:
+                task.set_progress(int(done), int(total))
+            return
+        if phase != "install" or len(payload) < 2:
+            return
+        progress = payload[1]
+        total_files = int(getattr(progress, "total_files", 0) or 0)
+        done_files = int(getattr(progress, "done_files", 0) or 0)
+        if total_files:
+            self.switch_progress_bar.setRange(0, 1000)
+            self.switch_progress_bar.setValue(int(done_files * 1000 / total_files))
+            self.switch_progress_text.setVisible(True)
+            self.switch_state_label.setText(
+                tr(
+                    "instances.detail.modify.downloading",
+                    done_files,
+                    total_files,
+                    getattr(progress, "current", ""),
+                )
+            )
+        else:
+            self.switch_progress_bar.setRange(0, 0)
+        if task is not None:
+            rate = 0.0
+            rate_tracker = self._switch_rate
+            if rate_tracker is not None:
+                rate_tracker.set_total(int(getattr(progress, "total_bytes", 0) or 0))
+                rate, _eta = rate_tracker.update(int(getattr(progress, "done_bytes", 0) or 0))
+            task.set_progress(
+                int(getattr(progress, "done_bytes", 0) or 0),
+                int(getattr(progress, "total_bytes", 0) or 0),
+                rate,
+            )
+
+    def cancel_switch(self) -> None:
+        """The inline 取消: stop the transfer, or wait out an installer that cannot be interrupted."""
+        task = self._switch_task
+        if task is not None and task.is_running():
+            task.cancel()
+            return
+        if self._switch_stop is not None:
+            self._cancel_switch_job(task)
+
+    def _cancel_switch_job(self, task) -> None:
+        """Stop whatever the switch is doing; the pointer is only written after the last check."""
+        self._switch_cancelled = True
+        if self._switch_stop is not None:
+            self._switch_stop.set()
+        downloader.cancel_current_downloads()
+        self.switch_cancel_button.setEnabled(False)
+        self.switch_state_label.setText(tr("instances.detail.modify.cancelling"))
+        if task is not None:
+            set_app_status(self, tr("tasks.status.cancelled", task.title()))
+
+    def _on_switched(self, result) -> None:
         """The switch is on disk: rebuild this page and let the instance cards follow."""
+        if isinstance(result, _SwitchRun):
+            outcome = result.outcome
+            backup_path = result.backup_path
+        else:  # a bare SwitchOutcome (kept for callers that only re-point an installed profile)
+            outcome = result
+            backup_path = outcome.backup_path
         target = outcome.target
         loader = target.loader or tr("instances.detail.modify.vanilla")
+        task = self._switch_task
+        if task is not None and task.is_running():
+            task.finish()
+        self.modify_error.setVisible(False)
         self.reload()
         self.changed.emit()  # the card list shows the new profile immediately, no restart
         name = f"{target.minecraft} · {loader}"
-        if outcome.backup_path is not None:
+        if backup_path is not None:
             set_app_status(
                 self,
-                tr("instances.detail.modify.switched_backup", name, str(outcome.backup_path)),
+                tr("instances.detail.modify.switched_backup", name, str(backup_path)),
             )
         else:
             set_app_status(self, tr("instances.detail.modify.switched", name))
 
     def _on_switch_failed(self, message: str) -> None:
-        """The switch failed; the launcher's message already says what was restored."""
+        """The switch failed; the launcher's message already says whether the pointer was restored."""
+        task = self._switch_task
+        cancelled = bool(
+            (self._switch_stop is not None and self._switch_stop.is_set())
+            or downloader.is_user_cancelled()
+            or (task is not None and task.state == CANCELLED)
+        )
         self.reload()
-        set_app_status(self, message, "error")
+        if cancelled:
+            text = tr("instances.detail.modify.cancelled")
+            self.modify_error.setText(text)
+            self.modify_error.setVisible(True)
+            if task is not None and task.state == CANCELLED:
+                set_app_status(self, tr("tasks.status.cancelled", task.title()))
+            else:
+                set_app_status(self, text)
+            return
+        if task is not None:
+            task.fail(message)
+        current = self._identity_text(self.resolved.version_id) if self.resolved else ""
+        text = tr("instances.detail.modify.failed", current, message)
+        self.modify_error.setText(text)
+        self.modify_error.setVisible(True)
+        set_app_status(self, text, "error")
 
     def _on_switch_finished(self) -> None:
         self._switch_busy = False
+        self._switch_bridge = None
+        self._switch_stop = None
+        self._switch_rate = None
+        self._switch_task = None
+        if self._switch_cancelled:
+            # Only a cancellation this switch asked for is ours to clear; another page's running
+            # download shares the downloader's process-wide flag and must keep its own stop request.
+            downloader.clear_cancellation()
+        self._switch_cancelled = False
+        self.switch_progress_row.setVisible(False)
+        self.switch_progress_container.setVisible(False)
+        self.switch_state_label.setVisible(False)
+        self.switch_cancel_button.setEnabled(True)
         has_instance = self.instance is not None and self.resolved is not None
         self.change_version_button.setEnabled(has_instance)
         self.change_loader_button.setEnabled(has_instance)

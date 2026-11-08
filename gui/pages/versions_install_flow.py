@@ -35,6 +35,10 @@ makes its row appear here, with no change in this file.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
@@ -49,7 +53,11 @@ from PySide6.QtWidgets import (
 )
 
 from gui import i18n, paint_utils
+from launcher.install import install_version
+from launcher.mods.installer import install_loader
 from launcher.mods.loaders import LOADERS, display_loader_name, list_loader_versions
+from launcher.mods.models import LoaderVersion
+from launcher.net.downloader import DownloadCancelled, DownloadProgress, DownloadResult
 
 tr = i18n.tr
 
@@ -112,6 +120,98 @@ def probe_loader(loader: str, version_id: str) -> list:
     page claim a loader has no version when all it knows is that the request failed.
     """
     return list_loader_versions(loader, version_id)
+
+
+class InstallFailed(Exception):
+    """An install that reached the downloader but did not put a usable profile on disk."""
+
+
+@dataclass(frozen=True)
+class InstallOutcome:
+    """What an install left behind: the profile id every launch path resolves, and the download summary."""
+
+    profile_id: str
+    result: DownloadResult | None = None
+
+
+def install_selection(
+    version_id: str,
+    *,
+    game_dir: Path,
+    loader_version: LoaderVersion | None = None,
+    install_base: bool = True,
+    cache_dir: Path | None = None,
+    runtime_dir: Path | None = None,
+    concurrency: int = 4,
+    auto_install_java: bool = True,
+    progress: Callable[[DownloadProgress], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> InstallOutcome:
+    """Run the versions page's install body: core first, then (optionally) the loader.
+
+    The page's ``install_version_id`` grew this sequence inside a frozen method, and the instance page
+    needs exactly the same sequence when 修改 downloads a version the folder does not have yet. Rather
+    than writing a second downloader, this function performs the same two library calls in the same
+    order: ``install_version`` writes ``versions/<id>/`` (JSON, jar, libraries, assets) and
+    ``install_loader`` runs the loader's own installer, which creates the inherited profile. The
+    returned ``profile_id`` is what the caller points ``base_version`` at - the vanilla id, or the
+    loader profile id the installer reported.
+
+    ``install_base=False`` is for a loader switch whose game version is already installed: the loader
+    installer inherits from it, and re-downloading its files would only add network work. A download
+    with failed files is not a usable core, so it raises :class:`InstallFailed`; a cancellation
+    (``should_stop``, or the downloader's own cooperative flag) raises ``DownloadCancelled`` and leaves
+    the pointer to the caller, which must not write it.
+    """
+    result: DownloadResult | None = None
+    if install_base:
+        result = install_version(
+            version_id,
+            game_dir=game_dir,
+            cache_dir=cache_dir,
+            concurrency=concurrency,
+            progress=progress,
+            auto_install_java=auto_install_java,
+            runtime_dir=runtime_dir,
+        )
+        failed = list(getattr(result, "failed", []) or [])
+        if failed:
+            # "Installed, but N files are missing" is not a core this launcher can promise to start.
+            raise InstallFailed(tr("versions.msg.partial", len(failed)))
+        if should_stop is not None and should_stop():
+            raise DownloadCancelled("cancelled")
+    profile_id = version_id
+    if loader_version is not None:
+        profile_id = install_loader(
+            loader_version, game_dir, cache_dir=cache_dir, progress=progress
+        )
+        if should_stop is not None and should_stop():
+            # The installer is a synchronous subprocess that cannot be interrupted; leaving the new
+            # profile on disk is harmless, but the caller must not point the instance at a switch the
+            # user cancelled halfway through.
+            raise DownloadCancelled("cancelled")
+    return InstallOutcome(profile_id=profile_id, result=result)
+
+
+def loader_install_options(game_version: str) -> tuple[list[tuple[str, LoaderVersion]], list[str]]:
+    """The newest installable version of each loader, plus the loaders whose source failed.
+
+    One query per loader (the same ``list_loader_versions`` the versions page's install step probes)
+    and only the newest answer: the page's own install body has always installed ``versions[0]``, so a
+    row that offered another version would promise a choice the installer does not implement. A
+    failure is returned instead of raised so one unreachable loader source cannot hide the others.
+    """
+    options: list[tuple[str, LoaderVersion]] = []
+    failures: list[str] = []
+    for loader in LOADER_ROWS:
+        try:
+            versions = list_loader_versions(loader, game_version)
+        except Exception as exc:  # noqa: BLE001 - reported per loader, never fatal to the list
+            failures.append(str(exc) or type(exc).__name__)
+            continue
+        if versions:
+            options.append((loader, versions[0]))
+    return options, failures
 
 
 class LoaderRow(QAbstractButton):
