@@ -225,28 +225,28 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.update.failed.no_asset": "该版本没有提供启动器文件",
         "about.update.failed.size": "下载文件大小不符，已放弃",
         "about.update.failed.signature": "下载文件签名无效，已放弃",
-        "about.update.auto_check": "启动后自动检查更新"
-        "about.update.auto_download": "发现新版本后自动下载"
-        "about.update.settings.hint": "自动检查只读取版本信息；替换启动器文件前一定会先征求你的同意。"
-        "about.update.size": "大小：{}"
-        "about.update.published": "发布日期：{}"
-        "about.update.notes.show": "展开更新说明"
-        "about.update.notes.hide": "收起更新说明"
-        "about.update.download_install": "下载并安装"
-        "about.update.restart_install": "重启并安装"
-        "about.update.cancel": "取消下载"
-        "about.update.cancelled": "已取消下载"
-        "about.update.up_to_date_at": "已经是最新版本 · 检查于 {}"
-        "about.update.retry": "重试"
-        "about.update.installing": "正在重启安装…"
-        "about.update.install.ready": "更新已下载（{}），点击“重启并安装”完成更新"
-        "about.update.install.started": "更新已就绪，启动器正在重启…"
-        "about.update.install.source": "源码运行不支持自动更新"
-        "about.update.install.missing": "找不到更新文件或正在运行的启动器"
-        "about.update.install.writable": "启动器所在目录不可写，无法自动更新"
-        "about.update.install.space": "磁盘空间不足，无法完成更新"
-        "about.update.install.failed": "安装更新失败，启动器已保持原样"
-        "about.update.failed.no_release": "没有找到可用的正式版本"
+        "about.update.auto_check": "启动后自动检查更新",
+        "about.update.auto_download": "发现新版本后自动下载",
+        "about.update.settings.hint": "自动检查只读取版本信息；替换启动器文件前一定会先征求你的同意。",
+        "about.update.size": "大小：{}",
+        "about.update.published": "发布日期：{}",
+        "about.update.notes.show": "展开更新说明",
+        "about.update.notes.hide": "收起更新说明",
+        "about.update.download_install": "下载并安装",
+        "about.update.restart_install": "重启并安装",
+        "about.update.cancel": "取消下载",
+        "about.update.cancelled": "已取消下载",
+        "about.update.up_to_date_at": "已经是最新版本 · 检查于 {}",
+        "about.update.retry": "重试",
+        "about.update.installing": "正在重启安装…",
+        "about.update.install.ready": "更新已下载（{}），点击“重启并安装”完成更新",
+        "about.update.install.started": "更新已就绪，启动器正在重启…",
+        "about.update.install.source": "源码运行不支持自动更新",
+        "about.update.install.missing": "找不到更新文件或正在运行的启动器",
+        "about.update.install.writable": "启动器所在目录不可写，无法自动更新",
+        "about.update.install.space": "磁盘空间不足，无法完成更新",
+        "about.update.install.failed": "安装更新失败，启动器已保持原样",
+        "about.update.failed.no_release": "没有找到可用的正式版本",
         "about.credits.title": "特别鸣谢",
         "about.credits.link": "打开链接",
         "about.credits.dependencies": "依赖项",
@@ -1381,28 +1381,28 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.update.failed.no_asset": "That release ships no launcher file",
         "about.update.failed.size": "The download size did not match — discarded",
         "about.update.failed.signature": "The download signature was invalid — discarded",
-        "about.update.auto_check": "Check for updates after startup"
-        "about.update.auto_download": "Download new versions automatically"
-        "about.update.settings.hint": "The automatic check only reads version information. Replacing the launcher file always waits for your click."
-        "about.update.size": "Size: {}"
-        "about.update.published": "Released: {}"
-        "about.update.notes.show": "Show release notes"
-        "about.update.notes.hide": "Hide release notes"
-        "about.update.download_install": "Download and install"
-        "about.update.restart_install": "Restart and install"
-        "about.update.cancel": "Cancel download"
-        "about.update.cancelled": "Download cancelled"
-        "about.update.up_to_date_at": "You are up to date · checked at {}"
-        "about.update.retry": "Retry"
-        "about.update.installing": "Restarting to install…"
-        "about.update.install.ready": "Update downloaded ({}). Click \"Restart and install\" to finish."
-        "about.update.install.started": "The update is in place; the launcher is restarting…"
-        "about.update.install.source": "Automatic updates are not available when running from source"
-        "about.update.install.missing": "The update file or the running launcher could not be found"
-        "about.update.install.writable": "The launcher's folder is not writable, so the update cannot be installed"
-        "about.update.install.space": "Not enough free disk space to install the update"
-        "about.update.install.failed": "The update could not be installed; the launcher was left unchanged"
-        "about.update.failed.no_release": "No published release is available"
+        "about.update.auto_check": "Check for updates after startup",
+        "about.update.auto_download": "Download new versions automatically",
+        "about.update.settings.hint": "The automatic check only reads version information. Replacing the launcher file always waits for your click.",
+        "about.update.size": "Size: {}",
+        "about.update.published": "Released: {}",
+        "about.update.notes.show": "Show release notes",
+        "about.update.notes.hide": "Hide release notes",
+        "about.update.download_install": "Download and install",
+        "about.update.restart_install": "Restart and install",
+        "about.update.cancel": "Cancel download",
+        "about.update.cancelled": "Download cancelled",
+        "about.update.up_to_date_at": "You are up to date · checked at {}",
+        "about.update.retry": "Retry",
+        "about.update.installing": "Restarting to install…",
+        "about.update.install.ready": "Update downloaded ({}). Click \"Restart and install\" to finish.",
+        "about.update.install.started": "The update is in place; the launcher is restarting…",
+        "about.update.install.source": "Automatic updates are not available when running from source",
+        "about.update.install.missing": "The update file or the running launcher could not be found",
+        "about.update.install.writable": "The launcher's folder is not writable, so the update cannot be installed",
+        "about.update.install.space": "Not enough free disk space to install the update",
+        "about.update.install.failed": "The update could not be installed; the launcher was left unchanged",
+        "about.update.failed.no_release": "No published release is available",
         "about.credits.title": "Credits",
         "about.credits.link": "Open link",
         "about.credits.dependencies": "Dependencies",

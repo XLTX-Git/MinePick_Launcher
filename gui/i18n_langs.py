@@ -243,28 +243,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "該版本沒有提供啟動器檔案",
         'about.update.failed.size': "下載檔案大小不符，已放棄",
         'about.update.failed.signature': "下載檔案簽章無效，已放棄",
-        'about.update.auto_check': "啟動後自動檢查更新"
-        'about.update.auto_download': "發現新版本後自動下載"
-        'about.update.settings.hint': "自動檢查只讀取版本資訊；替換啟動器檔案前一定會先詢問你。"
-        'about.update.size': "大小：{}"
-        'about.update.published': "發佈日期：{}"
-        'about.update.notes.show': "展開更新說明"
-        'about.update.notes.hide': "收起更新說明"
-        'about.update.download_install': "下載並安裝"
-        'about.update.restart_install': "重新啟動並安裝"
-        'about.update.cancel': "取消下載"
-        'about.update.cancelled': "已取消下載"
-        'about.update.up_to_date_at': "已經是最新版本 · 檢查於 {}"
-        'about.update.retry': "重試"
-        'about.update.installing': "正在重新啟動安裝…"
-        'about.update.install.ready': "更新已下載（{}），點擊「重新啟動並安裝」完成更新"
-        'about.update.install.started': "更新已就緒，啟動器正在重新啟動…"
-        'about.update.install.source': "原始碼執行模式不支援自動更新"
-        'about.update.install.missing': "找不到更新檔案或正在執行的啟動器"
-        'about.update.install.writable': "啟動器所在資料夾無法寫入，無法自動更新"
-        'about.update.install.space': "磁碟空間不足，無法完成更新"
-        'about.update.install.failed': "安裝更新失敗，啟動器已保持原狀"
-        'about.update.failed.no_release': "沒有找到可用的正式版本"
+        'about.update.auto_check': "啟動後自動檢查更新",
+        'about.update.auto_download': "發現新版本後自動下載",
+        'about.update.settings.hint': "自動檢查只讀取版本資訊；替換啟動器檔案前一定會先詢問你。",
+        'about.update.size': "大小：{}",
+        'about.update.published': "發佈日期：{}",
+        'about.update.notes.show': "展開更新說明",
+        'about.update.notes.hide': "收起更新說明",
+        'about.update.download_install': "下載並安裝",
+        'about.update.restart_install': "重新啟動並安裝",
+        'about.update.cancel': "取消下載",
+        'about.update.cancelled': "已取消下載",
+        'about.update.up_to_date_at': "已經是最新版本 · 檢查於 {}",
+        'about.update.retry': "重試",
+        'about.update.installing': "正在重新啟動安裝…",
+        'about.update.install.ready': "更新已下載（{}），點擊「重新啟動並安裝」完成更新",
+        'about.update.install.started': "更新已就緒，啟動器正在重新啟動…",
+        'about.update.install.source': "原始碼執行模式不支援自動更新",
+        'about.update.install.missing': "找不到更新檔案或正在執行的啟動器",
+        'about.update.install.writable': "啟動器所在資料夾無法寫入，無法自動更新",
+        'about.update.install.space': "磁碟空間不足，無法完成更新",
+        'about.update.install.failed': "安裝更新失敗，啟動器已保持原狀",
+        'about.update.failed.no_release': "沒有找到可用的正式版本",
         'about.credits.title': "特別鳴謝",
         'about.credits.link': "開啟連結",
         'about.credits.dependencies': "依賴項",
@@ -1371,28 +1371,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "そのリリースにはランチャーのファイルがありません",
         'about.update.failed.size': "ダウンロードしたファイルのサイズが一致しないため破棄しました",
         'about.update.failed.signature': "ダウンロードしたファイルの署名が無効なため破棄しました",
-        'about.update.auto_check': "起動後に更新を確認"
-        'about.update.auto_download': "新しいバージョンを自動でダウンロード"
-        'about.update.settings.hint': "自動確認はバージョン情報を読むだけで、ランチャーのファイルを置き換える前に必ず確認します。"
-        'about.update.size': "サイズ：{}"
-        'about.update.published': "公開日：{}"
-        'about.update.notes.show': "更新内容を表示"
-        'about.update.notes.hide': "更新内容を隠す"
-        'about.update.download_install': "ダウンロードしてインストール"
-        'about.update.restart_install': "再起動してインストール"
-        'about.update.cancel': "ダウンロードを中止"
-        'about.update.cancelled': "ダウンロードを中止しました"
-        'about.update.up_to_date_at': "最新バージョンです · 確認日時 {}"
-        'about.update.retry': "再試行"
-        'about.update.installing': "再起動してインストールしています…"
-        'about.update.install.ready': "更新をダウンロードしました（{}）。「再起動してインストール」を押してください"
-        'about.update.install.started': "更新の準備ができました。ランチャーを再起動しています…"
-        'about.update.install.source': "ソースコードから実行している場合は自動更新できません"
-        'about.update.install.missing': "更新ファイルまたは実行中のランチャーが見つかりません"
-        'about.update.install.writable': "ランチャーのフォルダーに書き込めないため、自動更新できません"
-        'about.update.install.space': "ディスクの空き容量が足りないため、更新できません"
-        'about.update.install.failed': "更新のインストールに失敗しました。ランチャーは元のままです"
-        'about.update.failed.no_release': "利用可能な正式リリースが見つかりません"
+        'about.update.auto_check': "起動後に更新を確認",
+        'about.update.auto_download': "新しいバージョンを自動でダウンロード",
+        'about.update.settings.hint': "自動確認はバージョン情報を読むだけで、ランチャーのファイルを置き換える前に必ず確認します。",
+        'about.update.size': "サイズ：{}",
+        'about.update.published': "公開日：{}",
+        'about.update.notes.show': "更新内容を表示",
+        'about.update.notes.hide': "更新内容を隠す",
+        'about.update.download_install': "ダウンロードしてインストール",
+        'about.update.restart_install': "再起動してインストール",
+        'about.update.cancel': "ダウンロードを中止",
+        'about.update.cancelled': "ダウンロードを中止しました",
+        'about.update.up_to_date_at': "最新バージョンです · 確認日時 {}",
+        'about.update.retry': "再試行",
+        'about.update.installing': "再起動してインストールしています…",
+        'about.update.install.ready': "更新をダウンロードしました（{}）。「再起動してインストール」を押してください",
+        'about.update.install.started': "更新の準備ができました。ランチャーを再起動しています…",
+        'about.update.install.source': "ソースコードから実行している場合は自動更新できません",
+        'about.update.install.missing': "更新ファイルまたは実行中のランチャーが見つかりません",
+        'about.update.install.writable': "ランチャーのフォルダーに書き込めないため、自動更新できません",
+        'about.update.install.space': "ディスクの空き容量が足りないため、更新できません",
+        'about.update.install.failed': "更新のインストールに失敗しました。ランチャーは元のままです",
+        'about.update.failed.no_release': "利用可能な正式リリースが見つかりません",
         'about.credits.title': "謝辞",
         'about.credits.link': "リンクを開く",
         'about.credits.dependencies': "依存関係",
@@ -2499,28 +2499,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "해당 릴리스에는 런처 파일이 없습니다",
         'about.update.failed.size': "내려받은 파일 크기가 달라 폐기했습니다",
         'about.update.failed.signature': "내려받은 파일의 서명이 유효하지 않아 폐기했습니다",
-        'about.update.auto_check': "시작 후 업데이트 확인"
-        'about.update.auto_download': "새 버전을 자동으로 다운로드"
-        'about.update.settings.hint': "자동 확인은 버전 정보만 읽으며, 런처 파일을 교체하기 전에는 항상 확인을 받습니다."
-        'about.update.size': "크기: {}"
-        'about.update.published': "출시일: {}"
-        'about.update.notes.show': "업데이트 노트 펼치기"
-        'about.update.notes.hide': "업데이트 노트 접기"
-        'about.update.download_install': "다운로드 및 설치"
-        'about.update.restart_install': "다시 시작하여 설치"
-        'about.update.cancel': "다운로드 취소"
-        'about.update.cancelled': "다운로드가 취소되었습니다"
-        'about.update.up_to_date_at': "최신 버전입니다 · 확인 시각 {}"
-        'about.update.retry': "다시 시도"
-        'about.update.installing': "다시 시작하여 설치하는 중…"
-        'about.update.install.ready': "업데이트를 다운로드했습니다({}). 「다시 시작하여 설치」를 누르세요."
-        'about.update.install.started': "업데이트가 준비되었습니다. 런처를 다시 시작하는 중…"
-        'about.update.install.source': "소스에서 실행하는 경우 자동 업데이트를 지원하지 않습니다"
-        'about.update.install.missing': "업데이트 파일이나 실행 중인 런처를 찾을 수 없습니다"
-        'about.update.install.writable': "런처 폴더에 쓸 수 없어 자동으로 업데이트할 수 없습니다"
-        'about.update.install.space': "디스크 공간이 부족하여 업데이트를 설치할 수 없습니다"
-        'about.update.install.failed': "업데이트 설치에 실패했습니다. 런처는 그대로 유지됩니다"
-        'about.update.failed.no_release': "사용 가능한 정식 릴리스가 없습니다"
+        'about.update.auto_check': "시작 후 업데이트 확인",
+        'about.update.auto_download': "새 버전을 자동으로 다운로드",
+        'about.update.settings.hint': "자동 확인은 버전 정보만 읽으며, 런처 파일을 교체하기 전에는 항상 확인을 받습니다.",
+        'about.update.size': "크기: {}",
+        'about.update.published': "출시일: {}",
+        'about.update.notes.show': "업데이트 노트 펼치기",
+        'about.update.notes.hide': "업데이트 노트 접기",
+        'about.update.download_install': "다운로드 및 설치",
+        'about.update.restart_install': "다시 시작하여 설치",
+        'about.update.cancel': "다운로드 취소",
+        'about.update.cancelled': "다운로드가 취소되었습니다",
+        'about.update.up_to_date_at': "최신 버전입니다 · 확인 시각 {}",
+        'about.update.retry': "다시 시도",
+        'about.update.installing': "다시 시작하여 설치하는 중…",
+        'about.update.install.ready': "업데이트를 다운로드했습니다({}). 「다시 시작하여 설치」를 누르세요.",
+        'about.update.install.started': "업데이트가 준비되었습니다. 런처를 다시 시작하는 중…",
+        'about.update.install.source': "소스에서 실행하는 경우 자동 업데이트를 지원하지 않습니다",
+        'about.update.install.missing': "업데이트 파일이나 실행 중인 런처를 찾을 수 없습니다",
+        'about.update.install.writable': "런처 폴더에 쓸 수 없어 자동으로 업데이트할 수 없습니다",
+        'about.update.install.space': "디스크 공간이 부족하여 업데이트를 설치할 수 없습니다",
+        'about.update.install.failed': "업데이트 설치에 실패했습니다. 런처는 그대로 유지됩니다",
+        'about.update.failed.no_release': "사용 가능한 정식 릴리스가 없습니다",
         'about.credits.title': "감사 인사",
         'about.credits.link': "링크 열기",
         'about.credits.dependencies': "종속성",
@@ -3627,28 +3627,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "В этом релизе нет файла лаунчера",
         'about.update.failed.size': "Размер загруженного файла не совпал — файл удалён",
         'about.update.failed.signature': "Подпись загруженного файла недействительна — файл удалён",
-        'about.update.auto_check': "Проверять обновления после запуска"
-        'about.update.auto_download': "Автоматически скачивать новые версии"
-        'about.update.settings.hint': "Автоматическая проверка только читает сведения о версии. Файл лаунчера заменяется только после вашего подтверждения."
-        'about.update.size': "Размер: {}"
-        'about.update.published': "Дата выпуска: {}"
-        'about.update.notes.show': "Показать описание обновления"
-        'about.update.notes.hide': "Скрыть описание обновления"
-        'about.update.download_install': "Скачать и установить"
-        'about.update.restart_install': "Перезапустить и установить"
-        'about.update.cancel': "Отменить загрузку"
-        'about.update.cancelled': "Загрузка отменена"
-        'about.update.up_to_date_at': "Установлена последняя версия · проверено {}"
-        'about.update.retry': "Повторить"
-        'about.update.installing': "Перезапуск для установки…"
-        'about.update.install.ready': "Обновление загружено ({}). Нажмите «Перезапустить и установить»."
-        'about.update.install.started': "Обновление готово, лаунчер перезапускается…"
-        'about.update.install.source': "При запуске из исходников автоматическое обновление недоступно"
-        'about.update.install.missing': "Не найден файл обновления или запущенный лаунчер"
-        'about.update.install.writable': "Папка лаунчера недоступна для записи, автоматическое обновление невозможно"
-        'about.update.install.space': "Недостаточно места на диске для установки обновления"
-        'about.update.install.failed': "Не удалось установить обновление; лаунчер остался без изменений"
-        'about.update.failed.no_release': "Опубликованный выпуск не найден"
+        'about.update.auto_check': "Проверять обновления после запуска",
+        'about.update.auto_download': "Автоматически скачивать новые версии",
+        'about.update.settings.hint': "Автоматическая проверка только читает сведения о версии. Файл лаунчера заменяется только после вашего подтверждения.",
+        'about.update.size': "Размер: {}",
+        'about.update.published': "Дата выпуска: {}",
+        'about.update.notes.show': "Показать описание обновления",
+        'about.update.notes.hide': "Скрыть описание обновления",
+        'about.update.download_install': "Скачать и установить",
+        'about.update.restart_install': "Перезапустить и установить",
+        'about.update.cancel': "Отменить загрузку",
+        'about.update.cancelled': "Загрузка отменена",
+        'about.update.up_to_date_at': "Установлена последняя версия · проверено {}",
+        'about.update.retry': "Повторить",
+        'about.update.installing': "Перезапуск для установки…",
+        'about.update.install.ready': "Обновление загружено ({}). Нажмите «Перезапустить и установить».",
+        'about.update.install.started': "Обновление готово, лаунчер перезапускается…",
+        'about.update.install.source': "При запуске из исходников автоматическое обновление недоступно",
+        'about.update.install.missing': "Не найден файл обновления или запущенный лаунчер",
+        'about.update.install.writable': "Папка лаунчера недоступна для записи, автоматическое обновление невозможно",
+        'about.update.install.space': "Недостаточно места на диске для установки обновления",
+        'about.update.install.failed': "Не удалось установить обновление; лаунчер остался без изменений",
+        'about.update.failed.no_release': "Опубликованный выпуск не найден",
         'about.credits.title': "Благодарности",
         'about.credits.link': "Открыть ссылку",
         'about.credits.dependencies': "Зависимости",
@@ -4755,28 +4755,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "Cette publication ne contient aucun fichier du lanceur",
         'about.update.failed.size': "La taille du fichier téléchargé ne correspond pas — fichier supprimé",
         'about.update.failed.signature': "La signature du fichier téléchargé est invalide — fichier supprimé",
-        'about.update.auto_check': "Rechercher les mises à jour au démarrage"
-        'about.update.auto_download': "Télécharger automatiquement les nouvelles versions"
-        'about.update.settings.hint': "La recherche automatique ne lit que les informations de version ; le fichier du lanceur n'est remplacé qu'après votre confirmation."
-        'about.update.size': "Taille : {}"
-        'about.update.published': "Publié le : {}"
-        'about.update.notes.show': "Afficher les notes de version"
-        'about.update.notes.hide': "Masquer les notes de version"
-        'about.update.download_install': "Télécharger et installer"
-        'about.update.restart_install': "Redémarrer et installer"
-        'about.update.cancel': "Annuler le téléchargement"
-        'about.update.cancelled': "Téléchargement annulé"
-        'about.update.up_to_date_at': "Vous êtes à jour · vérifié le {}"
-        'about.update.retry': "Réessayer"
-        'about.update.installing': "Redémarrage pour installer…"
-        'about.update.install.ready': "Mise à jour téléchargée ({}). Cliquez sur « Redémarrer et installer »."
-        'about.update.install.started': "La mise à jour est prête, le lanceur redémarre…"
-        'about.update.install.source': "Les mises à jour automatiques ne sont pas disponibles depuis les sources"
-        'about.update.install.missing': "Fichier de mise à jour ou lanceur en cours d'exécution introuvable"
-        'about.update.install.writable': "Le dossier du lanceur n'est pas accessible en écriture, mise à jour impossible"
-        'about.update.install.space': "Espace disque insuffisant pour installer la mise à jour"
-        'about.update.install.failed': "L'installation de la mise à jour a échoué ; le lanceur est resté inchangé"
-        'about.update.failed.no_release': "Aucune version publiée disponible"
+        'about.update.auto_check': "Rechercher les mises à jour au démarrage",
+        'about.update.auto_download': "Télécharger automatiquement les nouvelles versions",
+        'about.update.settings.hint': "La recherche automatique ne lit que les informations de version ; le fichier du lanceur n'est remplacé qu'après votre confirmation.",
+        'about.update.size': "Taille : {}",
+        'about.update.published': "Publié le : {}",
+        'about.update.notes.show': "Afficher les notes de version",
+        'about.update.notes.hide': "Masquer les notes de version",
+        'about.update.download_install': "Télécharger et installer",
+        'about.update.restart_install': "Redémarrer et installer",
+        'about.update.cancel': "Annuler le téléchargement",
+        'about.update.cancelled': "Téléchargement annulé",
+        'about.update.up_to_date_at': "Vous êtes à jour · vérifié le {}",
+        'about.update.retry': "Réessayer",
+        'about.update.installing': "Redémarrage pour installer…",
+        'about.update.install.ready': "Mise à jour téléchargée ({}). Cliquez sur « Redémarrer et installer ».",
+        'about.update.install.started': "La mise à jour est prête, le lanceur redémarre…",
+        'about.update.install.source': "Les mises à jour automatiques ne sont pas disponibles depuis les sources",
+        'about.update.install.missing': "Fichier de mise à jour ou lanceur en cours d'exécution introuvable",
+        'about.update.install.writable': "Le dossier du lanceur n'est pas accessible en écriture, mise à jour impossible",
+        'about.update.install.space': "Espace disque insuffisant pour installer la mise à jour",
+        'about.update.install.failed': "L'installation de la mise à jour a échoué ; le lanceur est resté inchangé",
+        'about.update.failed.no_release': "Aucune version publiée disponible",
         'about.credits.title': "Remerciements",
         'about.credits.link': "Ouvrir le lien",
         'about.credits.dependencies': "Dépendances",
@@ -5883,28 +5883,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "Esa release no incluye ningún archivo del launcher",
         'about.update.failed.size': "El tamaño descargado no coincide: se descartó",
         'about.update.failed.signature': "La firma de la descarga no es válida: se descartó",
-        'about.update.auto_check': "Buscar actualizaciones al iniciar"
-        'about.update.auto_download': "Descargar automáticamente las versiones nuevas"
-        'about.update.settings.hint': "La comprobación automática solo lee la información de versión; el archivo del lanzador solo se reemplaza tras tu confirmación."
-        'about.update.size': "Tamaño: {}"
-        'about.update.published': "Publicado: {}"
-        'about.update.notes.show': "Mostrar notas de la versión"
-        'about.update.notes.hide': "Ocultar notas de la versión"
-        'about.update.download_install': "Descargar e instalar"
-        'about.update.restart_install': "Reiniciar e instalar"
-        'about.update.cancel': "Cancelar descarga"
-        'about.update.cancelled': "Descarga cancelada"
-        'about.update.up_to_date_at': "Ya tienes la última versión · comprobado el {}"
-        'about.update.retry': "Reintentar"
-        'about.update.installing': "Reiniciando para instalar…"
-        'about.update.install.ready': "Actualización descargada ({}). Pulsa «Reiniciar e instalar»."
-        'about.update.install.started': "La actualización está lista; el lanzador se está reiniciando…"
-        'about.update.install.source': "La actualización automática no está disponible al ejecutar desde el código fuente"
-        'about.update.install.missing': "No se encontró el archivo de actualización ni el lanzador en ejecución"
-        'about.update.install.writable': "La carpeta del lanzador no se puede escribir; no es posible actualizar automáticamente"
-        'about.update.install.space': "No hay espacio suficiente en disco para instalar la actualización"
-        'about.update.install.failed': "No se pudo instalar la actualización; el lanzador quedó intacto"
-        'about.update.failed.no_release': "No hay ninguna versión publicada disponible"
+        'about.update.auto_check': "Buscar actualizaciones al iniciar",
+        'about.update.auto_download': "Descargar automáticamente las versiones nuevas",
+        'about.update.settings.hint': "La comprobación automática solo lee la información de versión; el archivo del lanzador solo se reemplaza tras tu confirmación.",
+        'about.update.size': "Tamaño: {}",
+        'about.update.published': "Publicado: {}",
+        'about.update.notes.show': "Mostrar notas de la versión",
+        'about.update.notes.hide': "Ocultar notas de la versión",
+        'about.update.download_install': "Descargar e instalar",
+        'about.update.restart_install': "Reiniciar e instalar",
+        'about.update.cancel': "Cancelar descarga",
+        'about.update.cancelled': "Descarga cancelada",
+        'about.update.up_to_date_at': "Ya tienes la última versión · comprobado el {}",
+        'about.update.retry': "Reintentar",
+        'about.update.installing': "Reiniciando para instalar…",
+        'about.update.install.ready': "Actualización descargada ({}). Pulsa «Reiniciar e instalar».",
+        'about.update.install.started': "La actualización está lista; el lanzador se está reiniciando…",
+        'about.update.install.source': "La actualización automática no está disponible al ejecutar desde el código fuente",
+        'about.update.install.missing': "No se encontró el archivo de actualización ni el lanzador en ejecución",
+        'about.update.install.writable': "La carpeta del lanzador no se puede escribir; no es posible actualizar automáticamente",
+        'about.update.install.space': "No hay espacio suficiente en disco para instalar la actualización",
+        'about.update.install.failed': "No se pudo instalar la actualización; el lanzador quedó intacto",
+        'about.update.failed.no_release': "No hay ninguna versión publicada disponible",
         'about.credits.title': "Agradecimientos",
         'about.credits.link': "Abrir enlace",
         'about.credits.dependencies': "Dependencias",
@@ -7011,28 +7011,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "Dieses Release enthält keine Launcher-Datei",
         'about.update.failed.size': "Die Downloadgröße stimmt nicht — verworfen",
         'about.update.failed.signature': "Die Signatur des Downloads ist ungültig — verworfen",
-        'about.update.auto_check': "Nach dem Start nach Updates suchen"
-        'about.update.auto_download': "Neue Versionen automatisch herunterladen"
-        'about.update.settings.hint': "Die automatische Suche liest nur Versionsinformationen; die Launcher-Datei wird erst nach deiner Bestätigung ersetzt."
-        'about.update.size': "Größe: {}"
-        'about.update.published': "Veröffentlicht: {}"
-        'about.update.notes.show': "Versionshinweise anzeigen"
-        'about.update.notes.hide': "Versionshinweise ausblenden"
-        'about.update.download_install': "Herunterladen und installieren"
-        'about.update.restart_install': "Neu starten und installieren"
-        'about.update.cancel': "Download abbrechen"
-        'about.update.cancelled': "Download abgebrochen"
-        'about.update.up_to_date_at': "Du bist auf dem neuesten Stand · geprüft am {}"
-        'about.update.retry': "Erneut versuchen"
-        'about.update.installing': "Neustart zur Installation…"
-        'about.update.install.ready': "Update heruntergeladen ({}). Klicke auf „Neu starten und installieren“."
-        'about.update.install.started': "Das Update ist bereit, der Launcher startet neu…"
-        'about.update.install.source': "Automatische Updates sind beim Ausführen aus dem Quellcode nicht verfügbar"
-        'about.update.install.missing': "Updatedatei oder laufender Launcher nicht gefunden"
-        'about.update.install.writable': "Der Launcher-Ordner ist nicht beschreibbar, automatisches Update nicht möglich"
-        'about.update.install.space': "Nicht genügend Speicherplatz zum Installieren des Updates"
-        'about.update.install.failed': "Das Update konnte nicht installiert werden; der Launcher blieb unverändert"
-        'about.update.failed.no_release': "Keine veröffentlichte Version verfügbar"
+        'about.update.auto_check': "Nach dem Start nach Updates suchen",
+        'about.update.auto_download': "Neue Versionen automatisch herunterladen",
+        'about.update.settings.hint': "Die automatische Suche liest nur Versionsinformationen; die Launcher-Datei wird erst nach deiner Bestätigung ersetzt.",
+        'about.update.size': "Größe: {}",
+        'about.update.published': "Veröffentlicht: {}",
+        'about.update.notes.show': "Versionshinweise anzeigen",
+        'about.update.notes.hide': "Versionshinweise ausblenden",
+        'about.update.download_install': "Herunterladen und installieren",
+        'about.update.restart_install': "Neu starten und installieren",
+        'about.update.cancel': "Download abbrechen",
+        'about.update.cancelled': "Download abgebrochen",
+        'about.update.up_to_date_at': "Du bist auf dem neuesten Stand · geprüft am {}",
+        'about.update.retry': "Erneut versuchen",
+        'about.update.installing': "Neustart zur Installation…",
+        'about.update.install.ready': "Update heruntergeladen ({}). Klicke auf „Neu starten und installieren“.",
+        'about.update.install.started': "Das Update ist bereit, der Launcher startet neu…",
+        'about.update.install.source': "Automatische Updates sind beim Ausführen aus dem Quellcode nicht verfügbar",
+        'about.update.install.missing': "Updatedatei oder laufender Launcher nicht gefunden",
+        'about.update.install.writable': "Der Launcher-Ordner ist nicht beschreibbar, automatisches Update nicht möglich",
+        'about.update.install.space': "Nicht genügend Speicherplatz zum Installieren des Updates",
+        'about.update.install.failed': "Das Update konnte nicht installiert werden; der Launcher blieb unverändert",
+        'about.update.failed.no_release': "Keine veröffentlichte Version verfügbar",
         'about.credits.title': "Danksagungen",
         'about.credits.link': "Link öffnen",
         'about.credits.dependencies': "Abhängigkeiten",
