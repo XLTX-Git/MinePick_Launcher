@@ -225,6 +225,28 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.update.failed.no_asset": "该版本没有提供启动器文件",
         "about.update.failed.size": "下载文件大小不符，已放弃",
         "about.update.failed.signature": "下载文件签名无效，已放弃",
+        "about.update.auto_check": "启动后自动检查更新"
+        "about.update.auto_download": "发现新版本后自动下载"
+        "about.update.settings.hint": "自动检查只读取版本信息；替换启动器文件前一定会先征求你的同意。"
+        "about.update.size": "大小：{}"
+        "about.update.published": "发布日期：{}"
+        "about.update.notes.show": "展开更新说明"
+        "about.update.notes.hide": "收起更新说明"
+        "about.update.download_install": "下载并安装"
+        "about.update.restart_install": "重启并安装"
+        "about.update.cancel": "取消下载"
+        "about.update.cancelled": "已取消下载"
+        "about.update.up_to_date_at": "已经是最新版本 · 检查于 {}"
+        "about.update.retry": "重试"
+        "about.update.installing": "正在重启安装…"
+        "about.update.install.ready": "更新已下载（{}），点击“重启并安装”完成更新"
+        "about.update.install.started": "更新已就绪，启动器正在重启…"
+        "about.update.install.source": "源码运行不支持自动更新"
+        "about.update.install.missing": "找不到更新文件或正在运行的启动器"
+        "about.update.install.writable": "启动器所在目录不可写，无法自动更新"
+        "about.update.install.space": "磁盘空间不足，无法完成更新"
+        "about.update.install.failed": "安装更新失败，启动器已保持原样"
+        "about.update.failed.no_release": "没有找到可用的正式版本"
         "about.credits.title": "特别鸣谢",
         "about.credits.link": "打开链接",
         "about.credits.dependencies": "依赖项",
@@ -247,6 +269,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.credit.neoforge": "NeoForge 加载器与其 Maven 仓库",
         "about.credit.adoptium": "Java 运行时下载",
         "about.credit.github": "代码托管、发布与更新检查",
+        "about.credit.terracotta": "联机功能。以未修改的二进制形式通过本地 HTTP API 交互，界面已标注其版权。",
         "about.credit.bmclapi": "Minecraft 资源镜像服务（国内加速）",
         "about.credit.pcl": "本项目的「关于 / 更新」页面信息架构参考了它。技术栈不同（C#/WPF 与 Python/PySide6），本项目完全独立实现，未包含上游源代码。",
         "about.credit.pcl_ce": "社区版；本项目的界面参考了它。技术栈不同（C#/WPF 与 Python/PySide6），本项目完全独立实现，未包含上游源代码。",
@@ -332,6 +355,34 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "在多人游戏里双击「陶瓦联机大厅」即可进入（该入口不校验正版）。",
         "tools.joined.open": "打开多人游戏",
         "tools.difficulty": "简单\n中等\n困难",
+        "tools.wait.starting": "正在创建大厅…",
+        "tools.onboard.downloading": "正在下载 · {} / {} MB",
+        "tools.onboard.channels.footer": "默认自动选最快的，也可以手动指定",
+        "tools.onboard.channels.unmeasured": "未测",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "网络自检",
+        "tools.net.labels": "组件就绪\n进程状态\n本机局域网世界\nUDP 打洞能力",
+        "tools.net.verdicts": "未检测\n锥型 · 可以打洞\n对称型 · 难以打洞\n被墙 · 无法打洞\n超时 · 未拿到映射\n检测失败",
+        "tools.net.note": "只测试 UDP；使用代理时结果不准。",
+        "tools.net.refresh": "重新检测",
+        "tools.net.component.ready": "已就绪 · v{}",
+        "tools.net.component.missing": "未下载",
+        "tools.net.process.running": "运行中 · 端口 {}",
+        "tools.net.process.stopped": "已停止",
+        "tools.net.lan.auto": "开始创建时自动检测",
+        "tools.fail.0": "无法连接房主（房间已关闭或网络不稳定）",
+        "tools.fail.1": "与房主的连接中断",
+        "tools.fail.2": "联机组件（加入方）崩溃，请重试",
+        "tools.fail.3": "联机组件（房主）崩溃，请重试",
+        "tools.fail.4": "房主的游戏服务器已断开，房间已关闭",
+        "tools.fail.5": "联机组件协议错误，请把日志反馈给开发者",
+        "tools.fail.network": "与联机核心通信失败（超时或返回异常），请重试",
+        "tools.fail.start_timeout": "联机核心启动失败或超时，请重试",
+        "tools.fail.bad_code": "大厅编号无效或当前无法加入，请检查后重试",
+        "tools.fail.download": "下载失败，请检查网络后重试",
+        "tools.fail.verify": "下载文件校验失败，已拒绝安装",
+        "tools.fail.platform": "当前平台暂不支持联机组件",
+        "tools.joined.copied": "已复制直连地址 {}，在多人游戏的「直接连接」里粘贴即可",
         "mods.page.title": "资源",
         "mods.source": "资源来源",
         "mods.source.modrinth": "Modrinth",
@@ -775,7 +826,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "instances.msg.exported": "已导出: {}",
         "instances.msg.export_fail": "导出失败: {}", 
         "instances.msg.imported": "已导入: {}",
-        "instances.msg.import_fail": "导入失败: {}", 
+        "instances.msg.import_fail": "导入失败: {}",
+        "instances.import_pack": "导入整合包…",
+        "instances.import_pack.title": "导入整合包",
+        "instances.import_pack.filter": "整合包 (*.mrpack *.zip)",
+        "instances.import_pack.hint": "支持 Modrinth .mrpack、CurseForge 整合包与 MultiMC/Prism 实例",
+        "instances.import_pack.working": "正在导入整合包：{}",
+        "instances.import_pack.overrides": "正在写入整合包自带的模组与配置…",
+        "instances.import_pack.done": "整合包导入完成：{}（{} 个文件）",
+        "instances.import_pack.cancelled": "已取消导入，没有留下半成品实例",
         "instances.mods.title": "模组管理",
         "instances.mods.hint": "选择一个实例以管理其模组",
         "instances.mods.loading": "正在读取模组列表...",
@@ -1322,6 +1381,28 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.update.failed.no_asset": "That release ships no launcher file",
         "about.update.failed.size": "The download size did not match — discarded",
         "about.update.failed.signature": "The download signature was invalid — discarded",
+        "about.update.auto_check": "Check for updates after startup"
+        "about.update.auto_download": "Download new versions automatically"
+        "about.update.settings.hint": "The automatic check only reads version information. Replacing the launcher file always waits for your click."
+        "about.update.size": "Size: {}"
+        "about.update.published": "Released: {}"
+        "about.update.notes.show": "Show release notes"
+        "about.update.notes.hide": "Hide release notes"
+        "about.update.download_install": "Download and install"
+        "about.update.restart_install": "Restart and install"
+        "about.update.cancel": "Cancel download"
+        "about.update.cancelled": "Download cancelled"
+        "about.update.up_to_date_at": "You are up to date · checked at {}"
+        "about.update.retry": "Retry"
+        "about.update.installing": "Restarting to install…"
+        "about.update.install.ready": "Update downloaded ({}). Click \"Restart and install\" to finish."
+        "about.update.install.started": "The update is in place; the launcher is restarting…"
+        "about.update.install.source": "Automatic updates are not available when running from source"
+        "about.update.install.missing": "The update file or the running launcher could not be found"
+        "about.update.install.writable": "The launcher's folder is not writable, so the update cannot be installed"
+        "about.update.install.space": "Not enough free disk space to install the update"
+        "about.update.install.failed": "The update could not be installed; the launcher was left unchanged"
+        "about.update.failed.no_release": "No published release is available"
         "about.credits.title": "Credits",
         "about.credits.link": "Open link",
         "about.credits.dependencies": "Dependencies",
@@ -1344,6 +1425,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.credit.neoforge": "the NeoForge loader and its Maven repository",
         "about.credit.adoptium": "Java runtime downloads",
         "about.credit.github": "code hosting, releases and the update check",
+        "about.credit.terracotta": "Multiplayer; the unmodified binary is used through its local HTTP API, and its copyright is credited in the interface.",
         "about.credit.bmclapi": "Minecraft resource mirror service (mainland-China acceleration)",
         "about.credit.pcl": "the inspiration for the information architecture of this launcher's about/update pages. The technology stacks differ (C#/WPF versus Python/PySide6); this project is independently implemented and contains none of the upstream source code.",
         "about.credit.pcl_ce": "the community edition; this project's interface took its cues from it. The technology stacks differ (C#/WPF versus Python/PySide6); this project is independently implemented and contains none of the upstream source code.",
@@ -1441,6 +1523,34 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "tools.joined.open": "Open Multiplayer",
         "tools.difficulty": "Easy\nMedium\nHard",
+        "tools.wait.starting": "Creating the room…",
+        "tools.onboard.downloading": "Downloading · {} / {} MB",
+        "tools.onboard.channels.footer": "The fastest mirror is chosen automatically; you can also pick one.",
+        "tools.onboard.channels.unmeasured": "Not measured",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "Network check",
+        "tools.net.labels": "Component\nProcess\nLAN world\nUDP hole punching",
+        "tools.net.verdicts": "Not tested\nCone · hole punching works\nSymmetric · hole punching is hard\nBlocked · hole punching impossible\nTimed out · no mapping received\nCheck failed",
+        "tools.net.note": "Tests UDP only; results are unreliable behind a proxy.",
+        "tools.net.refresh": "Run check",
+        "tools.net.component.ready": "Ready · v{}",
+        "tools.net.component.missing": "Not downloaded",
+        "tools.net.process.running": "Running · port {}",
+        "tools.net.process.stopped": "Stopped",
+        "tools.net.lan.auto": "Detected automatically when you create a room",
+        "tools.fail.0": "Could not reach the host (room closed or network unstable)",
+        "tools.fail.1": "The connection to the host was interrupted",
+        "tools.fail.2": "The guest-side component crashed; please retry",
+        "tools.fail.3": "The host-side component crashed; please retry",
+        "tools.fail.4": "The host's game server disconnected, so the room was closed",
+        "tools.fail.5": "Component protocol error; please report the log to the developer",
+        "tools.fail.network": "Could not talk to the multiplayer core (timeout or invalid response); please retry",
+        "tools.fail.start_timeout": "The multiplayer core failed to start or timed out; please retry",
+        "tools.fail.bad_code": "The room code is invalid or the room cannot be joined right now",
+        "tools.fail.download": "Download failed; check your network and retry",
+        "tools.fail.verify": "The downloaded file failed verification and was not installed",
+        "tools.fail.platform": "The multiplayer component is not supported on this platform",
+        "tools.joined.copied": "Copied the direct address {}; paste it into Direct Connect in Minecraft",
         "mods.page.title": "Resources",
         "mods.source": "Source",
         "mods.source.modrinth": "Modrinth",
@@ -1878,7 +1988,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "instances.msg.exported": "Exported: {}",
         "instances.msg.export_fail": "Export failed: {}",
         "instances.msg.imported": "Imported: {}",
-        "instances.msg.import_fail": "Import failed: {}", 
+        "instances.msg.import_fail": "Import failed: {}",
+        "instances.import_pack": "Import Modpack...",
+        "instances.import_pack.title": "Import Modpack",
+        "instances.import_pack.filter": "Modpacks (*.mrpack *.zip)",
+        "instances.import_pack.hint": "Supports Modrinth .mrpack, CurseForge modpacks and MultiMC/Prism instances",
+        "instances.import_pack.working": "Importing modpack: {}",
+        "instances.import_pack.overrides": "Writing the modpack's own mods and config...",
+        "instances.import_pack.done": "Modpack imported: {} ({} files)",
+        "instances.import_pack.cancelled": "Import cancelled; no partial instance was left behind",
         "instances.mods.title": "Mods",
         "instances.mods.hint": "Select an instance to manage its mods",
         "instances.mods.loading": "Loading mods...",

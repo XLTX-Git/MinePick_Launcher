@@ -243,6 +243,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "該版本沒有提供啟動器檔案",
         'about.update.failed.size': "下載檔案大小不符，已放棄",
         'about.update.failed.signature': "下載檔案簽章無效，已放棄",
+        'about.update.auto_check': "啟動後自動檢查更新"
+        'about.update.auto_download': "發現新版本後自動下載"
+        'about.update.settings.hint': "自動檢查只讀取版本資訊；替換啟動器檔案前一定會先詢問你。"
+        'about.update.size': "大小：{}"
+        'about.update.published': "發佈日期：{}"
+        'about.update.notes.show': "展開更新說明"
+        'about.update.notes.hide': "收起更新說明"
+        'about.update.download_install': "下載並安裝"
+        'about.update.restart_install': "重新啟動並安裝"
+        'about.update.cancel': "取消下載"
+        'about.update.cancelled': "已取消下載"
+        'about.update.up_to_date_at': "已經是最新版本 · 檢查於 {}"
+        'about.update.retry': "重試"
+        'about.update.installing': "正在重新啟動安裝…"
+        'about.update.install.ready': "更新已下載（{}），點擊「重新啟動並安裝」完成更新"
+        'about.update.install.started': "更新已就緒，啟動器正在重新啟動…"
+        'about.update.install.source': "原始碼執行模式不支援自動更新"
+        'about.update.install.missing': "找不到更新檔案或正在執行的啟動器"
+        'about.update.install.writable': "啟動器所在資料夾無法寫入，無法自動更新"
+        'about.update.install.space': "磁碟空間不足，無法完成更新"
+        'about.update.install.failed': "安裝更新失敗，啟動器已保持原狀"
+        'about.update.failed.no_release': "沒有找到可用的正式版本"
         'about.credits.title': "特別鳴謝",
         'about.credits.link': "開啟連結",
         'about.credits.dependencies': "依賴項",
@@ -265,6 +287,7 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.credit.neoforge': "NeoForge 載入器與其 Maven 儲存庫",
         'about.credit.adoptium': "Java 執行環境下載",
         'about.credit.github': "程式碼託管、發布與更新檢查",
+        "about.credit.terracotta": "連線功能。以未修改的二進位形式透過本機 HTTP API 互動，介面已標註其版權。",
         'about.credit.bmclapi': 'Minecraft 資源鏡像服務（中國大陸加速）',
         'about.credit.pcl': "本專案「關於 / 更新」頁面的資訊架構參考了它。技術堆疊不同（C#/WPF 與 Python/PySide6），本專案完全獨立實作，未包含上游原始碼。",
         'about.credit.pcl_ce': "社群版；本專案的介面參考了它。技術堆疊不同（C#/WPF 與 Python/PySide6），本專案完全獨立實作，未包含上游原始碼。",
@@ -404,6 +427,14 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'instances.fetch_fail': "取得失敗: {}",
         'instances.hint': "實例擁有獨立的存檔/模組/設定（共享版本資源，節省空間）。",
         'instances.import': "匯入實例...",
+        'instances.import_pack': "匯入整合包…",
+        'instances.import_pack.title': "匯入整合包",
+        'instances.import_pack.filter': "整合包 (*.mrpack *.zip)",
+        'instances.import_pack.hint': "支援 Modrinth .mrpack、CurseForge 整合包與 MultiMC/Prism 實例",
+        'instances.import_pack.working': "正在匯入整合包：{}",
+        'instances.import_pack.overrides': "正在寫入整合包內附的模組與設定…",
+        'instances.import_pack.done': "整合包匯入完成：{}（{} 個檔案）",
+        'instances.import_pack.cancelled': "已取消匯入，沒有留下半成品實例",
         'instances.launch': "啟動",
         'instances.loading': "（載入中...）",
         'instances.mods.col.enabled': "啟用",
@@ -1084,6 +1115,34 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "在多人遊戲裡雙擊「陶瓦聯機大廳」即可進入（此入口不驗證正版）。",
         "tools.joined.open": "開啟多人遊戲",
         "tools.difficulty": "簡單\n中等\n困難",
+        "tools.wait.starting": "正在建立大廳…",
+        "tools.onboard.downloading": "正在下載 · {} / {} MB",
+        "tools.onboard.channels.footer": "預設自動選擇最快的，也可以手動指定",
+        "tools.onboard.channels.unmeasured": "未測",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "網路自檢",
+        "tools.net.labels": "元件就緒\n程序狀態\n本機區域網路世界\nUDP 打洞能力",
+        "tools.net.verdicts": "未檢測\n錐型 · 可以打洞\n對稱型 · 難以打洞\n被牆 · 無法打洞\n逾時 · 未取得對映\n檢測失敗",
+        "tools.net.note": "僅測試 UDP；使用代理時結果不準。",
+        "tools.net.refresh": "重新檢測",
+        "tools.net.component.ready": "已就緒 · v{}",
+        "tools.net.component.missing": "未下載",
+        "tools.net.process.running": "執行中 · 連接埠 {}",
+        "tools.net.process.stopped": "已停止",
+        "tools.net.lan.auto": "開始建立時自動檢測",
+        "tools.fail.0": "無法連線房主（大廳已關閉或網路不穩定）",
+        "tools.fail.1": "與房主的連線中斷",
+        "tools.fail.2": "連線元件（加入方）崩潰，請重試",
+        "tools.fail.3": "連線元件（房主）崩潰，請重試",
+        "tools.fail.4": "房主的遊戲伺服器已中斷，大廳已關閉",
+        "tools.fail.5": "連線元件協定錯誤，請把日誌回報給開發者",
+        "tools.fail.network": "與連線核心通訊失敗（逾時或回應異常），請重試",
+        "tools.fail.start_timeout": "連線核心啟動失敗或逾時，請重試",
+        "tools.fail.bad_code": "大廳編號無效或目前無法加入，請檢查後重試",
+        "tools.fail.download": "下載失敗，請檢查網路後重試",
+        "tools.fail.verify": "下載檔案校驗失敗，已拒絕安裝",
+        "tools.fail.platform": "目前平台暫不支援連線元件",
+        "tools.joined.copied": "已複製直連位址 {}，在多人遊戲的「直接連線」貼上即可",
     },
     'ja_jp': {
         "a11y.nav": "メインナビゲーション",
@@ -1312,6 +1371,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "そのリリースにはランチャーのファイルがありません",
         'about.update.failed.size': "ダウンロードしたファイルのサイズが一致しないため破棄しました",
         'about.update.failed.signature': "ダウンロードしたファイルの署名が無効なため破棄しました",
+        'about.update.auto_check': "起動後に更新を確認"
+        'about.update.auto_download': "新しいバージョンを自動でダウンロード"
+        'about.update.settings.hint': "自動確認はバージョン情報を読むだけで、ランチャーのファイルを置き換える前に必ず確認します。"
+        'about.update.size': "サイズ：{}"
+        'about.update.published': "公開日：{}"
+        'about.update.notes.show': "更新内容を表示"
+        'about.update.notes.hide': "更新内容を隠す"
+        'about.update.download_install': "ダウンロードしてインストール"
+        'about.update.restart_install': "再起動してインストール"
+        'about.update.cancel': "ダウンロードを中止"
+        'about.update.cancelled': "ダウンロードを中止しました"
+        'about.update.up_to_date_at': "最新バージョンです · 確認日時 {}"
+        'about.update.retry': "再試行"
+        'about.update.installing': "再起動してインストールしています…"
+        'about.update.install.ready': "更新をダウンロードしました（{}）。「再起動してインストール」を押してください"
+        'about.update.install.started': "更新の準備ができました。ランチャーを再起動しています…"
+        'about.update.install.source': "ソースコードから実行している場合は自動更新できません"
+        'about.update.install.missing': "更新ファイルまたは実行中のランチャーが見つかりません"
+        'about.update.install.writable': "ランチャーのフォルダーに書き込めないため、自動更新できません"
+        'about.update.install.space': "ディスクの空き容量が足りないため、更新できません"
+        'about.update.install.failed': "更新のインストールに失敗しました。ランチャーは元のままです"
+        'about.update.failed.no_release': "利用可能な正式リリースが見つかりません"
         'about.credits.title': "謝辞",
         'about.credits.link': "リンクを開く",
         'about.credits.dependencies': "依存関係",
@@ -1334,6 +1415,7 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.credit.neoforge': "NeoForge ローダーとその Maven リポジトリ",
         'about.credit.adoptium': "Java ランタイムのダウンロード",
         'about.credit.github': "コードのホスティング、リリース、更新確認",
+        "about.credit.terracotta": "マルチプレイ機能。改変していないバイナリをローカル HTTP API 経由で利用し、UI に著作権表示を掲載しています。",
         'about.credit.bmclapi': 'Minecraft リソースのミラーサービス（中国本土向け高速化）',
         'about.credit.pcl': "「概要 / 更新」ページの情報設計の着想元です。技術スタックは異なり（C#/WPF と Python/PySide6）、本プロジェクトは完全に独立して実装されており、上流のソースコードを一切含みません。",
         'about.credit.pcl_ce': "コミュニティ版で、本プロジェクトのインターフェースはこれを参考にしています。技術スタックは異なり（C#/WPF と Python/PySide6）、本プロジェクトは完全に独立して実装されており、上流のソースコードを一切含みません。",
@@ -1473,6 +1555,14 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'instances.fetch_fail': "取得に失敗しました: {}",
         'instances.hint': "インスタンスはセーブデータ/Mod/設定を個別に持ちます（バージョンリソースは共有して容量を節約）。",
         'instances.import': "インスタンスをインポート...",
+        'instances.import_pack': "統合パックをインポート…",
+        'instances.import_pack.title': "統合パックをインポート",
+        'instances.import_pack.filter': "統合パック (*.mrpack *.zip)",
+        'instances.import_pack.hint': "Modrinth .mrpack、CurseForge 統合パック、MultiMC/Prism インスタンスに対応",
+        'instances.import_pack.working': "統合パックをインポートしています: {}",
+        'instances.import_pack.overrides': "統合パック内の MOD と設定を書き込んでいます…",
+        'instances.import_pack.done': "統合パックをインポートしました: {}（{} ファイル）",
+        'instances.import_pack.cancelled': "インポートをキャンセルしました。中途半端なインスタンスは残っていません",
         'instances.launch': "起動",
         'instances.loading': "（読み込み中...）",
         'instances.mods.col.enabled': "有効",
@@ -2153,6 +2243,34 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "マルチプレイで「陶瓦联机大廳」をダブルクリックすると入れます（この入口では正規アカウントの確認を行いません）。",
         "tools.joined.open": "マルチプレイを開く",
         "tools.difficulty": "簡単\n普通\n難しい",
+        "tools.wait.starting": "ルームを作成しています…",
+        "tools.onboard.downloading": "ダウンロード中 · {} / {} MB",
+        "tools.onboard.channels.footer": "既定では最も速いミラーを自動選択します。手動指定もできます。",
+        "tools.onboard.channels.unmeasured": "未測定",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "ネットワーク診断",
+        "tools.net.labels": "コンポーネント\nプロセス\nLAN ワールド\nUDP ホールパンチ",
+        "tools.net.verdicts": "未診断\nコーン型 · ホールパンチ可能\n対称型 · ホールパンチ困難\n遮断 · ホールパンチ不可\nタイムアウト · マッピング取得不可\n診断失敗",
+        "tools.net.note": "UDP のみを診断します。プロキシ経由では結果が不正確です。",
+        "tools.net.refresh": "再診断",
+        "tools.net.component.ready": "準備完了 · v{}",
+        "tools.net.component.missing": "未ダウンロード",
+        "tools.net.process.running": "実行中 · ポート {}",
+        "tools.net.process.stopped": "停止",
+        "tools.net.lan.auto": "ルーム作成時に自動検出",
+        "tools.fail.0": "ホストに接続できません（ルームが閉じられたか、ネットワークが不安定です）",
+        "tools.fail.1": "ホストとの接続が切断されました",
+        "tools.fail.2": "ゲスト側コンポーネントがクラッシュしました。再試行してください",
+        "tools.fail.3": "ホスト側コンポーネントがクラッシュしました。再試行してください",
+        "tools.fail.4": "ホストのゲームサーバーが切断され、ルームは閉じられました",
+        "tools.fail.5": "コンポーネントのプロトコルエラーです。ログを開発者に報告してください",
+        "tools.fail.network": "マルチプレイコアとの通信に失敗しました（タイムアウトまたは異常応答）。再試行してください",
+        "tools.fail.start_timeout": "マルチプレイコアの起動に失敗したか、タイムアウトしました。再試行してください",
+        "tools.fail.bad_code": "ルームコードが無効か、現在参加できません。確認して再試行してください",
+        "tools.fail.download": "ダウンロードに失敗しました。ネットワークを確認して再試行してください",
+        "tools.fail.verify": "ダウンロードしたファイルの検証に失敗したため、インストールを中止しました",
+        "tools.fail.platform": "このプラットフォームはマルチプレイコンポーネントに対応していません",
+        "tools.joined.copied": "直接接続先 {} をコピーしました。マルチプレイの「直接接続」に貼り付けてください",
     },
     'ko_kr': {
         "a11y.nav": "주 내비게이션",
@@ -2381,6 +2499,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "해당 릴리스에는 런처 파일이 없습니다",
         'about.update.failed.size': "내려받은 파일 크기가 달라 폐기했습니다",
         'about.update.failed.signature': "내려받은 파일의 서명이 유효하지 않아 폐기했습니다",
+        'about.update.auto_check': "시작 후 업데이트 확인"
+        'about.update.auto_download': "새 버전을 자동으로 다운로드"
+        'about.update.settings.hint': "자동 확인은 버전 정보만 읽으며, 런처 파일을 교체하기 전에는 항상 확인을 받습니다."
+        'about.update.size': "크기: {}"
+        'about.update.published': "출시일: {}"
+        'about.update.notes.show': "업데이트 노트 펼치기"
+        'about.update.notes.hide': "업데이트 노트 접기"
+        'about.update.download_install': "다운로드 및 설치"
+        'about.update.restart_install': "다시 시작하여 설치"
+        'about.update.cancel': "다운로드 취소"
+        'about.update.cancelled': "다운로드가 취소되었습니다"
+        'about.update.up_to_date_at': "최신 버전입니다 · 확인 시각 {}"
+        'about.update.retry': "다시 시도"
+        'about.update.installing': "다시 시작하여 설치하는 중…"
+        'about.update.install.ready': "업데이트를 다운로드했습니다({}). 「다시 시작하여 설치」를 누르세요."
+        'about.update.install.started': "업데이트가 준비되었습니다. 런처를 다시 시작하는 중…"
+        'about.update.install.source': "소스에서 실행하는 경우 자동 업데이트를 지원하지 않습니다"
+        'about.update.install.missing': "업데이트 파일이나 실행 중인 런처를 찾을 수 없습니다"
+        'about.update.install.writable': "런처 폴더에 쓸 수 없어 자동으로 업데이트할 수 없습니다"
+        'about.update.install.space': "디스크 공간이 부족하여 업데이트를 설치할 수 없습니다"
+        'about.update.install.failed': "업데이트 설치에 실패했습니다. 런처는 그대로 유지됩니다"
+        'about.update.failed.no_release': "사용 가능한 정식 릴리스가 없습니다"
         'about.credits.title': "감사 인사",
         'about.credits.link': "링크 열기",
         'about.credits.dependencies': "종속성",
@@ -2403,6 +2543,7 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.credit.neoforge': "NeoForge 로더와 Maven 저장소",
         'about.credit.adoptium': "Java 런타임 다운로드",
         'about.credit.github': "코드 호스팅, 릴리스와 업데이트 확인",
+        "about.credit.terracotta": "멀티플레이 기능. 수정하지 않은 바이너리를 로컬 HTTP API로 사용하며 UI에 저작권 표시를 제공합니다.",
         'about.credit.bmclapi': 'Minecraft 리소스 미러 서비스(중국 본토 가속)',
         'about.credit.pcl': "「정보 / 업데이트」 페이지의 정보 설계에 영감을 주었습니다. 기술 스택은 다르며(C#/WPF와 Python/PySide6), 이 프로젝트는 완전히 독립적으로 구현되었고 상위 소스 코드를 포함하지 않습니다.",
         'about.credit.pcl_ce': "커뮤니티 에디션으로, 이 프로젝트의 인터페이스가 이를 참고했습니다. 기술 스택은 다르며(C#/WPF와 Python/PySide6), 이 프로젝트는 완전히 독립적으로 구현되었고 상위 소스 코드를 포함하지 않습니다.",
@@ -2542,6 +2683,14 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'instances.fetch_fail': "가져오기 실패: {}",
         'instances.hint': "인스턴스는 독립적인 저장/모드/설정을 가집니다(버전 리소스를 공유하여 공간 절약).",
         'instances.import': "인스턴스 가져오기...",
+        'instances.import_pack': "모드팩 가져오기…",
+        'instances.import_pack.title': "모드팩 가져오기",
+        'instances.import_pack.filter': "모드팩 (*.mrpack *.zip)",
+        'instances.import_pack.hint': "Modrinth .mrpack, CurseForge 모드팩, MultiMC/Prism 인스턴스를 지원합니다",
+        'instances.import_pack.working': "모드팩을 가져오는 중: {}",
+        'instances.import_pack.overrides': "모드팩에 포함된 모드와 설정을 쓰는 중…",
+        'instances.import_pack.done': "모드팩을 가져왔습니다: {} ({}개 파일)",
+        'instances.import_pack.cancelled': "가져오기를 취소했습니다. 미완성 인스턴스는 남지 않았습니다",
         'instances.launch': "실행",
         'instances.loading': "(불러오는 중...)",
         'instances.mods.col.enabled': "사용",
@@ -3222,6 +3371,34 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "멀티플레이에서 '陶瓦联机大廳'을 더블클릭하면 입장할 수 있습니다(이 입구는 정품 여부를 확인하지 않습니다).",
         "tools.joined.open": "멀티플레이 열기",
         "tools.difficulty": "쉬움\n보통\n어려움",
+        "tools.wait.starting": "방을 만드는 중…",
+        "tools.onboard.downloading": "다운로드 중 · {} / {} MB",
+        "tools.onboard.channels.footer": "기본으로 가장 빠른 미러를 자동 선택하며, 직접 지정할 수도 있습니다.",
+        "tools.onboard.channels.unmeasured": "미측정",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "네트워크 자가 점검",
+        "tools.net.labels": "구성 요소\n프로세스\nLAN 월드\nUDP 홀 펀칭",
+        "tools.net.verdicts": "미검사\n콘형 · 홀 펀칭 가능\n대칭형 · 홀 펀칭 어려움\n차단됨 · 홀 펀칭 불가\n시간 초과 · 매핑 없음\n검사 실패",
+        "tools.net.note": "UDP만 검사합니다. 프록시를 사용하면 결과가 정확하지 않습니다.",
+        "tools.net.refresh": "다시 검사",
+        "tools.net.component.ready": "준비됨 · v{}",
+        "tools.net.component.missing": "미다운로드",
+        "tools.net.process.running": "실행 중 · 포트 {}",
+        "tools.net.process.stopped": "중지됨",
+        "tools.net.lan.auto": "방을 만들 때 자동으로 감지",
+        "tools.fail.0": "호스트에 연결할 수 없습니다(방이 닫혔거나 네트워크가 불안정합니다)",
+        "tools.fail.1": "호스트와의 연결이 끊어졌습니다",
+        "tools.fail.2": "게스트 측 구성 요소가 충돌했습니다. 다시 시도하세요",
+        "tools.fail.3": "호스트 측 구성 요소가 충돌했습니다. 다시 시도하세요",
+        "tools.fail.4": "호스트의 게임 서버가 끊어져 방이 닫혔습니다",
+        "tools.fail.5": "구성 요소 프로토콜 오류입니다. 로그를 개발자에게 알려 주세요",
+        "tools.fail.network": "멀티플레이 코어와 통신하지 못했습니다(시간 초과 또는 잘못된 응답). 다시 시도하세요",
+        "tools.fail.start_timeout": "멀티플레이 코어 시작에 실패했거나 시간 초과되었습니다. 다시 시도하세요",
+        "tools.fail.bad_code": "방 코드가 유효하지 않거나 지금은 참가할 수 없습니다. 확인 후 다시 시도하세요",
+        "tools.fail.download": "다운로드에 실패했습니다. 네트워크를 확인하고 다시 시도하세요",
+        "tools.fail.verify": "다운로드한 파일 검증에 실패하여 설치하지 않았습니다",
+        "tools.fail.platform": "이 플랫폼은 멀티플레이 구성 요소를 지원하지 않습니다",
+        "tools.joined.copied": "직접 연결 주소 {}를 복사했습니다. 멀티플레이의 '직접 연결'에 붙여넣으세요",
     },
     'ru_ru': {
         "a11y.nav": "Основная навигация",
@@ -3450,6 +3627,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "В этом релизе нет файла лаунчера",
         'about.update.failed.size': "Размер загруженного файла не совпал — файл удалён",
         'about.update.failed.signature': "Подпись загруженного файла недействительна — файл удалён",
+        'about.update.auto_check': "Проверять обновления после запуска"
+        'about.update.auto_download': "Автоматически скачивать новые версии"
+        'about.update.settings.hint': "Автоматическая проверка только читает сведения о версии. Файл лаунчера заменяется только после вашего подтверждения."
+        'about.update.size': "Размер: {}"
+        'about.update.published': "Дата выпуска: {}"
+        'about.update.notes.show': "Показать описание обновления"
+        'about.update.notes.hide': "Скрыть описание обновления"
+        'about.update.download_install': "Скачать и установить"
+        'about.update.restart_install': "Перезапустить и установить"
+        'about.update.cancel': "Отменить загрузку"
+        'about.update.cancelled': "Загрузка отменена"
+        'about.update.up_to_date_at': "Установлена последняя версия · проверено {}"
+        'about.update.retry': "Повторить"
+        'about.update.installing': "Перезапуск для установки…"
+        'about.update.install.ready': "Обновление загружено ({}). Нажмите «Перезапустить и установить»."
+        'about.update.install.started': "Обновление готово, лаунчер перезапускается…"
+        'about.update.install.source': "При запуске из исходников автоматическое обновление недоступно"
+        'about.update.install.missing': "Не найден файл обновления или запущенный лаунчер"
+        'about.update.install.writable': "Папка лаунчера недоступна для записи, автоматическое обновление невозможно"
+        'about.update.install.space': "Недостаточно места на диске для установки обновления"
+        'about.update.install.failed': "Не удалось установить обновление; лаунчер остался без изменений"
+        'about.update.failed.no_release': "Опубликованный выпуск не найден"
         'about.credits.title': "Благодарности",
         'about.credits.link': "Открыть ссылку",
         'about.credits.dependencies': "Зависимости",
@@ -3472,6 +3671,7 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.credit.neoforge': "загрузчик NeoForge и его репозиторий Maven",
         'about.credit.adoptium': "загрузка среды Java",
         'about.credit.github': "хостинг кода, релизы и проверка обновлений",
+        "about.credit.terracotta": "Многопользовательский режим; неизменённый двоичный файл используется через локальный HTTP API, авторство указано в интерфейсе.",
         'about.credit.bmclapi': 'Сервис зеркал ресурсов Minecraft (ускорение в материковом Китае)',
         'about.credit.pcl': "источник вдохновения для информационной архитектуры разделов «О программе / Обновления». Технологические стеки различаются (C#/WPF и Python/PySide6); этот проект реализован полностью самостоятельно и не содержит исходного кода вышестоящего проекта.",
         'about.credit.pcl_ce': "версия сообщества; интерфейс этого проекта ориентировался на неё. Технологические стеки различаются (C#/WPF и Python/PySide6); этот проект реализован полностью самостоятельно и не содержит исходного кода вышестоящего проекта.",
@@ -3611,6 +3811,14 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'instances.fetch_fail': "Не удалось получить: {}",
         'instances.hint': "У экземпляров изолированные сохранения/моды/конфигурация (общие ресурсы версии для экономии места).",
         'instances.import': "Импорт экземпляра...",
+        'instances.import_pack': "Импорт модпака…",
+        'instances.import_pack.title': "Импорт модпака",
+        'instances.import_pack.filter': "Модпаки (*.mrpack *.zip)",
+        'instances.import_pack.hint': "Поддерживаются Modrinth .mrpack, модпаки CurseForge и экземпляры MultiMC/Prism",
+        'instances.import_pack.working': "Импорт модпака: {}",
+        'instances.import_pack.overrides': "Запись модов и настроек из модпака…",
+        'instances.import_pack.done': "Модпак импортирован: {} (файлов: {})",
+        'instances.import_pack.cancelled': "Импорт отменён; незавершённый экземпляр не остался",
         'instances.launch': "Запустить",
         'instances.loading': "(Загрузка...)",
         'instances.mods.col.enabled': "Включено",
@@ -4291,6 +4499,34 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "В сетевой игре дважды щёлкните «陶瓦联机大廳», чтобы войти (здесь лицензия не проверяется).",
         "tools.joined.open": "Открыть сетевую игру",
         "tools.difficulty": "Легко\nСредне\nСложно",
+        "tools.wait.starting": "Создание комнаты…",
+        "tools.onboard.downloading": "Загрузка · {} / {} МБ",
+        "tools.onboard.channels.footer": "По умолчанию выбирается самый быстрый зеркальный сервер; можно указать его вручную.",
+        "tools.onboard.channels.unmeasured": "Не измерено",
+        "tools.onboard.channels.latency": "{} мс",
+        "tools.net.title": "Проверка сети",
+        "tools.net.labels": "Компонент\nПроцесс\nЛокальный мир\nПробивание UDP",
+        "tools.net.verdicts": "Не проверено\nКонусный тип · пробивание возможно\nСимметричный тип · пробивание затруднено\nЗаблокировано · пробивание невозможно\nТайм-аут · отображение не получено\nОшибка проверки",
+        "tools.net.note": "Проверяется только UDP; при использовании прокси результат недостоверен.",
+        "tools.net.refresh": "Проверить снова",
+        "tools.net.component.ready": "Готово · v{}",
+        "tools.net.component.missing": "Не загружено",
+        "tools.net.process.running": "Работает · порт {}",
+        "tools.net.process.stopped": "Остановлен",
+        "tools.net.lan.auto": "Определяется автоматически при создании комнаты",
+        "tools.fail.0": "Не удалось подключиться к хосту (комната закрыта или сеть нестабильна)",
+        "tools.fail.1": "Соединение с хостом прервано",
+        "tools.fail.2": "Компонент гостя аварийно завершился; повторите попытку",
+        "tools.fail.3": "Компонент хоста аварийно завершился; повторите попытку",
+        "tools.fail.4": "Игровой сервер хоста отключился, комната закрыта",
+        "tools.fail.5": "Ошибка протокола компонента; сообщите лог разработчику",
+        "tools.fail.network": "Не удалось связаться с ядром мультиплеера (тайм-аут или некорректный ответ); повторите попытку",
+        "tools.fail.start_timeout": "Ядро мультиплеера не запустилось или превысило время ожидания; повторите попытку",
+        "tools.fail.bad_code": "Код комнаты недействителен или сейчас нельзя присоединиться; проверьте и повторите",
+        "tools.fail.download": "Не удалось скачать файл; проверьте сеть и повторите",
+        "tools.fail.verify": "Скачанный файл не прошёл проверку и не был установлен",
+        "tools.fail.platform": "Компонент мультиплеера не поддерживается на этой платформе",
+        "tools.joined.copied": "Адрес прямого подключения {} скопирован. Вставьте его в «Прямое подключение» в игре.",
     },
     'fr_fr': {
         "a11y.nav": "Navigation principale",
@@ -4519,6 +4755,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "Cette publication ne contient aucun fichier du lanceur",
         'about.update.failed.size': "La taille du fichier téléchargé ne correspond pas — fichier supprimé",
         'about.update.failed.signature': "La signature du fichier téléchargé est invalide — fichier supprimé",
+        'about.update.auto_check': "Rechercher les mises à jour au démarrage"
+        'about.update.auto_download': "Télécharger automatiquement les nouvelles versions"
+        'about.update.settings.hint': "La recherche automatique ne lit que les informations de version ; le fichier du lanceur n'est remplacé qu'après votre confirmation."
+        'about.update.size': "Taille : {}"
+        'about.update.published': "Publié le : {}"
+        'about.update.notes.show': "Afficher les notes de version"
+        'about.update.notes.hide': "Masquer les notes de version"
+        'about.update.download_install': "Télécharger et installer"
+        'about.update.restart_install': "Redémarrer et installer"
+        'about.update.cancel': "Annuler le téléchargement"
+        'about.update.cancelled': "Téléchargement annulé"
+        'about.update.up_to_date_at': "Vous êtes à jour · vérifié le {}"
+        'about.update.retry': "Réessayer"
+        'about.update.installing': "Redémarrage pour installer…"
+        'about.update.install.ready': "Mise à jour téléchargée ({}). Cliquez sur « Redémarrer et installer »."
+        'about.update.install.started': "La mise à jour est prête, le lanceur redémarre…"
+        'about.update.install.source': "Les mises à jour automatiques ne sont pas disponibles depuis les sources"
+        'about.update.install.missing': "Fichier de mise à jour ou lanceur en cours d'exécution introuvable"
+        'about.update.install.writable': "Le dossier du lanceur n'est pas accessible en écriture, mise à jour impossible"
+        'about.update.install.space': "Espace disque insuffisant pour installer la mise à jour"
+        'about.update.install.failed': "L'installation de la mise à jour a échoué ; le lanceur est resté inchangé"
+        'about.update.failed.no_release': "Aucune version publiée disponible"
         'about.credits.title': "Remerciements",
         'about.credits.link': "Ouvrir le lien",
         'about.credits.dependencies': "Dépendances",
@@ -4541,6 +4799,7 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.credit.neoforge': "le chargeur NeoForge et son dépôt Maven",
         'about.credit.adoptium': "le téléchargement des environnements Java",
         'about.credit.github': "l'hébergement du code, les publications et la vérification des mises à jour",
+        "about.credit.terracotta": "Multijoueur ; le binaire non modifié est utilisé via son API HTTP locale, et son copyright est crédité dans l'interface.",
         'about.credit.bmclapi': 'service miroir de ressources Minecraft (accélération en Chine continentale)',
         'about.credit.pcl': "l'inspiration pour l'architecture des pages « À propos / Mises à jour ». Les technologies diffèrent (C#/WPF et Python/PySide6) ; ce projet est une implémentation entièrement indépendante et ne contient aucun code source de l'amont.",
         'about.credit.pcl_ce': "l'édition communautaire ; l'interface de ce projet s'en est inspirée. Les technologies diffèrent (C#/WPF et Python/PySide6) ; ce projet est une implémentation entièrement indépendante et ne contient aucun code source de l'amont.",
@@ -4680,6 +4939,14 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'instances.fetch_fail': "Échec de la récupération : {}",
         'instances.hint': "Les instances disposent de sauvegardes, mods et configurations indépendants (ressources de version partagées pour économiser de l'espace).",
         'instances.import': "Importer l'instance...",
+        'instances.import_pack': "Importer un modpack…",
+        'instances.import_pack.title': "Importer un modpack",
+        'instances.import_pack.filter': "Modpacks (*.mrpack *.zip)",
+        'instances.import_pack.hint': "Prend en charge les .mrpack Modrinth, les modpacks CurseForge et les instances MultiMC/Prism",
+        'instances.import_pack.working': "Importation du modpack : {}",
+        'instances.import_pack.overrides': "Écriture des mods et de la configuration du modpack…",
+        'instances.import_pack.done': "Modpack importé : {} ({} fichiers)",
+        'instances.import_pack.cancelled': "Importation annulée ; aucune instance incomplète n'a été laissée",
         'instances.launch': "Lancer",
         'instances.loading': "(Chargement...)",
         'instances.mods.col.enabled': "Activé",
@@ -5360,6 +5627,34 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "Dans Multijoueur, double-cliquez sur « 陶瓦联机大廳 » pour entrer (cette entrée ne vérifie pas le compte premium).",
         "tools.joined.open": "Ouvrir le multijoueur",
         "tools.difficulty": "Facile\nMoyen\nDifficile",
+        "tools.wait.starting": "Création de la salle…",
+        "tools.onboard.downloading": "Téléchargement · {} / {} Mo",
+        "tools.onboard.channels.footer": "Le miroir le plus rapide est choisi automatiquement ; vous pouvez aussi le choisir manuellement.",
+        "tools.onboard.channels.unmeasured": "Non mesuré",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "Diagnostic réseau",
+        "tools.net.labels": "Composant\nProcessus\nMonde local\nPerforation UDP",
+        "tools.net.verdicts": "Non testé\nCône · perforation possible\nSymétrique · perforation difficile\nBloqué · perforation impossible\nDélai dépassé · aucune correspondance\nÉchec du test",
+        "tools.net.note": "Test UDP uniquement ; le résultat est faussé derrière un proxy.",
+        "tools.net.refresh": "Relancer",
+        "tools.net.component.ready": "Prêt · v{}",
+        "tools.net.component.missing": "Non téléchargé",
+        "tools.net.process.running": "En cours · port {}",
+        "tools.net.process.stopped": "Arrêté",
+        "tools.net.lan.auto": "Détecté automatiquement à la création d'une salle",
+        "tools.fail.0": "Impossible de joindre l'hôte (salle fermée ou réseau instable)",
+        "tools.fail.1": "La connexion à l'hôte a été interrompue",
+        "tools.fail.2": "Le composant côté invité a planté ; réessayez",
+        "tools.fail.3": "Le composant côté hôte a planté ; réessayez",
+        "tools.fail.4": "Le serveur de jeu de l'hôte s'est déconnecté, la salle a été fermée",
+        "tools.fail.5": "Erreur de protocole du composant ; envoyez le journal au développeur",
+        "tools.fail.network": "Échec de communication avec le cœur multijoueur (délai dépassé ou réponse invalide) ; réessayez",
+        "tools.fail.start_timeout": "Le cœur multijoueur n'a pas démarré ou a expiré ; réessayez",
+        "tools.fail.bad_code": "Le code de salle est invalide ou la salle ne peut pas être rejointe pour l'instant",
+        "tools.fail.download": "Échec du téléchargement ; vérifiez le réseau et réessayez",
+        "tools.fail.verify": "Le fichier téléchargé n'a pas passé la vérification et n'a pas été installé",
+        "tools.fail.platform": "Le composant multijoueur n'est pas pris en charge sur cette plateforme",
+        "tools.joined.copied": "Adresse directe {} copiée. Collez-la dans « Connexion directe » du jeu.",
     },
     'es_es': {
         "a11y.nav": "Navegación principal",
@@ -5588,6 +5883,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "Esa release no incluye ningún archivo del launcher",
         'about.update.failed.size': "El tamaño descargado no coincide: se descartó",
         'about.update.failed.signature': "La firma de la descarga no es válida: se descartó",
+        'about.update.auto_check': "Buscar actualizaciones al iniciar"
+        'about.update.auto_download': "Descargar automáticamente las versiones nuevas"
+        'about.update.settings.hint': "La comprobación automática solo lee la información de versión; el archivo del lanzador solo se reemplaza tras tu confirmación."
+        'about.update.size': "Tamaño: {}"
+        'about.update.published': "Publicado: {}"
+        'about.update.notes.show': "Mostrar notas de la versión"
+        'about.update.notes.hide': "Ocultar notas de la versión"
+        'about.update.download_install': "Descargar e instalar"
+        'about.update.restart_install': "Reiniciar e instalar"
+        'about.update.cancel': "Cancelar descarga"
+        'about.update.cancelled': "Descarga cancelada"
+        'about.update.up_to_date_at': "Ya tienes la última versión · comprobado el {}"
+        'about.update.retry': "Reintentar"
+        'about.update.installing': "Reiniciando para instalar…"
+        'about.update.install.ready': "Actualización descargada ({}). Pulsa «Reiniciar e instalar»."
+        'about.update.install.started': "La actualización está lista; el lanzador se está reiniciando…"
+        'about.update.install.source': "La actualización automática no está disponible al ejecutar desde el código fuente"
+        'about.update.install.missing': "No se encontró el archivo de actualización ni el lanzador en ejecución"
+        'about.update.install.writable': "La carpeta del lanzador no se puede escribir; no es posible actualizar automáticamente"
+        'about.update.install.space': "No hay espacio suficiente en disco para instalar la actualización"
+        'about.update.install.failed': "No se pudo instalar la actualización; el lanzador quedó intacto"
+        'about.update.failed.no_release': "No hay ninguna versión publicada disponible"
         'about.credits.title': "Agradecimientos",
         'about.credits.link': "Abrir enlace",
         'about.credits.dependencies': "Dependencias",
@@ -5610,6 +5927,7 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.credit.neoforge': "el cargador NeoForge y su repositorio Maven",
         'about.credit.adoptium': "la descarga de entornos Java",
         'about.credit.github': "el alojamiento del código, las releases y la comprobación de actualizaciones",
+        "about.credit.terracotta": "Multijugador; el binario sin modificar se usa a través de su API HTTP local y su copyright aparece en la interfaz.",
         'about.credit.bmclapi': 'servicio de espejo de recursos de Minecraft (aceleración en China continental)',
         'about.credit.pcl': "la inspiración para la arquitectura de las páginas «Acerca de / Actualizaciones». Las tecnologías son distintas (C#/WPF y Python/PySide6); este proyecto es una implementación totalmente independiente y no contiene código fuente del proyecto original.",
         'about.credit.pcl_ce': "la edición comunitaria; la interfaz de este proyecto se inspiró en ella. Las tecnologías son distintas (C#/WPF y Python/PySide6); este proyecto es una implementación totalmente independiente y no contiene código fuente del proyecto original.",
@@ -5749,6 +6067,14 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'instances.fetch_fail': "Error al obtener: {}",
         'instances.hint': "Las instancias tienen guardados/mods/configuración independientes (recursos de versión compartidos para ahorrar espacio).",
         'instances.import': "Importar instancia...",
+        'instances.import_pack': "Importar modpack…",
+        'instances.import_pack.title': "Importar modpack",
+        'instances.import_pack.filter': "Modpacks (*.mrpack *.zip)",
+        'instances.import_pack.hint': "Compatible con .mrpack de Modrinth, modpacks de CurseForge e instancias de MultiMC/Prism",
+        'instances.import_pack.working': "Importando modpack: {}",
+        'instances.import_pack.overrides': "Escribiendo los mods y la configuración del modpack…",
+        'instances.import_pack.done': "Modpack importado: {} ({} archivos)",
+        'instances.import_pack.cancelled': "Importación cancelada; no se dejó ninguna instancia incompleta",
         'instances.launch': "Iniciar",
         'instances.loading': "(Cargando...)",
         'instances.mods.col.enabled': "Activado",
@@ -6429,6 +6755,34 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "En Multijugador, haz doble clic en «陶瓦联机大廳» para entrar (esta entrada no comprueba la cuenta premium).",
         "tools.joined.open": "Abrir multijugador",
         "tools.difficulty": "Fácil\nMedia\nDifícil",
+        "tools.wait.starting": "Creando la sala…",
+        "tools.onboard.downloading": "Descargando · {} / {} MB",
+        "tools.onboard.channels.footer": "Se elige automáticamente el espejo más rápido; también puedes indicarlo manualmente.",
+        "tools.onboard.channels.unmeasured": "Sin medir",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "Diagnóstico",
+        "tools.net.labels": "Componente\nProceso\nMundo local\nPerforación UDP",
+        "tools.net.verdicts": "Sin probar\nCónica · perforación posible\nSimétrica · perforación difícil\nBloqueada · perforación imposible\nTiempo agotado · sin asignación\nError de comprobación",
+        "tools.net.note": "Solo se prueba UDP; el resultado no es fiable tras un proxy.",
+        "tools.net.refresh": "Comprobar",
+        "tools.net.component.ready": "Listo · v{}",
+        "tools.net.component.missing": "Sin descargar",
+        "tools.net.process.running": "En ejecución · puerto {}",
+        "tools.net.process.stopped": "Detenido",
+        "tools.net.lan.auto": "Se detecta automáticamente al crear una sala",
+        "tools.fail.0": "No se pudo conectar con el anfitrión (sala cerrada o red inestable)",
+        "tools.fail.1": "Se interrumpió la conexión con el anfitrión",
+        "tools.fail.2": "El componente del invitado se bloqueó; inténtalo de nuevo",
+        "tools.fail.3": "El componente del anfitrión se bloqueó; inténtalo de nuevo",
+        "tools.fail.4": "El servidor de juego del anfitrión se desconectó y la sala se cerró",
+        "tools.fail.5": "Error de protocolo del componente; envía el registro al desarrollador",
+        "tools.fail.network": "No se pudo comunicar con el núcleo multijugador (tiempo agotado o respuesta no válida); inténtalo de nuevo",
+        "tools.fail.start_timeout": "El núcleo multijugador no arrancó o agotó el tiempo; inténtalo de nuevo",
+        "tools.fail.bad_code": "El código de sala no es válido o ahora mismo no se puede entrar",
+        "tools.fail.download": "La descarga falló; comprueba la red e inténtalo de nuevo",
+        "tools.fail.verify": "El archivo descargado no superó la verificación y no se instaló",
+        "tools.fail.platform": "El componente multijugador no es compatible con esta plataforma",
+        "tools.joined.copied": "Dirección directa {} copiada. Pégala en «Conexión directa» del juego.",
     },
     'de_de': {
         "a11y.nav": "Hauptnavigation",
@@ -6657,6 +7011,28 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.update.failed.no_asset': "Dieses Release enthält keine Launcher-Datei",
         'about.update.failed.size': "Die Downloadgröße stimmt nicht — verworfen",
         'about.update.failed.signature': "Die Signatur des Downloads ist ungültig — verworfen",
+        'about.update.auto_check': "Nach dem Start nach Updates suchen"
+        'about.update.auto_download': "Neue Versionen automatisch herunterladen"
+        'about.update.settings.hint': "Die automatische Suche liest nur Versionsinformationen; die Launcher-Datei wird erst nach deiner Bestätigung ersetzt."
+        'about.update.size': "Größe: {}"
+        'about.update.published': "Veröffentlicht: {}"
+        'about.update.notes.show': "Versionshinweise anzeigen"
+        'about.update.notes.hide': "Versionshinweise ausblenden"
+        'about.update.download_install': "Herunterladen und installieren"
+        'about.update.restart_install': "Neu starten und installieren"
+        'about.update.cancel': "Download abbrechen"
+        'about.update.cancelled': "Download abgebrochen"
+        'about.update.up_to_date_at': "Du bist auf dem neuesten Stand · geprüft am {}"
+        'about.update.retry': "Erneut versuchen"
+        'about.update.installing': "Neustart zur Installation…"
+        'about.update.install.ready': "Update heruntergeladen ({}). Klicke auf „Neu starten und installieren“."
+        'about.update.install.started': "Das Update ist bereit, der Launcher startet neu…"
+        'about.update.install.source': "Automatische Updates sind beim Ausführen aus dem Quellcode nicht verfügbar"
+        'about.update.install.missing': "Updatedatei oder laufender Launcher nicht gefunden"
+        'about.update.install.writable': "Der Launcher-Ordner ist nicht beschreibbar, automatisches Update nicht möglich"
+        'about.update.install.space': "Nicht genügend Speicherplatz zum Installieren des Updates"
+        'about.update.install.failed': "Das Update konnte nicht installiert werden; der Launcher blieb unverändert"
+        'about.update.failed.no_release': "Keine veröffentlichte Version verfügbar"
         'about.credits.title': "Danksagungen",
         'about.credits.link': "Link öffnen",
         'about.credits.dependencies': "Abhängigkeiten",
@@ -6679,6 +7055,7 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'about.credit.neoforge': "der NeoForge-Loader und sein Maven-Repository",
         'about.credit.adoptium': "Downloads der Java-Laufzeit",
         'about.credit.github': "Code-Hosting, Releases und die Update-Prüfung",
+        "about.credit.terracotta": "Mehrspieler; die unveränderte Binärdatei wird über die lokale HTTP-API genutzt, die Urheberangabe steht in der Oberfläche.",
         'about.credit.bmclapi': 'Minecraft-Ressourcen-Spiegeldienst (Beschleunigung in Festlandchina)',
         'about.credit.pcl': "die Inspiration für die Informationsarchitektur der Seiten „Über / Updates“. Die Technologien unterscheiden sich (C#/WPF und Python/PySide6); dieses Projekt ist eine vollständig eigenständige Umsetzung und enthält keinen Quellcode des Ursprungsprojekts.",
         'about.credit.pcl_ce': "die Community-Edition; die Oberfläche dieses Projekts hat sich an ihr orientiert. Die Technologien unterscheiden sich (C#/WPF und Python/PySide6); dieses Projekt ist eine vollständig eigenständige Umsetzung und enthält keinen Quellcode des Ursprungsprojekts.",
@@ -6818,6 +7195,14 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         'instances.fetch_fail': "Abruf fehlgeschlagen: {}",
         'instances.hint': "Instanzen haben isolierte Spielstände/Mods/Konfigurationen (gemeinsame Versionsressourcen, um Speicher zu sparen).",
         'instances.import': "Instanz importieren...",
+        'instances.import_pack': "Modpack importieren…",
+        'instances.import_pack.title': "Modpack importieren",
+        'instances.import_pack.filter': "Modpacks (*.mrpack *.zip)",
+        'instances.import_pack.hint': "Unterstützt Modrinth-.mrpack, CurseForge-Modpacks und MultiMC/Prism-Instanzen",
+        'instances.import_pack.working': "Modpack wird importiert: {}",
+        'instances.import_pack.overrides': "Die Mods und die Konfiguration des Modpacks werden geschrieben…",
+        'instances.import_pack.done': "Modpack importiert: {} ({} Dateien)",
+        'instances.import_pack.cancelled': "Import abgebrochen; es blieb keine unfertige Instanz zurück",
         'instances.launch': "Starten",
         'instances.loading': "(Wird geladen...)",
         'instances.mods.col.enabled': "Ein",
@@ -7498,5 +7883,33 @@ EXTRA_TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.joined.note": "Doppelklicke in „Mehrspieler“ auf „陶瓦联机大廳“, um beizutreten (dieser Einstieg prüft keine Premium-Lizenz).",
         "tools.joined.open": "Mehrspieler öffnen",
         "tools.difficulty": "Einfach\nMittel\nSchwer",
+        "tools.wait.starting": "Raum wird erstellt…",
+        "tools.onboard.downloading": "Wird heruntergeladen · {} / {} MB",
+        "tools.onboard.channels.footer": "Standardmäßig wird der schnellste Spiegel automatisch gewählt; du kannst ihn auch manuell festlegen.",
+        "tools.onboard.channels.unmeasured": "Nicht gemessen",
+        "tools.onboard.channels.latency": "{} ms",
+        "tools.net.title": "Netzwerkprüfung",
+        "tools.net.labels": "Komponente\nProzess\nLAN-Welt\nUDP-Hole-Punching",
+        "tools.net.verdicts": "Nicht geprüft\nKegeltyp · Hole-Punching möglich\nSymmetrisch · Hole-Punching schwierig\nBlockiert · Hole-Punching unmöglich\nZeitüberschreitung · keine Zuordnung\nPrüfung fehlgeschlagen",
+        "tools.net.note": "Nur UDP wird geprüft; hinter einem Proxy ist das Ergebnis unzuverlässig.",
+        "tools.net.refresh": "Erneut prüfen",
+        "tools.net.component.ready": "Bereit · v{}",
+        "tools.net.component.missing": "Nicht heruntergeladen",
+        "tools.net.process.running": "Läuft · Port {}",
+        "tools.net.process.stopped": "Gestoppt",
+        "tools.net.lan.auto": "Wird beim Erstellen eines Raums automatisch erkannt",
+        "tools.fail.0": "Der Host ist nicht erreichbar (Raum geschlossen oder Netzwerk instabil)",
+        "tools.fail.1": "Die Verbindung zum Host wurde unterbrochen",
+        "tools.fail.2": "Die Gast-Komponente ist abgestürzt; bitte erneut versuchen",
+        "tools.fail.3": "Die Host-Komponente ist abgestürzt; bitte erneut versuchen",
+        "tools.fail.4": "Der Spielserver des Hosts wurde getrennt, der Raum wurde geschlossen",
+        "tools.fail.5": "Protokollfehler der Komponente; bitte das Protokoll an den Entwickler senden",
+        "tools.fail.network": "Die Kommunikation mit dem Mehrspieler-Kern ist fehlgeschlagen (Zeitüberschreitung oder ungültige Antwort); bitte erneut versuchen",
+        "tools.fail.start_timeout": "Der Mehrspieler-Kern konnte nicht starten oder hat das Zeitlimit überschritten; bitte erneut versuchen",
+        "tools.fail.bad_code": "Der Raumcode ist ungültig oder der Raum kann gerade nicht betreten werden",
+        "tools.fail.download": "Der Download ist fehlgeschlagen; prüfe das Netzwerk und versuche es erneut",
+        "tools.fail.verify": "Die heruntergeladene Datei hat die Prüfung nicht bestanden und wurde nicht installiert",
+        "tools.fail.platform": "Die Mehrspieler-Komponente wird auf dieser Plattform nicht unterstützt",
+        "tools.joined.copied": "Direktadresse {} kopiert. Füge sie im Spiel unter „Direkt verbinden“ ein.",
     },
 }
