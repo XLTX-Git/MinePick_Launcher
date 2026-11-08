@@ -1449,9 +1449,12 @@ QScrollArea#instanceGroupScroll {
 }
 QWidget#instanceGroups, QWidget#instanceGroupSection,
 QWidget#instanceFolderEmpty { background: transparent; }
+/* The compact instance row. The 3px left border is always reserved, transparent when the row is
+   neither current nor focused, so selecting a row cannot shift its text by two pixels. */
 QFrame#instanceCard {
     background: __BG_LIST__;
     border: 1px solid __BORDER_LIST__;
+    border-left: 3px solid transparent;
     border-radius: __RADIUS_LG__;
 }
 QFrame#instanceCard:hover {
@@ -1466,6 +1469,16 @@ QFrame#instanceCard[current="true"]:hover {
     border-color: __ACCENT__;
     border-left: 3px solid __ACCENT__;
 }
+/* The whole row is a keyboard stop, so the ring is the row's outline, not a small child's. It stays
+   gated on keyboardFocus: a mouse click focuses the row too and must not paint a ring. */
+QFrame#instanceCard[keyboardFocus="true"]:focus {
+    border: 2px solid __FOCUS_RING__;
+    border-left: 3px solid __FOCUS_RING__;
+}
+QFrame#instanceCard[current="true"][keyboardFocus="true"]:focus {
+    border-left: 3px solid __ACCENT__;
+}
+QWidget#instanceCardText { background: transparent; }
 QLabel#instanceCardName {
     background: transparent;
     color: __FG_TEXT__;
@@ -1473,6 +1486,7 @@ QLabel#instanceCardName {
     font-weight: 700;
 }
 QLabel#instanceCardMeta,
+QLabel#instanceCardMetaSep,
 QLabel#instanceCardCounts {
     background: transparent;
     color: __FG_HINT__;
@@ -1482,7 +1496,7 @@ QLabel#instanceCardIcon {
     background: transparent;
     border-radius: __RADIUS_SM__;
 }
-/* 使用 is the card's primary action: it keeps the base accent fill and states only its metrics. */
+/* 使用 is the row's primary action: it keeps the base accent fill and states only its metrics. */
 QPushButton#instanceCardUse {
     padding: 0 12px;
     font-size: 12px;

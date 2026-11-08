@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Instances page: a two-level browser - a game-folder rail, then grouped cards.
+"""Instances page: a two-level browser - a game-folder rail, then grouped rows.
 
 An instance *is* a version folder (`versions/<id>/`), but the launcher can point at several game
 folders, so the page has two levels of its own:
@@ -23,11 +23,15 @@ folders, so the page has two levels of its own:
 * the 200px rail on the left (``gui.pages.instance_folders.FolderRail``) lists the known folders with
   their instance counts and carries the 「添加文件夹…」 entry - it is this page's column, never a
   second main rail;
-* the pane on the right holds the search box, the sort control and the cards, grouped as 正式版 /
+* the pane on the right holds the search box, the sort control and the rows, grouped as 正式版 /
   快照版 / 带加载器 (empty groups do not render). A search flattens that grouping into one result
-  grid with an "N 个结果" line, the same language the resources page uses.
+  list with an "N 个结果" line, the same language the resources page uses.
 
-Everything that acts on one instance lives in @gui.pages.instance_detail.InstanceDetail; the cards
+One instance is one compact row (icon, name, one metadata line, 使用/管理 on the right), not a large
+card: a 156px card showed two instances per screen, which is what "these cards waste space" was about.
+The row keeps the same group headings and the same two-level navigation; it only spends less height.
+
+Everything that acts on one instance lives in @gui.pages.instance_detail.InstanceDetail; the rows
 never embed it, and the detail page is shown only after a deliberate drill-down.
 """
 
@@ -36,7 +40,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -95,20 +99,26 @@ from launcher.meta.version import version_json_path
 
 tr = i18n.tr
 
-CARD_HEIGHT = 156
-CARD_GAP = 12
-#: A card's hard floor, independent of the text it happens to hold.
+#: The compact instance row: 1px border, 14px above and below, a 44px icon and two text lines. 88px is
+#: the height the "one screen shows five or six" target needs; the old card was 156px and showed two.
+CARD_HEIGHT = 88
+#: The row gap. Eight, not twelve: the row is already the visual block, so the gap only separates rows.
+CARD_GAP = 8
+#: A row's hard floor, independent of the text it happens to hold.
 CARD_MIN_WIDTH = 260
-# One card per row, always. The grid used to add a column at 676px (two) and 1008px (three), and at
-# 1644x915 the third column was cut in half: the fixed card width became the content widget's minimum
-# width, the horizontal scrollbar is off, and the pane could never shrink back under a width it had
-# once been laid out at. A single card that spans the row removes the whole class of "a column that
-# does not fit"; the number of columns no longer changes with the window at all.
+#: The icon's box, and the size its pixmap is rendered at (1:1, never scaled by the label).
+CARD_ICON_SIZE = 44
+# One row per instance, always. The grid used to add a column at 676px (two) and 1008px (three), and
+# at 1644x915 the third column was cut in half: the fixed card width became the content widget's
+# minimum width, the horizontal scrollbar is off, and the pane could never shrink back under a width it
+# had once been laid out at. A row that spans the pane removes the whole class of "a column that does
+# not fit"; the number of columns no longer changes with the window at all.
 CARD_COLUMNS = 1
-# The pane's floor: the width one card is comfortably drawn at, plus the pane's two gutters. It is
-# strictly smaller than the old two-card floor (676), so the window's minimum width can only shrink
-# now that the second column is gone (measured by tools/measure_min_width.py: 1078 -> 746 in zh_cn).
-CARD_FLOOR_WIDTH = 320
+# The pane's floor: the width one row is comfortably drawn at, plus the pane's two gutters. The row is
+# narrower than the card it replaced (the card stacked its counts and buttons under the text), so the
+# floor drops from 320 to 300 (measured by tools/measure_min_width.py: 746 -> 718 in zh_cn; en_us stays
+# at 747 because its unchanged action-button row, not the list, is that language's floor).
+CARD_FLOOR_WIDTH = 300
 CARD_GRID_MIN_WIDTH = CARD_FLOOR_WIDTH + 2 * CARD_GAP
 
 # The three card groups, in the order they are shown. A group with no card is not rendered at all.
@@ -264,13 +274,43 @@ def instance_counts(instance, cfg, game_dir: Path) -> tuple[int, int]:
     return mods, saves
 
 
-class _InstanceCard(QFrame):
-    """One white card: 使用 is its primary action, 管理 opens the detail page.
+class _RowLabel(ElidedLabel):
+    """An eliding label that asks for its text width, but gives it back when the row is narrow.
 
-    The card used to be one big button whose only affordance was 管理, so there was no way to say
-    "run this one". Now the two actions are real buttons, the card body answers a double-click with
-    使用, and the instance the launcher is set to run carries the same 3px accent bar the detail
-    sidebar uses for its selected row (one selection language across the app).
+    ``ElidedLabel`` ignores its size hint so its container can hand it the real width. That is right
+    for a label that fills a row on its own, but these two lines share their row: the metadata line
+    is followed by a fixed-width tail (the counts), and the name must give width back before either
+    of them is squeezed. So this label states the width its text really needs - the inherited hint is
+    measured from the *elided* string the base QLabel was last given, often nothing - and still lets
+    a narrow layout shrink it. ``ElidedLabel`` paints the ellipsis once the layout does.
+    """
+
+    def sizeHint(self) -> QSize:
+        # ElidedLabel paints the *elided* string into the base QLabel, so the inherited size hint is
+        # measured from whatever fit the last width - often nothing. Measure the logical text instead.
+        metrics = self.fontMetrics()
+        return QSize(
+            metrics.horizontalAdvance(self.text()) + 2,
+            max(metrics.height(), super().sizeHint().height()),
+        )
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, super().minimumSizeHint().height())
+
+
+class _InstanceCard(QFrame):
+    """One compact instance row: 使用 is its primary action, 管理 opens the detail page.
+
+    Height is the point of this widget: the old card stacked a name row, a metadata row, a counts row
+    and a button row inside 156px of mostly empty space. The row keeps the same facts in two lines -
+    icon, name, metadata (version · loader · counts) - and moves the two buttons to the right edge,
+    vertically centred. One row is 88px, so a normal-height window shows five or six instances instead
+    of two.
+
+    The row itself is a keyboard stop, not just its buttons: Tab lands on the row (the whole row paints
+    the focus ring), then 使用, then 管理; Enter/Space on the row opens the detail page. The instance
+    the launcher is set to run carries the same 3px accent bar and pale accent wash the detail sidebar
+    uses (one selection language across the app), and a double-click on the row body still uses it.
     """
 
     use_requested = Signal(str)
@@ -289,13 +329,14 @@ class _InstanceCard(QFrame):
         super().__init__(parent)
         self.instance_id = instance.id
         self.setObjectName("instanceCard")
-        # A QFrame only paints a QSS background when it is told to; the card's white fill depends on it.
+        # A QFrame only paints a QSS background when it is told to; the row's list fill depends on it.
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        # The card is a surface, not a control: the two real buttons are the keyboard stops.
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # The row is one keyboard stop of its own; the two buttons stay the two actions.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(CARD_HEIGHT)
         # The "current" marker is the detail sidebar's 3px accent bar plus its pale accent wash,
-        # painted by the stylesheet through this property; keeping it a property means the card can
+        # painted by the stylesheet through this property; keeping it a property means the row can
         # be re-marked without rebuilding the widget.
         self.setProperty("current", bool(current))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -307,83 +348,105 @@ class _InstanceCard(QFrame):
         self.setAccessibleDescription(accessible)
         self.setToolTip(f"{instance.name}\n{description}")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(14)
 
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(12)
-        # Parented at creation: a parentless widget is a top-level window, and the card's parts are
+        # Parented at creation: a parentless widget is a top-level window, and the row's parts are
         # built while the grid is already on screen (every refresh rebuilds them).
         icon = QLabel(self)
         icon.setObjectName("instanceCardIcon")
-        icon.setFixedSize(40, 40)
+        icon.setFixedSize(CARD_ICON_SIZE, CARD_ICON_SIZE)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setPixmap(icon_pixmap)
         icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.icon_label = icon
-        # The card's text is painted by child labels, not controls. ElidedLabel enables text
-        # selection, which also gives it ClickFocus - so each name/meta line entered the focus chain
-        # as a focus stop with no :focus rule (the keyboard walkthrough flagged it). Mouse events
-        # already pass through to the card, so selecting this text was unreachable anyway. Turn focus
-        # off on exactly these two card labels; keep the class default for the detail page's
-        # path/ID labels, which stay selectable.
-        name = ElidedLabel(instance.name)
+        layout.addWidget(icon, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # The two text lines. The column is transparent to the mouse so a double-click anywhere on the
+        # text still reaches the row; the labels themselves are not focus stops (ElidedLabel enables
+        # text selection, which would add a ClickFocus stop with no focus rule - the keyboard
+        # walkthrough used to flag exactly that). The row's own focus ring is the cue.
+        text = QWidget(self)
+        text.setObjectName("instanceCardText")
+        text.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.text_column = text
+        text_layout = QVBoxLayout(text)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
+
+        name = _RowLabel(instance.name, elide_mode=Qt.TextElideMode.ElideRight)
         name.setObjectName("instanceCardName")
+        name.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         name.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        # Named attributes: the two text lines are what the card says, and the tests (plus any later
-        # card variant) read them instead of walking the layout.
+        # Named attributes: the two text lines are what the row says, and the tests (plus any later
+        # row variant) read them instead of walking the layout.
         self.name_label = name
-        top.addWidget(icon)
-        top.addWidget(name, 1)
-        layout.addLayout(top)
+        text_layout.addWidget(name)
 
-        meta_label = ElidedLabel(meta)
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(6)
+        meta_label = _RowLabel(meta, elide_mode=Qt.TextElideMode.ElideRight)
         meta_label.setObjectName("instanceCardMeta")
+        meta_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         meta_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        meta_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.meta_label = meta_label
-        layout.addWidget(meta_label)
-        layout.addStretch(1)
-
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.setSpacing(8)
-        counts_label = QLabel(counts, self)
+        # The counts used to sit on their own footer row. They now close the metadata line, separated
+        # from the version by the same middle dot, so the row loses the card's third line. The tail
+        # keeps its natural width; the version label is the only part that may shrink (and elide).
+        self.meta_separator = QLabel("·", text)
+        self.meta_separator.setObjectName("instanceCardMetaSep")
+        self.meta_separator.setVisible(bool(counts))
+        meta_row.addWidget(meta_label, 0)
+        meta_row.addWidget(self.meta_separator, 0)
+        counts_label = QLabel(counts, text)
         counts_label.setObjectName("instanceCardCounts")
         counts_label.setWordWrap(False)
         # Parented above: a parentless label that is told to be visible is a top-level window for an
         # instant, and showing it takes the window activation away from the page the user is on.
         counts_label.setVisible(bool(counts))
         self.counts_label = counts_label
-        counts_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        meta_row.addWidget(counts_label, 0)
+        meta_row.addStretch(1)
+        text_layout.addLayout(meta_row)
+        layout.addWidget(text, 1, Qt.AlignmentFlag.AlignVCenter)
+
         # The primary action. It keeps the button base rule (accent fill, white text), so it reads as
-        # "the" action on the card without a second colour vocabulary.
+        # "the" action on the row without a second colour vocabulary.
         self.use_button = QPushButton(tr("instances.card.use"), self)
         self.use_button.setObjectName("instanceCardUse")
-        self.use_button.setAccessibleName(
-            tr("instances.card.use") + " " + instance.name
-        )
+        self.use_button.setAccessibleName(tr("instances.card.use") + " " + instance.name)
         self.use_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.use_button.setFixedHeight(28)
+        self.use_button.setFixedHeight(30)
+        self.use_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.use_button.clicked.connect(lambda: self.use_requested.emit(self.instance_id))
         # The secondary sibling: the same quiet outline the card used to draw for 管理.
         self.manage_button = QPushButton(tr("instances.card.manage"), self)
         self.manage_button.setObjectName("instanceCardManage")
         self.manage_button.setAccessibleName(tr("instances.card.open", instance.name))
         self.manage_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.manage_button.setFixedHeight(28)
+        self.manage_button.setFixedHeight(30)
+        self.manage_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.manage_button.clicked.connect(lambda: self.manage_requested.emit(self.instance_id))
-        bottom.addWidget(counts_label)
-        bottom.addStretch(1)
-        bottom.addWidget(self.use_button)
-        bottom.addWidget(self.manage_button)
-        layout.addLayout(bottom)
+        layout.addWidget(self.use_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.manage_button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    def keyPressEvent(self, event) -> None:
+        """Enter/Space on the focused row opens the detail page, like 管理 does."""
+        if event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Space,
+        ):
+            self.manage_requested.emit(self.instance_id)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
-        """Double-clicking the card body uses the instance (the buttons keep their own clicks)."""
+        """Double-clicking the row body uses the instance (the buttons keep their own clicks)."""
         if event.button() == Qt.MouseButton.LeftButton:
             self.use_requested.emit(self.instance_id)
             event.accept()
@@ -392,7 +455,7 @@ class _InstanceCard(QFrame):
 
 
 class _GroupSection(QWidget):
-    """One group: a 15/600 heading plus its cards, one per row, each spanning the pane.
+    """One group: a 15/600 heading plus its instance rows, each spanning the pane.
 
     The heading is the same ``sectionTitle`` label the rest of the app uses for a 15px/600 block
     title, so the group headers do not invent a second type scale. A flat (search) section passes an
@@ -429,13 +492,13 @@ class _GroupSection(QWidget):
         self.cards.append(card)
 
     def reflow(self, width: int) -> None:
-        """Place every card in the one column; the layout supplies the width, not the card.
+        """Place every row in the one column; the layout supplies the width, not the row.
 
         The width used to be written into the card with ``setFixedSize``. That fixed width became the
         content widget's minimum width, so a pane laid out once at 1386px could never shrink back to
         its 1224px viewport: the scroll area kept the wider widget and, because the horizontal
-        scrollbar is off, cut the right edge off the row. An expanding card in a stretched one-column
-        grid follows the pane in both directions; only the height stays fixed.
+        scrollbar is off, cut the right edge off the row. An expanding row in a stretched one-column
+        grid follows the pane in both directions; only the height stays fixed at :data:`CARD_HEIGHT`.
         """
         for card in self.cards:
             if card.height() != CARD_HEIGHT:
@@ -643,10 +706,10 @@ class InstancesPage(QWidget):
         self.content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.content_scroll.setWidget(self.groups_view)
-        # The card buttons are the keyboard stops; a second stop around the whole grid would announce
-        # the same content twice (the old IconMode grid had the same rule).
+        # The rows and their two buttons are the keyboard stops; a second stop around the whole list
+        # would announce the same content twice (the old IconMode grid had the same rule).
         self.content_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        # The pane's floor: two cards at the width the grid draws them. Declared here, not on show, so
+        # The pane's floor: one row at the width the list draws it. Declared here, not on show, so
         # the page's own minimum width is part of the window's floor from the moment it is built
         # (tools/measure_min_width.py reads the window's requirement, and a floor that only appears
         # while the page is visible would let the window shrink under it again).
@@ -993,7 +1056,7 @@ class InstancesPage(QWidget):
             self.show_list()
 
     def _build_cards(self, ordered, cfg, game_dir: Path, current_id: str, needle: str) -> int:
-        """Draw the cards - grouped by type, or flat while searching - and return how many showed."""
+        """Draw the rows - grouped by type, or flat while searching - and return how many showed."""
         self.groups_view.clear(self._retired_groups)
         self.result_count.setVisible(bool(needle))
         grouped: dict[str, list[_InstanceCard]] = {key: [] for key in GROUP_ORDER}
@@ -1067,6 +1130,7 @@ class InstancesPage(QWidget):
         minimum-width floor while the user is typing on the page they are actually looking at.
         """
         self._relayout_cards()
+        self._apply_tab_order()
         if not self.isVisible():
             return
         for section in self.groups_view.sections():
@@ -1101,13 +1165,13 @@ class InstancesPage(QWidget):
         The whole read order lives in :func:`gui.block_icons.instance_icon_pixmap`: the instance's
         ``icon`` field first (a rule name, or ``custom:<file>`` inside its folder), the automatic
         rule when it is empty or the picture cannot be read. A custom picture is shown as the
-        picture (rounded at 40px), never through the isometric cube. The icon is rendered at 40px,
-        the slot's own size, so the pixmap is shown 1:1.
+        picture (rounded at :data:`CARD_ICON_SIZE`), never through the isometric cube. The icon is
+        rendered at the slot's own size, so the pixmap is shown 1:1.
         """
         return block_icons.instance_icon_pixmap(
             inst,
             instance_dir(game_dir, inst.id),
-            40,
+            CARD_ICON_SIZE,
             game_dir=game_dir,
             cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
         )
@@ -1118,6 +1182,23 @@ class InstancesPage(QWidget):
         if width <= 0:
             width = self.width()
         self.groups_view.reflow(width)
+
+    def _apply_tab_order(self) -> None:
+        """Make Tab walk the rows in the order they are painted: row, 使用, 管理, next row.
+
+        The widgets are created in *sort* order and only then grouped, so their creation order (which
+        Qt's default focus chain follows) is not the visual order: from the first release row, Tab
+        could jump into the loader group before the second release row. Stating the order explicitly
+        after every rebuild keeps the keyboard path identical to the eye's path, including after a
+        search flattens the groups into one section.
+        """
+        previous = None
+        for card in self.groups_view.cards():
+            if previous is not None:
+                QWidget.setTabOrder(previous, card)
+            QWidget.setTabOrder(card, card.use_button)
+            QWidget.setTabOrder(card.use_button, card.manage_button)
+            previous = card.manage_button
 
     def _sort_key(self, inst):
         # Starred instances come first, then the chosen order

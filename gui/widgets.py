@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -848,6 +849,7 @@ class KeyboardFocusTracker(QObject):
         QAbstractScrollArea,  # scroll areas carry a keyboard-only ring of their own
         QAbstractSpinBox,
         QComboBox,
+        QFrame,  # the instance rows are focusable surfaces; their whole-row ring lives in style.qss
         QLineEdit,
         QPlainTextEdit,
         QTabWidget,  # the resource tabs: the widget is the stop, its tab bar draws the tabs
