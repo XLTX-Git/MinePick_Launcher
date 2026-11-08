@@ -32,6 +32,8 @@ source off for the rest of the process, so one bad key cannot cause a request pe
 from __future__ import annotations
 
 import os
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +56,14 @@ KEY_STATUS_REJECTED = "rejected"
 #: Set for the rest of the process once the service answers 401/403. The resources page hides the
 #: source from then on, so a rejected key cannot cause one request per click.
 _key_rejected = False
+#: Requests in flight at once. The resources page issues one source at a time; the bound exists so
+#: a parallel caller cannot open the shared pool's 32 connections by itself (HMCL uses 16 too).
+MAX_CONCURRENT_REQUESTS = 16
+#: Total attempts per request, including the first (HMCL's retry(3)).
+MAX_ATTEMPTS = 3
+#: Wait before the second attempt; doubled for the third. Tests set it to 0 to stay fast.
+RETRY_DELAY_SECONDS = 0.5
+_request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
 GAME_ID = 432  # Minecraft
 # classId: mod 6 / resourcepack 12 / shaderpack 6552 / modpack 4471
 CLASS_IDS = {"mod": 6, "resourcepack": 12, "shaderpack": 6552, "modpack": 4471}
@@ -171,6 +181,41 @@ def _check(resp: httpx.Response, message: str) -> dict:
     return resp.json()
 
 
+def _retryable_status(status: int) -> bool:
+    """Transient server failures are retryable; 4xx answers will not change on a second try."""
+    return 500 <= status < 600
+
+
+def _retry_delay(attempt: int) -> float:
+    """Backoff before the next attempt (0.5 s after the first failure, 1 s after the second)."""
+    return RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+
+
+def _get(
+    client: httpx.Client, url: str, *, params: dict[str, str] | None = None
+) -> httpx.Response:
+    """GET with one concurrency slot and at most :data:`MAX_ATTEMPTS` attempts.
+
+    Only transient failures are retried - a 5xx, a timeout or a connection error. A 403/404 is
+    returned immediately: the caller's ``_check`` turns the former into the key message and marks
+    the source unusable, and repeating either request would only repeat the same answer.
+    """
+    with _request_slots:
+        attempt = 1
+        while True:
+            try:
+                resp = client.get(url, params=params)
+            except httpx.TransportError:
+                if attempt >= MAX_ATTEMPTS:
+                    raise
+            else:
+                if not _retryable_status(resp.status_code) or attempt >= MAX_ATTEMPTS:
+                    return resp
+                resp.close()
+            time.sleep(_retry_delay(attempt))
+            attempt += 1
+
+
 def search_projects(
     query: str,
     *,
@@ -207,7 +252,7 @@ def search_projects(
     if loader and kind == "mod":
         params["modLoaderType"] = str(LOADER_IDS.get(loader, 0))
     try:
-        resp = client.get(CURSEFORGE_API + "/v1/mods/search", params=params)
+        resp = _get(client, CURSEFORGE_API + "/v1/mods/search", params=params)
         payload = _check(resp, tr_core("mods.search_failed"))
     except httpx.HTTPError as exc:
         raise ModsError(tr_core("mods.search_failed", describe_network_error(exc))) from exc
@@ -261,7 +306,9 @@ def list_files(
     if loader:
         params["modLoaderType"] = str(LOADER_IDS.get(loader, 0))
     try:
-        resp = client.get(CURSEFORGE_API + "/v1/mods/" + str(mod_id) + "/files", params=params)
+        resp = _get(
+            client, CURSEFORGE_API + "/v1/mods/" + str(mod_id) + "/files", params=params
+        )
         payload = _check(resp, tr_core("mods.versions_failed"))
     except httpx.HTTPError as exc:
         raise ModsError(tr_core("mods.versions_failed", describe_network_error(exc))) from exc
@@ -293,25 +340,53 @@ def download_file(
     *,
     client: httpx.Client | None = None,
 ) -> Path:
-    """Download the file into the target directory; return the on-disk path."""
+    """Download the file into the target directory; return the on-disk path.
+
+    Retried like the metadata requests: a 5xx, timeout or connection error restarts the transfer
+    (the ``.part`` file is truncated first), while a 403/404 fails at once. The request holds one
+    concurrency slot for the whole transfer, so a bulk download cannot starve the metadata calls.
+    """
     own = client is None
     if own:
         client = _client()
     target_dir.mkdir(parents=True, exist_ok=True)
     name = cf_file.name or str(cf_file.id) + ".jar"
     target = target_dir / name
+    tmp = target.with_name(target.name + ".part")
     try:
-        with client.stream("GET", cf_file.url, follow_redirects=True) as resp:
-            resp.raise_for_status()
-            tmp = target.with_name(target.name + ".part")
-            with tmp.open("wb") as f:
-                for chunk in resp.iter_bytes(1 << 18):
-                    f.write(chunk)
-            tmp.replace(target)
-    except httpx.HTTPError as exc:
-        raise ModsError(tr_core("mods.download_failed", describe_network_error(exc))) from exc
+        attempt = 1
+        while True:
+            try:
+                with _request_slots, client.stream(
+                    "GET", cf_file.url, follow_redirects=True
+                ) as resp:
+                    resp.raise_for_status()
+                    with tmp.open("wb") as f:
+                        for chunk in resp.iter_bytes(1 << 18):
+                            f.write(chunk)
+                tmp.replace(target)
+                return target
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status in (401, 403):
+                    _mark_key_rejected()
+                    raise ModsError(tr_core("mods.cf_key_invalid")) from exc
+                if not _retryable_status(status) or attempt >= MAX_ATTEMPTS:
+                    raise ModsError(
+                        tr_core("mods.download_failed", describe_network_error(exc))
+                    ) from exc
+            except httpx.TransportError as exc:
+                if attempt >= MAX_ATTEMPTS:
+                    raise ModsError(
+                        tr_core("mods.download_failed", describe_network_error(exc))
+                    ) from exc
+            except httpx.HTTPError as exc:
+                raise ModsError(
+                    tr_core("mods.download_failed", describe_network_error(exc))
+                ) from exc
+            time.sleep(_retry_delay(attempt))
+            attempt += 1
     finally:
         if own:
             client.close()
-    return target
 

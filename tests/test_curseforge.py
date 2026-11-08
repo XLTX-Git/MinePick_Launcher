@@ -238,3 +238,99 @@ def test_403_latches_the_source_off_for_the_rest_of_the_session(monkeypatch) -> 
         cf.search_projects("x")
     assert len(calls) == 1  # the one 403 request; the latch stopped the next call
 
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_client_errors_are_not_retried(monkeypatch, status: int) -> None:
+    """403 (key) and 404 (missing project) will answer the same way on a second attempt."""
+    monkeypatch.setattr(cf, "RETRY_DELAY_SECONDS", 0.0)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ModsError):
+        cf.search_projects("x", client=client)
+    assert len(calls) == 1
+
+
+def test_5xx_is_retried_at_most_three_times(monkeypatch) -> None:
+    monkeypatch.setattr(cf, "RETRY_DELAY_SECONDS", 0.0)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(503, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ModsError) as excinfo:
+        cf.search_projects("x", client=client)
+    assert len(calls) == cf.MAX_ATTEMPTS == 3
+    assert "503" in str(excinfo.value)
+
+
+def test_5xx_that_recovers_stops_after_the_second_attempt(monkeypatch) -> None:
+    monkeypatch.setattr(cf, "RETRY_DELAY_SECONDS", 0.0)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(500, json={})
+        return httpx.Response(200, json={"data": []})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert len(cf.search_projects("x", client=client)) == 0
+    assert len(calls) == 2
+
+
+def test_connection_errors_are_retried_then_reported(monkeypatch) -> None:
+    monkeypatch.setattr(cf, "RETRY_DELAY_SECONDS", 0.0)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise httpx.ConnectError("refused", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ModsError):
+        cf.search_projects("x", client=client)
+    assert len(calls) == 3
+
+
+def test_every_request_takes_a_concurrency_slot(monkeypatch) -> None:
+    """The bound is what keeps a burst from opening the shared pool by itself."""
+    assert cf.MAX_CONCURRENT_REQUESTS == 16
+    entered = []
+
+    class _Slot:
+        def __enter__(self) -> None:
+            entered.append(1)
+
+        def __exit__(self, *_exc) -> None:
+            return None
+
+    monkeypatch.setattr(cf, "_request_slots", _Slot())
+    monkeypatch.setattr(cf, "RETRY_DELAY_SECONDS", 0.0)
+    client = _client({"data": []})
+    cf.search_projects("x", client=client)
+    assert entered == [1]
+
+
+def test_download_retries_a_5xx_then_writes_the_file(monkeypatch, ws_tmp) -> None:
+    monkeypatch.setattr(cf, "RETRY_DELAY_SECONDS", 0.0)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, content=b"jar-bytes")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cf_file = cf.CfFile(id=7, name="a.jar", url="https://x/a.jar", size=9)
+    path = cf.download_file(cf_file, ws_tmp, client=client)
+    assert path.read_bytes() == b"jar-bytes"
+    assert len(calls) == 2
+
