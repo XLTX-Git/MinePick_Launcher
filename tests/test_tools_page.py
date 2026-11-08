@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -425,10 +426,22 @@ def test_download_failure_stays_in_the_row_with_a_retry(app) -> None:
         _close(app, page)
 
 
-# ------------------------------------------------------------------ self-check card
+# ------------------------------------------------------------------ network check line
 
 
-def test_self_check_card_shows_component_process_and_udp(app) -> None:
+def test_the_page_has_no_self_check_column(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        assert not hasattr(page, "self_check_card")
+        assert page.self_check_button.text() == i18n.tr("tools.net.title")
+        assert page.self_check_button.toolTip() == i18n.tr("tools.net.note")
+        assert page.self_check_button.isVisibleTo(page)
+        assert page.self_check_line.isHidden()
+    finally:
+        _close(app, page)
+
+
+def test_network_check_line_shows_the_cone_verdict(app) -> None:
     report = SelfCheckReport(
         component=ComponentStatus(downloaded=True, version="0.4.2", supported=True),
         process=ProcessStatus(running=True, port=25566),
@@ -436,28 +449,20 @@ def test_self_check_card_shows_component_process_and_udp(app) -> None:
     )
     session = _DiagnosticSession(report, state=LinkState.IDLE)
     page = _show(app, session)
+    labels = i18n.tr("tools.net.verdicts").splitlines()
     try:
         page.self_check_button.click()
-        assert _pump(app, lambda: page._last_self_check is not None)
-        assert session.checks == 1
-        assert page.self_check_component.text() == i18n.tr(
-            "tools.net.component.ready", "0.4.2"
-        )
-        assert page.self_check_process.text() == i18n.tr(
-            "tools.net.process.running", 25566
-        )
-        assert page.self_check_lan.text() == i18n.tr("tools.net.lan.auto")
-        assert page.self_check_udp.text() == i18n.tr("tools.net.verdicts").splitlines()[1]
+        assert _pump(app, lambda: session.checks == 1 and not page._checking)
+        assert page.self_check_line.isVisibleTo(page)
+        assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", labels[1])
+        assert page.self_check_button.text() == i18n.tr("tools.net.refresh")
+        assert page.self_check_button.isEnabled()
     finally:
         _close(app, page)
 
 
-def test_self_check_verdicts_cover_every_probe_result(app) -> None:
-    report = SelfCheckReport(
-        component=ComponentStatus(downloaded=False),
-        process=ProcessStatus(running=False),
-    )
-    page = _show(app, _DiagnosticSession(report, state=LinkState.IDLE))
+def test_network_check_verdicts_cover_every_probe_result(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
     labels = i18n.tr("tools.net.verdicts").splitlines()
     try:
         for verdict, expected in zip(
@@ -466,23 +471,50 @@ def test_self_check_verdicts_cover_every_probe_result(app) -> None:
             labels,
             strict=True,
         ):
-            page._on_self_check_ready(SelfCheckReport(stun=verdict))
-            assert page.self_check_udp.text() == expected
-        assert page.self_check_component.text() == i18n.tr("tools.net.component.missing")
-        assert page.self_check_process.text() == i18n.tr("tools.net.process.stopped")
+            page._on_self_check_ready(SelfCheckReport(stun=verdict), page.session())
+            assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", expected)
     finally:
         _close(app, page)
 
 
-def test_self_check_without_a_backend_reports_a_failed_check(app) -> None:
+def test_network_check_without_a_backend_reports_a_failed_check(app) -> None:
     page = _show(app, FakeLinkSession(state=LinkState.IDLE))
     labels = i18n.tr("tools.net.verdicts").splitlines()
     try:
         page.self_check_button.click()
         app.processEvents()
-        assert page.self_check_udp.text() == labels[-1]
+        assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", labels[-1])
         assert page.self_check_button.isEnabled()
     finally:
+        _close(app, page)
+
+
+def test_network_check_disables_the_button_while_the_probe_runs(app) -> None:
+    gate = threading.Event()
+
+    class _BlockingSession(_DiagnosticSession):
+        def self_check(self) -> SelfCheckReport:
+            gate.wait(2)
+            return self.report
+
+    session = _BlockingSession(
+        SelfCheckReport(stun=StunVerdict.CONE), state=LinkState.IDLE
+    )
+    page = _show(app, session)
+    labels = i18n.tr("tools.net.verdicts").splitlines()
+    try:
+        page.self_check_button.click()
+        app.processEvents()
+        assert not page.self_check_button.isEnabled()
+        assert page.self_check_button.text() == i18n.tr("tools.net.refresh")
+        assert page.self_check_line.text() == i18n.tr(
+            "tools.net.udp.line", i18n.tr("tools.net.checking")
+        )
+        gate.set()
+        assert _pump(app, lambda: page.self_check_button.isEnabled())
+        assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", labels[1])
+    finally:
+        gate.set()
         _close(app, page)
 
 
@@ -606,17 +638,21 @@ def test_open_multiplayer_is_wired_to_the_window(app, monkeypatch, ws_tmp) -> No
 
 
 
-def test_tools_is_the_ninth_nav_entry_between_mods_and_settings(app, monkeypatch, ws_tmp) -> None:
+def test_tools_is_the_nav_entry_after_the_three_collection_pages(app, monkeypatch, ws_tmp) -> None:
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data"))
     monkeypatch.setenv("MINECRAFT_GAME_DIR", str(ws_tmp / "game"))
     (ws_tmp / "game").mkdir()
     from gui import nav_icons
     from gui.main_window import NAV_KEYS, MainWindow
 
-    assert len(NAV_KEYS) == 9
-    assert NAV_KEYS[5] == "mods"
-    assert NAV_KEYS[6] == "tools"
-    assert NAV_KEYS[7] == "settings"
+    assert NAV_KEYS.index("mods") == 5
+    assert NAV_KEYS[NAV_KEYS.index("mods") + 1 : NAV_KEYS.index("mods") + 4] == [
+        "screenshots",
+        "servers",
+        "favorites",
+    ]
+    assert NAV_KEYS.index("tools") == NAV_KEYS.index("mods") + 4
+    assert NAV_KEYS.index("settings") == NAV_KEYS.index("tools") + 1
     assert nav_icons.ICON_FILES["tools"] == "wrench"
 
     window = MainWindow()
@@ -626,8 +662,8 @@ def test_tools_is_the_ninth_nav_entry_between_mods_and_settings(app, monkeypatch
     for _ in range(4):
         app.processEvents()
     try:
-        assert window.sidebar.count() == 9
-        assert window.sidebar.item(6).text() == i18n.tr("nav.tools")
+        assert window.sidebar.count() == len(NAV_KEYS)
+        assert window.sidebar.item(NAV_KEYS.index("tools")).text() == i18n.tr("nav.tools")
         window.sidebar.setCurrentRow(NAV_KEYS.index("tools"))
         app.processEvents()
         assert window.stack.currentWidget() is window.pages["tools"]
@@ -654,7 +690,7 @@ def test_language_switch_rebuilds_the_tools_entry_and_page(app, monkeypatch, ws_
         i18n.set_language("en_us")
         window.build_pages()
         app.processEvents()
-        assert window.sidebar.count() == 9
+        assert window.sidebar.count() == len(NAV_KEYS)
         assert window.sidebar.item(NAV_KEYS.index("tools")).text() == "Tools"
         window.sidebar.setCurrentRow(NAV_KEYS.index("tools"))
         app.processEvents()

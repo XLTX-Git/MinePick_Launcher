@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
 from collections.abc import Callable, Iterable
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
@@ -40,7 +39,6 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -62,13 +60,11 @@ from gui.widgets import (
 )
 from gui.workers import run_in_background
 from launcher.link import (
-    ComponentStatus,
     LinkDifficulty,
     LinkDownloadProgress,
     LinkMember,
     LinkSession,
     LinkState,
-    ProcessStatus,
     SelfCheckReport,
     StunVerdict,
     default_link_session,
@@ -373,7 +369,6 @@ class _MemberAvatar(QWidget):
             client.close()
 
 
-
 class ToolsPage(QWidget):
     """工具 › 联机: the page depends only on the :class:`LinkSession` interface."""
 
@@ -382,8 +377,6 @@ class ToolsPage(QWidget):
     session_changed = Signal()
     #: The progress callback is itself a signal so a real downloader may report from a worker.
     download_progress = Signal(object)
-    #: The self-check worker's report, delivered from its thread as a queued signal.
-    self_check_ready = Signal(object)
     #: Reserved for the next change: opening multiplayer needs a real launch path.
     open_multiplayer_requested = Signal(str)
 
@@ -404,15 +397,12 @@ class ToolsPage(QWidget):
         self._disposed = False
         self._downloading = False
         self._download_failure = ""
-        self._stun_verdict = StunVerdict.UNKNOWN
-        self._self_check_thread: threading.Thread | None = None
-        self._last_self_check: SelfCheckReport | None = None
+        self._checking = False
         self._selected_channel = ""
 
         self._build_ui()
         self.session_changed.connect(self._sync)
         self.download_progress.connect(self._on_download_progress)
-        self.self_check_ready.connect(self._on_self_check_ready)
         # A bound method of the page itself is not called for its own `destroyed` signal: Qt has
         # already severed the object's connections by then (measured with PySide6 6.11). The lambda
         # is a plain callable, so it still runs and can stop the poller before the C++ object goes.
@@ -449,7 +439,7 @@ class ToolsPage(QWidget):
         tab_layout.setContentsMargins(0, 4, 0, 0)
         tab_layout.setSpacing(8)
 
-        tab_layout.addWidget(self._build_banner())
+        tab_layout.addWidget(self._build_banner_block())
         self.state_stack = QStackedWidget()
 
         self._pages[LinkState.NOT_DOWNLOADED] = self._build_onboarding_page()
@@ -462,23 +452,27 @@ class ToolsPage(QWidget):
         for page in (*self._pages.values(), self._failed_page):
             self.state_stack.addWidget(page)
 
-        # The self-check card is the narrow second column: 226px keeps the tools page at 820px,
-        # under the 1000px window floor. A full-width stacked card cannot fit the 558px content
-        # height of the reviewed 610px window: the IDLE page alone is 339px, so the four rows would
-        # squeeze the "creating a room" steps (measured: page min 623px, host steps clipped).
-        content = QHBoxLayout()
-        content.setContentsMargins(0, 0, 0, 0)
-        content.setSpacing(8)
-        content.addWidget(self.state_stack, 1)
-        self.self_check_card = self._build_self_check_card()
-        self.self_check_card.setFixedWidth(226)
-        content.addWidget(self.self_check_card, 0, Qt.AlignmentFlag.AlignTop)
-        tab_layout.addLayout(content, 1)
+        # The content column is the full tab width again: the network check moved into the
+        # in-window dialog opened from the banner, so no diagnostic panel competes with the cards.
+        tab_layout.addWidget(self.state_stack, 1)
 
         self.tabs.addTab(tab_page, tr("tools.tab.link"))
         card_layout.addWidget(self.tabs, 1)
         card_layout.addWidget(self._build_footer())
         outer.addWidget(card, 1)
+
+    def _build_banner_block(self) -> QWidget:
+        block = QWidget()
+        layout = QVBoxLayout(block)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(self._build_banner())
+        self.self_check_line = QLabel()
+        self.self_check_line.setObjectName("hint")
+        self.self_check_line.setContentsMargins(36, 0, 0, 0)
+        self.self_check_line.hide()
+        layout.addWidget(self.self_check_line)
+        return block
 
     def _build_banner(self) -> QFrame:
         banner = QFrame()
@@ -491,7 +485,46 @@ class ToolsPage(QWidget):
         text.setObjectName("toolsBannerText")
         text.setWordWrap(True)
         layout.addWidget(text, 1)
+        self.self_check_button = QPushButton(tr("tools.net.title"))
+        self.self_check_button.setObjectName("secondaryButton")
+        self.self_check_button.setFixedHeight(26)
+        self.self_check_button.setAccessibleName(tr("tools.net.title"))
+        self.self_check_button.setToolTip(tr("tools.net.note"))
+        self.self_check_button.clicked.connect(self._run_self_check)
+        layout.addWidget(self.self_check_button, 0, Qt.AlignmentFlag.AlignVCenter)
         return banner
+
+    def _run_self_check(self) -> None:
+        """Probe the UDP path and put its single-line verdict under the banner."""
+        if self._checking:
+            return
+        runner = getattr(self._session, "self_check", None)
+        if not callable(runner):
+            self._on_self_check_ready(None, self._session)
+            return
+        self._checking = True
+        session = self._session
+        self.self_check_button.setEnabled(False)
+        self.self_check_button.setText(tr("tools.net.refresh"))
+        self._show_self_check_line(tr("tools.net.checking"))
+        run_in_background(
+            runner,
+            on_result=lambda report: self._on_self_check_ready(report, session),
+            on_error=lambda _message: self._on_self_check_ready(None, session),
+        )
+
+    def _show_self_check_line(self, verdict: str) -> None:
+        self.self_check_line.setText(tr("tools.net.udp.line", verdict))
+        self.self_check_line.show()
+
+    def _on_self_check_ready(self, report, session) -> None:
+        if session is not self._session or not widget_alive(self):
+            return
+        self._checking = False
+        self.self_check_button.setEnabled(True)
+        self.self_check_button.setText(tr("tools.net.refresh"))
+        verdict = report.stun if isinstance(report, SelfCheckReport) else StunVerdict.ERROR
+        self._show_self_check_line(_verdict_text(verdict))
 
     def _build_footer(self) -> QFrame:
         footer = QFrame()
@@ -507,64 +540,6 @@ class ToolsPage(QWidget):
         layout.addStretch(1)
         layout.addWidget(disable)
         return footer
-
-    def _build_self_check_card(self) -> QFrame:
-        """The 网络自检 card: component, process, LAN world and the UDP hole-punch verdict.
-
-        Rows 1-2 and 3 are refreshed from the session on every state change; row 4 is only probed
-        when the user asks, because the probe sends two UDP datagrams to public STUN servers.
-        """
-        card = QFrame()
-        card.setObjectName("toolsInnerCard")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(4)
-
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
-        title = QLabel(tr("tools.net.title"))
-        title.setObjectName("sectionTitle")
-        self.self_check_button = QPushButton(tr("tools.net.refresh"))
-        self.self_check_button.setObjectName("secondaryButton")
-        self.self_check_button.setFixedHeight(28)
-        self.self_check_button.clicked.connect(self._run_self_check)
-        header.addWidget(title)
-        header.addStretch(1)
-        header.addWidget(self.self_check_button)
-        layout.addLayout(header)
-
-        labels = _lines("tools.net.labels")
-        # The card is a narrow column (226px) so each of the four facts is a label above its
-        # value. A two-column row would leave the value ~70px wide and break "端口" mid-word;
-        # stacked, every value gets the full card width. The card is still four facts, and it is
-        # shorter than the 339px state column, so it does not change the page height.
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(0)
-        grid.setVerticalSpacing(2)
-        self.self_check_values: list[QLabel] = []
-        for row, text in enumerate((labels + ["", "", "", ""])[:4]):
-            label = QLabel(text)
-            label.setObjectName("hint")
-            value = QLabel("\u2014")
-            value.setWordWrap(True)
-            grid.addWidget(label, row * 2, 0)
-            grid.addWidget(value, row * 2 + 1, 0)
-            self.self_check_values.append(value)
-        grid.setColumnStretch(0, 1)
-        layout.addLayout(grid)
-        self.self_check_component = self.self_check_values[0]
-        self.self_check_process = self.self_check_values[1]
-        self.self_check_lan = self.self_check_values[2]
-        self.self_check_udp = self.self_check_values[3]
-
-        note = QLabel(tr("tools.net.note"))
-        note.setObjectName("hint")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self._refresh_self_check_rows()
-        return card
 
     @staticmethod
     def _state_page() -> tuple[QWidget, QVBoxLayout]:
@@ -1071,8 +1046,11 @@ class ToolsPage(QWidget):
         self._disposed = False
         self._downloading = False
         self._download_failure = ""
-        self._stun_verdict = StunVerdict.UNKNOWN
-        self._last_self_check = None
+        self._checking = False
+        if hasattr(self, "self_check_line"):
+            self.self_check_line.hide()
+            self.self_check_button.setText(tr("tools.net.title"))
+            self.self_check_button.setEnabled(True)
         self._attach_session(session)
         self._refresh_instances()
         self._sync()
@@ -1115,7 +1093,6 @@ class ToolsPage(QWidget):
             ):
                 self._refresh_instances()
         self._sync_download_row(state)
-        self._refresh_self_check_rows()
         self._refresh_channel_speeds()
         self._update_join_enabled()
         self.create_button.setEnabled(
@@ -1393,89 +1370,6 @@ class ToolsPage(QWidget):
                 label.setText(tr("tools.onboard.channels.unmeasured"))
             else:
                 label.setText(tr("tools.onboard.channels.latency", latency))
-
-    # ------------------------------------------------------------------ network self-check
-    def _run_self_check(self) -> None:
-        if self._self_check_thread is not None and self._self_check_thread.is_alive():
-            return
-        runner = getattr(self._session, "self_check", None)
-        if not callable(runner):
-            self._on_self_check_ready(None)
-            return
-        self.self_check_button.setEnabled(False)
-        self.self_check_udp.setText("\u2026")
-        thread = threading.Thread(
-            target=self._self_check_worker,
-            args=(runner,),
-            name="tools-self-check",
-            daemon=True,
-        )
-        self._self_check_thread = thread
-        thread.start()
-
-    def _self_check_worker(self, runner: Callable[[], SelfCheckReport]) -> None:
-        try:
-            report = runner()
-        except Exception:
-            log.debug("网络自检失败", exc_info=True)
-            report = None
-        if self._disposed:
-            return
-        try:
-            self.self_check_ready.emit(report)
-        except RuntimeError:
-            pass  # page destroyed between the check and the delivery
-
-    def _on_self_check_ready(self, report) -> None:
-        self.self_check_button.setEnabled(True)
-        if not isinstance(report, SelfCheckReport):
-            self._stun_verdict = StunVerdict.ERROR
-            self._refresh_self_check_rows()
-            return
-        self._last_self_check = report
-        self._stun_verdict = report.stun
-        self._apply_component_status(report.component)
-        self._apply_process_status(report.process)
-        self._refresh_self_check_rows()
-
-    def _refresh_self_check_rows(self) -> None:
-        component_getter = getattr(self._session, "component_status", None)
-        if callable(component_getter):
-            try:
-                self._apply_component_status(component_getter())
-            except Exception:
-                log.debug("读取联机组件状态失败", exc_info=True)
-        else:
-            downloaded = self._session.state() is not LinkState.NOT_DOWNLOADED
-            self.self_check_component.setText(
-                tr("tools.net.component.ready", "\u2014")
-                if downloaded
-                else tr("tools.net.component.missing")
-            )
-        process_getter = getattr(self._session, "process_status", None)
-        if callable(process_getter):
-            try:
-                self._apply_process_status(process_getter())
-            except Exception:
-                log.debug("读取联机进程状态失败", exc_info=True)
-        else:
-            self._apply_process_status(ProcessStatus(False, None))
-        self.self_check_lan.setText(tr("tools.net.lan.auto"))
-        self.self_check_udp.setText(_verdict_text(self._stun_verdict))
-
-    def _apply_component_status(self, status: ComponentStatus) -> None:
-        if status.downloaded:
-            self.self_check_component.setText(
-                tr("tools.net.component.ready", status.version or "\u2014")
-            )
-        else:
-            self.self_check_component.setText(tr("tools.net.component.missing"))
-
-    def _apply_process_status(self, status: ProcessStatus) -> None:
-        if status.running and status.port:
-            self.self_check_process.setText(tr("tools.net.process.running", status.port))
-        else:
-            self.self_check_process.setText(tr("tools.net.process.stopped"))
 
     # ------------------------------------------------------------------ lifecycle
     def cancel_running_task(self) -> None:
