@@ -41,11 +41,14 @@ from gui import i18n, nav_icons, theme, window_effects
 tr = i18n.tr
 from gui.pages.about_page import AboutPage
 from gui.pages.downloads_page import DownloadsPage
+from gui.pages.favorites_page import FavoritesPage
 from gui.pages.instances_page import InstancesPage
 from gui.pages.java_page import JavaPage
 from gui.pages.launch_page import LaunchPage
 from gui.pages.login_page import LoginPage
 from gui.pages.mods_page import ResourcesPage
+from gui.pages.screenshots_page import ScreenshotsPage
+from gui.pages.servers_page import ServersPage
 from gui.pages.settings_page import SettingsPage
 from gui.pages.tools_page import ToolsPage
 from gui.pages.versions_tasks import TaskAwareVersionsPage
@@ -60,6 +63,11 @@ NAV_KEYS = [
     "java",
     "account",
     "mods",
+    # 截图 / 服务器 / 收藏夹 sit right after 资源: they are all "the things I collected or joined",
+    # and they stay before 工具 because none of them is a utility the other pages call.
+    "screenshots",
+    "servers",
+    "favorites",
     "tools",
     "settings",
     "about",
@@ -350,6 +358,9 @@ class MainWindow(QMainWindow):
             "java": JavaPage,
             "account": LoginPage,
             "mods": ResourcesPage,
+            "screenshots": ScreenshotsPage,
+            "servers": ServersPage,
+            "favorites": FavoritesPage,
             "tools": ToolsPage,
             "settings": SettingsPage,
             "about": AboutPage,
@@ -586,7 +597,7 @@ class MainWindow(QMainWindow):
 
         Built on demand for the same reason every other page is: it is a whole page of widgets and most
         sessions never open it. It is added straight to the stack - the registry ``pages`` only knows the
-        nine rail destinations - so it does not appear in the rail, in ``len(pages)``, or in any audit
+        rail destinations - so it does not appear in the rail, in ``len(pages)``, or in any audit
         that walks the navigation.
         """
         page = self._downloads

@@ -73,7 +73,7 @@ DEFAULT_WIDTHS = (1000, 1050, 1400, 1800)
 WINDOW_HEIGHT = 915
 DEFAULT_LANGUAGE = "zh_cn"
 DEFAULT_THEME = "light"
-#: The nine top-level pages, then the instance detail view (its own pane, its own tables).
+#: The twelve top-level pages, then the instance detail view (its own pane, its own tables).
 SCREENS = (
     "launch",
     "instances",
@@ -81,6 +81,9 @@ SCREENS = (
     "java",
     "account",
     "mods",
+    "screenshots",
+    "servers",
+    "favorites",
     "tools",
     "settings",
     "about",

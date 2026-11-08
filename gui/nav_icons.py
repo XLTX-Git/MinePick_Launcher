@@ -43,6 +43,12 @@ ICON_FILES: dict[str, str] = {
     "java": "coffee",
     "account": "user",
     "mods": "puzzle",
+    # 截图 / 服务器 / 收藏夹 reuse bundled glyphs rather than shipping three new assets: a grid of
+    # thumbnails (layout-grid), the storage box a saved server list reads as (archive - layers would be
+    # a second 实例 icon in the same rail) and the closest star-like glyph in the set (sparkles).
+    "screenshots": "layout-grid",
+    "servers": "archive",
+    "favorites": "sparkles",
     # 工具 uses the wrench the instance detail sidebar already ships as "modify".
     "tools": "wrench",
     "settings": "settings",
