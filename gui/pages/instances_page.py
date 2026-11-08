@@ -38,7 +38,9 @@ never embed it, and the detail page is shown only after a deliberate drill-down.
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
@@ -62,7 +64,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import block_icons, i18n
+from gui import block_icons, i18n, inwindow_dialog
 from gui.pages.instance_detail import InstanceDetailPage
 from gui.pages.instance_folders import (
     FOLDER_RAIL_GAP,
@@ -71,6 +73,7 @@ from gui.pages.instance_folders import (
     folder_instance_count,
     ordered_folders,
 )
+from gui.tasks import CANCELLED, task_center_of
 from gui.widgets import (
     ElidedLabel,
     EmptyState,
@@ -81,7 +84,7 @@ from gui.widgets import (
     set_app_status,
     style_page_layout,
 )
-from gui.workers import run_in_background
+from gui.workers import ProgressBridge, RateTracker, run_in_background
 from launcher import config, paths
 from launcher.accessibility import TriggerSource
 from launcher.install import list_installed_versions
@@ -777,6 +780,21 @@ class InstancesPage(QWidget):
         self.create_button = QPushButton(tr("instances.create_copy"), self)
         self.import_button = QPushButton(tr("instances.import"), self)
         self.import_button.setObjectName("secondaryButton")
+        # The way in for a pack that was downloaded somewhere else (Modrinth .mrpack / CurseForge /
+        # MultiMC). It sits next to the instance-zip import because both bring outside content into
+        # this page; the button is a secondary action like its sibling, not a new primary one.
+        self.import_pack_button = QPushButton(tr("instances.import_pack"), self)
+        self.import_pack_button.setObjectName("secondaryButton")
+        self.import_pack_button.setToolTip(tr("instances.import_pack.hint"))
+        self.import_pack_button.setAccessibleName(tr("instances.import_pack"))
+        #: The running pack import: its task, progress bridge, stop flag and rate tracker (all None
+        #: between imports). The worker removes a half-created instance itself, so 取消 needs no
+        #: cleanup here.
+        self._import_busy = False
+        self._import_task = None
+        self._import_bridge: ProgressBridge | None = None
+        self._import_stop: threading.Event | None = None
+        self._import_rate: RateTracker | None = None
 
         self.detail_page = InstanceDetailPage(self)
         self.detail = self.detail_page.detail
@@ -828,6 +846,7 @@ class InstancesPage(QWidget):
         actions.addStretch(1)
         actions.addWidget(self.create_button)
         actions.addWidget(self.import_button)
+        actions.addWidget(self.import_pack_button)
         pane.addLayout(actions)
         pane.addWidget(self.result_count)
         pane.addWidget(self.list_stack, 1)
@@ -844,6 +863,7 @@ class InstancesPage(QWidget):
 
         self.create_button.clicked.connect(self._create)
         self.import_button.clicked.connect(self._import)
+        self.import_pack_button.clicked.connect(self._import_modpack)
         self.sort_combo.currentIndexChanged.connect(lambda _i: self.refresh())
         # Debounce: refilter only after 200ms of typing inactivity
         self._search_timer = QTimer(self)
@@ -1551,3 +1571,159 @@ class InstancesPage(QWidget):
 
     def _on_import_finished(self) -> None:
         self.import_button.setEnabled(True)
+
+    # ---------- modpack import (Modrinth .mrpack / CurseForge / MultiMC) ----------
+
+    def _import_modpack(self) -> None:
+        """The 「导入整合包…」 entry: pick a pack, then hand it to :meth:`start_modpack_import`."""
+        path, _filter = QFileDialog.getOpenFileName(
+            self,
+            tr("instances.import_pack.title"),
+            "",
+            tr("instances.import_pack.filter"),
+        )
+        if not path:
+            return
+        self.start_modpack_import(Path(path))
+
+    def start_modpack_import(self, path: Path) -> bool:
+        """Import one modpack and return whether a job was started.
+
+        The import runs where every other download runs - on the shared worker pool and in the
+        window's task list: the task row carries the byte progress, the status line names the phase
+        that is running, and the task's 取消 sets the stop event the worker polls. The worker itself
+        removes the instance it created when the user cancels, so no half-imported instance can be
+        left behind (see ``launcher.modpack.importer``).
+        """
+        if self._import_busy:
+            return False
+        from launcher.modpack import import_modpack
+        from launcher.modpack.naming import strip_version_suffix
+
+        cfg, _ = config.load()
+        game_dir = cfg.game_dir or paths.default_game_dir()
+        pack_path = Path(path)
+        self._import_busy = True
+        self._import_stop = threading.Event()
+        self._import_rate = RateTracker()
+        self._import_bridge = ProgressBridge()
+        self._import_bridge.progress.connect(self._on_modpack_progress)
+        center = task_center_of(self)
+        task_name = strip_version_suffix(pack_path.stem) or pack_path.stem
+        self._import_task = (
+            center.add_task(
+                "tasks.title.modpack",
+                task_name,
+                cancel=self._cancel_modpack_import,
+            )
+            if center is not None
+            else None
+        )
+        self.import_pack_button.setEnabled(False)
+        set_app_status(self, tr("instances.import_pack.working", pack_path.name))
+        run_in_background(
+            partial(
+                import_modpack,
+                pack_path,
+                game_dir=game_dir,
+                cache_dir=paths.launcher_dir() / "cache",
+                runtime_dir=paths.launcher_dir() / "runtime",
+                concurrency=cfg.max_concurrent_downloads,
+                report=self._import_bridge,
+                should_stop=self._import_stop.is_set,
+            ),
+            on_result=self._on_modpack_imported,
+            on_error=self._on_modpack_import_failed,
+            on_finished=self._on_modpack_import_finished,
+        )
+        return True
+
+    def _on_modpack_progress(self, progress) -> None:
+        """One tick from the worker: the task list and the status line read the same phase."""
+        from launcher.modpack.model import PHASE_FILES, PHASE_INSTALL, PHASE_OVERRIDES
+
+        phase = str(getattr(progress, "phase", "") or "")
+        task = self._import_task
+        if task is not None and task.is_running() and phase in (PHASE_INSTALL, PHASE_FILES):
+            rate = 0.0
+            tracker = self._import_rate
+            if tracker is not None and phase == PHASE_FILES:
+                tracker.set_total(int(getattr(progress, "total_bytes", 0) or 0))
+                rate, _eta = tracker.update(int(getattr(progress, "done_bytes", 0) or 0))
+            task.set_progress(
+                int(getattr(progress, "done_bytes", 0) or 0),
+                int(getattr(progress, "total_bytes", 0) or 0),
+                rate,
+            )
+        if phase == PHASE_INSTALL:
+            set_app_status(
+                self, tr("instances.detail.modify.installing", getattr(progress, "current", ""))
+            )
+        elif phase == PHASE_FILES:
+            set_app_status(
+                self,
+                tr(
+                    "instances.detail.modify.downloading",
+                    int(getattr(progress, "done_files", 0) or 0),
+                    int(getattr(progress, "total_files", 0) or 0),
+                    str(getattr(progress, "current", "") or ""),
+                ),
+            )
+        elif phase == PHASE_OVERRIDES:
+            set_app_status(self, tr("instances.import_pack.overrides"))
+
+    def _cancel_modpack_import(self, task) -> None:
+        """The task row's 取消: ask the transfer to stop; the worker does the rollback itself."""
+        from launcher.net import downloader
+
+        if self._import_stop is not None:
+            self._import_stop.set()
+        downloader.cancel_current_downloads()
+        set_app_status(self, tr("tasks.status.cancelled", task.title()))
+
+    def _on_modpack_imported(self, result) -> None:
+        task, self._import_task = self._import_task, None
+        if task is not None:
+            # ``finish`` also accepts a task the user had just cancelled: the files really are on
+            # disk, so calling that "cancelled" would be the interface contradicting itself.
+            task.finish()
+        self.refresh(select=result.instance.id)
+        # "Files" is what the pack put on disk: downloads plus the files its overrides carried.
+        set_app_status(
+            self,
+            tr(
+                "instances.import_pack.done",
+                result.instance.name,
+                int(result.files) + int(result.overrides),
+            ),
+        )
+
+    def _on_modpack_import_failed(self, message: str) -> None:
+        """A failed - or cancelled - import.
+
+        A cancellation is not a failure: the worker already removed the half-created instance, so
+        the quiet ending is the honest one. Anything else keeps the task row (with the file list in
+        its message) and shows the same message as a dialog, because a list of failed files cannot
+        be read from a one-line status bar.
+        """
+        from launcher.net import downloader
+
+        task, self._import_task = self._import_task, None
+        cancelled = bool(
+            (self._import_stop is not None and self._import_stop.is_set())
+            or (task is not None and task.state == CANCELLED)
+            or downloader.is_user_cancelled()
+        )
+        if cancelled:
+            downloader.clear_cancellation()
+            set_app_status(self, tr("instances.import_pack.cancelled"))
+            return
+        if task is not None:
+            task.fail(message)
+        set_app_status(self, tr("instances.msg.import_fail", message), "error")
+        inwindow_dialog.critical(self, tr("instances.import_pack.title"), message)
+
+    def _on_modpack_import_finished(self) -> None:
+        self._import_busy = False
+        self._import_stop = None
+        self.import_pack_button.setEnabled(True)
