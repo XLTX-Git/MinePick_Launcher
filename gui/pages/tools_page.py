@@ -462,14 +462,16 @@ class ToolsPage(QWidget):
         for page in (*self._pages.values(), self._failed_page):
             self.state_stack.addWidget(page)
 
-        # The self-check card sits beside the state stack, not below it: four diagnostic rows under
-        # the layouts would push the page past the window's 610px height at the reviewed width.
-        # Beside it, the card costs horizontal room the tab has and no vertical room the pages lack.
+        # The self-check card is the narrow second column: 226px keeps the tools page at 820px,
+        # under the 1000px window floor. A full-width stacked card cannot fit the 558px content
+        # height of the reviewed 610px window: the IDLE page alone is 339px, so the four rows would
+        # squeeze the "creating a room" steps (measured: page min 623px, host steps clipped).
         content = QHBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(8)
         content.addWidget(self.state_stack, 1)
         self.self_check_card = self._build_self_check_card()
+        self.self_check_card.setFixedWidth(226)
         content.addWidget(self.self_check_card, 0, Qt.AlignmentFlag.AlignTop)
         tab_layout.addLayout(content, 1)
 
@@ -514,8 +516,6 @@ class ToolsPage(QWidget):
         """
         card = QFrame()
         card.setObjectName("toolsInnerCard")
-        card.setMinimumWidth(270)
-        card.setMaximumWidth(320)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(4)
