@@ -814,6 +814,9 @@ def main() -> int:
 
 
 #: (filename suffix, state, FakeLinkSession keyword arguments) for the six reviewed layouts.
+#: Player names are real Minecraft-shaped IDs (ASCII, 3-16 characters) - the game cannot have a
+#: CJK user name. The fake has no UUIDs, so these renders keep the letter avatars; the real-backend
+#: render (which resolves demo UUIDs through Mojang) is what shows Steve's and Alex's skin faces.
 TOOLS_STATE_SHOTS = (
     ("1_onboarding", "NOT_DOWNLOADED", {}),
     ("2_idle", "IDLE", {}),
@@ -823,7 +826,7 @@ TOOLS_STATE_SHOTS = (
         "HOST_READY",
         {
             "room_code": "U/8F3K-2QX9-7WMD-4TRA",
-            "members": (("你", True, "我"), ("小王", False, "")),
+            "members": (("Steve", True, ""), ("Alex", False, "")),
             "address": "127.0.0.1:25566",
         },
     ),
@@ -840,7 +843,7 @@ TOOLS_STATE_SHOTS = (
         "JOINED",
         {
             "room_code": "U/8F3K-2QX9-7WMD-4TRA",
-            "members": (("你", False, "我"), ("小王", True, "")),
+            "members": (("Alex", False, ""), ("Steve", True, "")),
             "address": "127.0.0.1:25566",
         },
     ),

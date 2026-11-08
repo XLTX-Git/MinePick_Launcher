@@ -83,6 +83,15 @@ SERVICES: tuple[Credit, ...] = (
     Credit("NeoForge", "about.credit.neoforge", url="https://neoforged.net/"),
     Credit("Adoptium (Eclipse Temurin)", "about.credit.adoptium", url="https://adoptium.net/"),
     Credit("GitHub", "about.credit.github", url="https://github.com/"),
+    # Downloaded on demand (never shipped): an unmodified binary used through its local HTTP API,
+    # which is the licence exception AGPL-3.0 grants for process-to-process integration. The
+    # multiplayer page credits it in its footer; see also launcher/link/components.py.
+    Credit(
+        "Terracotta | 陶瓦联机",
+        "about.credit.terracotta",
+        "AGPL-3.0-or-later with exception",
+        "https://github.com/burningtnt/Terracotta",
+    ),
 )
 
 COMMUNITY: tuple[Credit, ...] = (

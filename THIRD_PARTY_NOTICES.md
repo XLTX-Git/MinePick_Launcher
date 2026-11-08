@@ -1,6 +1,6 @@
 # Third-party notices / 第三方许可声明
 
-MinePick Launcher 0.4.2 — <https://github.com/XLTX-Git/MinePick_Launcher>
+MinePick Launcher 0.5.0 — <https://github.com/XLTX-Git/MinePick_Launcher>
 
 MinePick Launcher itself is released under **GPL-3.0-only** (see [LICENSE](LICENSE)). It uses the third-party components and services listed below; their own licences and terms apply to those parts. Versions are read from the installed distribution metadata.
 
@@ -112,6 +112,10 @@ The names and logos of the mod loaders (Fabric, Forge, NeoForge, Quilt) belong t
   - code hosting, releases and the update check
   - 代码托管、发布与更新检查
   - <https://github.com/>
+- **Terracotta | 陶瓦联机** — `AGPL-3.0-or-later with exception`
+  - Multiplayer; the unmodified binary is used through its local HTTP API, and its copyright is credited in the interface.
+  - 联机功能。以未修改的二进制形式通过本地 HTTP API 交互，界面已标注其版权。
+  - <https://github.com/burningtnt/Terracotta>
 
 ## Inspiration and community / 灵感与社区
 
