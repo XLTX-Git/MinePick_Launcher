@@ -155,6 +155,7 @@ from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
 from launcher.mods.zh_names import zh_name
 from launcher.net import downloader, http_cache
 from launcher.net.downloader import DownloadCancelled
+from launcher.schematic import SchematicFile, scan_schematics, schematic_folder
 
 tr = i18n.tr
 log = logging.getLogger(__name__)
@@ -1754,6 +1755,10 @@ class InstanceDetail(QWidget):
         #: with the error message (an unreadable folder must not keep looking like a load failure).
         self._content_empty_text: dict[str, str] = {}
         self._saves: list = []
+        #: 投影: the last scan's files, its request generation and the event that interrupts the
+        #: running scan (set when the page is reloaded or cleared).
+        self._schematic_stop: threading.Event | None = None
+        self._schematic_generation = 0
         self._badge_counts: dict[str, int] = {key: 0 for key in _BADGED_SECTIONS}
         #: 修改: one switch runs at a time, and its two buttons stay disabled while it does.
         self._switch_busy = False
@@ -2114,6 +2119,8 @@ class InstanceDetail(QWidget):
 
         # The former 设置 tab is now the second card of 概览: one destination, no duplicate navigation.
         layout.addWidget(self._build_settings())
+        # 投影: the Litematica file list. Its own block of methods lives after _build_saves.
+        layout.addWidget(self._build_schematic_card())
         layout.addStretch(1)
 
         self.open_folder_button.clicked.connect(self.open_instance_folder)
@@ -2315,6 +2322,245 @@ class InstanceDetail(QWidget):
         self.saves_backup_button.clicked.connect(self.backup_selected_save)
         self.saves_delete_button.clicked.connect(self.delete_selected_saves)
         return page
+
+    # ---------- 投影 / Litematica schematics ----------
+    #
+    # One self-contained block: the card, its background read, the row builder, the selection and the
+    # folder button. It is a card of the 概览 page, so nothing else had to be re-ordered; the page's
+    # life cycle reaches it through reload_schematics() and _clear_schematics() only.
+
+    def _build_schematic_card(self) -> QWidget:
+        """The 投影 card: one row per ``.litematic`` file, the selected file's metadata, one button.
+
+        Read-only on purpose: the files belong to the game and to Litematica, and this launcher does
+        not render the build (no 3D view). The row's size line plus the metadata panel are the whole
+        feature. The list is a ``_ContentList`` so a schematic row looks like every other file row on
+        this page; it shows no block thumbnail, because the launcher does not read block data and a
+        made-up picture would be worse than none.
+        """
+        card, card_layout = self._make_card()
+        self.schematic_card = card
+        card_layout.addWidget(self._card_heading("instances.detail.card.schematic"))
+
+        # The empty state is a block rather than the list's centred overlay: it carries a second line
+        # that says where the files belong, and an overlay would clip it against the card edge.
+        self.schematic_empty = QWidget()
+        empty_layout = QVBoxLayout(self.schematic_empty)
+        empty_layout.setContentsMargins(0, 4, 0, 4)
+        empty_layout.setSpacing(4)
+        self.schematic_empty_title = EmptyState(
+            tr("instances.detail.schematic.empty"), self.schematic_empty
+        )
+        # Shown here, unlike the list overlays elsewhere: this label is not an overlay, and a
+        # parentless widget must never be made visible (it would be a top-level window for a frame).
+        self.schematic_empty_title.setVisible(True)
+        self.schematic_empty_hint = QLabel(tr("instances.detail.schematic.empty_hint"))
+        self.schematic_empty_hint.setObjectName("hint")
+        self.schematic_empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.schematic_empty_hint.setWordWrap(True)
+        empty_layout.addWidget(self.schematic_empty_title)
+        empty_layout.addWidget(self.schematic_empty_hint)
+        card_layout.addWidget(self.schematic_empty)
+
+        self.schematic_list = _ContentList()
+        # WCAG 4.1.2: the list is a focus stop with no text of its own; the name says what it holds.
+        self.schematic_list.setAccessibleName(tr("a11y.instance_schematics"))
+        # The card sits in the overview's scroll area, so the list never scrolls by itself: a nested
+        # scrollbar inside a scrolling page is one wheel event away from trapping the pointer.
+        self.schematic_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.schematic_list.currentRowChanged.connect(self._on_schematic_selected)
+        self.schematic_list.setVisible(False)
+        self.schematic_rows: list[_ContentRow] = []
+        self._schematics: list[SchematicFile] = []
+        card_layout.addWidget(self.schematic_list)
+
+        self.schematic_hint = QLabel(tr("instances.detail.schematic.select"))
+        self.schematic_hint.setObjectName("hint")
+        self.schematic_hint.setWordWrap(True)
+        self.schematic_hint.setVisible(False)
+        card_layout.addWidget(self.schematic_hint)
+
+        self.schematic_meta = QWidget()
+        meta_form = QFormLayout(self.schematic_meta)
+        style_form(meta_form)
+        self.schematic_values: dict[str, QLabel] = {}
+        for key, label_key in (
+            ("name", "instances.detail.schematic.meta.name"),
+            ("author", "instances.detail.schematic.meta.author"),
+            ("created", "instances.detail.schematic.meta.created"),
+            ("description", "instances.detail.schematic.meta.description"),
+        ):
+            title = QLabel(tr(label_key))
+            title.setObjectName("hint")
+            if key == "description":
+                # Prose wraps instead of eliding: it is the one field the user actually reads.
+                value = QLabel("")
+                value.setWordWrap(True)
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            else:
+                value = ElidedLabel("")
+            self.schematic_values[key] = value
+            meta_form.addRow(title, value)
+        self.schematic_meta.setVisible(False)
+        card_layout.addWidget(self.schematic_meta)
+
+        self.schematic_refresh_button = QPushButton(tr("instances.mods.refresh"))
+        self.schematic_refresh_button.setObjectName("secondaryButton")
+        self.schematic_folder_button = QPushButton(tr("instances.detail.schematic.open_folder"))
+        self.schematic_folder_button.setObjectName("secondaryButton")
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(6)
+        buttons.addWidget(self.schematic_refresh_button)
+        buttons.addWidget(self.schematic_folder_button)
+        buttons.addStretch(1)
+        card_layout.addLayout(buttons)
+        self.schematic_refresh_button.clicked.connect(self.reload_schematics)
+        self.schematic_folder_button.clicked.connect(self.open_schematic_folder)
+        return card
+
+    def reload_schematics(self) -> None:
+        """Read every schematic header off the GUI thread; the old rows stay until it answers."""
+        if self.resolved is None:
+            return
+        if self._schematic_stop is not None:
+            self._schematic_stop.set()
+        stop = threading.Event()
+        self._schematic_stop = stop
+        self._schematic_generation += 1
+        set_app_status(self, tr("instances.detail.schematic.loading"))
+        run_in_background(
+            self._read_schematics,
+            self.resolved.launch_dir,
+            self._schematic_generation,
+            stop,
+            on_result=self._fill_schematics,
+            on_error=self._on_schematics_failed,
+        )
+
+    def _read_schematics(
+        self, root: Path, generation: int, stop: threading.Event
+    ) -> tuple[int, list[SchematicFile]]:
+        """Worker-thread side: the pure scan, tagged with the request it belongs to.
+
+        The generation tag is what keeps two overlapping requests in order: a page that was reloaded
+        (or an instance the user left) must not paint the answer of the scan it superseded.
+        """
+        return generation, scan_schematics(root, stop=stop)
+
+    def _fill_schematics(self, payload: tuple[int, list[SchematicFile]]) -> None:
+        generation, files = payload
+        if generation != self._schematic_generation:
+            return
+        self._schematics = files
+        self.schematic_list.clear_rows()
+        self.schematic_rows = []
+        for item in files:
+            row = self._make_schematic_row(item)
+            self.schematic_rows.append(row)
+            self.schematic_list.add_row(row)
+        count = len(files)
+        # Height follows the row count: the list itself cannot scroll (see _build_schematic_card),
+        # so every row has to be inside it. The overview's own scroll area takes care of a long list.
+        self.schematic_list.setFixedHeight(max(1, count) * CONTENT_ROW_SLOT + 2)
+        self.schematic_list.setVisible(count > 0)
+        self.schematic_empty.setVisible(count == 0)
+        # With rows but no selection, the panel below would be an empty gap: say what to do instead.
+        self.schematic_hint.setVisible(count > 0)
+        self.schematic_meta.setVisible(False)
+        for value in self.schematic_values.values():
+            value.setText("")
+        set_app_status(self, tr("instances.detail.schematic.count", count))
+
+    def _on_schematics_failed(self, message: str) -> None:
+        set_app_status(self, tr("instances.detail.schematic.load_fail", message), "error")
+        self._clear_schematics()
+
+    def _make_schematic_row(self, item: SchematicFile) -> _ContentRow:
+        """One card for one file: its name, then size, block kinds and modified time (or 无法读取)."""
+        if item.info is None:
+            row = _ContentRow(item.file_name, key=str(item.path))
+            row.apply(detail=tr("instances.detail.schematic.unreadable"))
+            if item.error:
+                row.setToolTip(row.toolTip() + "\n" + item.error)
+            return row
+        row = _ContentRow(item.file_name, key=str(item.path))
+        row.apply(detail=self._schematic_detail(item))
+        return row
+
+    @staticmethod
+    def _schematic_detail(item: SchematicFile) -> str:
+        """The second line: ``128×64×96 · 42 种方块 · 2026/08/09 12:30``."""
+        info = item.info
+        parts = ["×".join(str(value) for value in info.dimensions)]
+        if info.block_kinds is not None:
+            parts.append(tr("instances.detail.schematic.kinds", info.block_kinds))
+        parts.append(InstanceDetail._schematic_stamp(item.modified))
+        return " · ".join(part for part in parts if part)
+
+    @staticmethod
+    def _schematic_stamp(timestamp: float) -> str:
+        """A calendar day and a time of day; empty when the timestamp is out of range."""
+        try:
+            return time.strftime("%Y/%m/%d %H:%M", time.localtime(timestamp))
+        except (OverflowError, OSError, ValueError):
+            return ""
+
+    @staticmethod
+    def _schematic_created(milliseconds: int | None) -> str:
+        if not milliseconds:
+            return tr("instances.detail.value.none")
+        return InstanceDetail._schematic_stamp(milliseconds / 1000.0) or tr(
+            "instances.detail.value.none"
+        )
+
+    def _on_schematic_selected(self, index: int) -> None:
+        """Show the selected file's metadata; hide the panel again when the selection is gone."""
+        item = self._schematics[index] if 0 <= index < len(self._schematics) else None
+        info = item.info if item is not None else None
+        self.schematic_meta.setVisible(info is not None)
+        self.schematic_hint.setVisible(info is None and bool(self._schematics))
+        values = self.schematic_values
+        if info is None:
+            for value in values.values():
+                value.setText("")
+            return
+        none = tr("instances.detail.value.none")
+        values["name"].setText(info.name or item.path.stem)
+        values["author"].setText(info.author or none)
+        values["created"].setText(self._schematic_created(info.created_ms))
+        values["description"].setText(info.description or none)
+
+    def _selected_schematic(self) -> SchematicFile | None:
+        index = self.schematic_list.currentRow()
+        if 0 <= index < len(self._schematics):
+            return self._schematics[index]
+        return None
+
+    def open_schematic_folder(self) -> None:
+        """Open the selected file's folder, or the instance's schematic folder when none is selected."""
+        if self._require_instance() is None:
+            return
+        item = self._selected_schematic()
+        target = item.path.parent if item is not None else schematic_folder(self.resolved.launch_dir)
+        self._open_path(target)
+        set_app_status(self, tr("instances.msg.folder_opened", str(target)))
+
+    def _clear_schematics(self) -> None:
+        """Drop the rows and cancel the running scan (instance switched, or gone)."""
+        if self._schematic_stop is not None:
+            self._schematic_stop.set()
+            self._schematic_stop = None
+        self._schematic_generation += 1
+        self._schematics = []
+        self.schematic_rows = []
+        self.schematic_list.clear_rows()
+        self.schematic_list.setVisible(False)
+        self.schematic_empty.setVisible(True)
+        self.schematic_hint.setVisible(False)
+        self.schematic_meta.setVisible(False)
+        for value in self.schematic_values.values():
+            value.setText("")
 
     def _build_diagnosis(self) -> QWidget:
         """Diagnosis and the live latest.log, merged into one page (two cards).
@@ -3189,6 +3435,8 @@ class InstanceDetail(QWidget):
         self._refresh_badge_counts()
         self._loaded_tabs = set()
         self._reload_mods()
+        # 投影 is a card of this page, not a lazily loaded tab, so it refreshes with the instance.
+        self.reload_schematics()
         if self.stack.currentIndex() in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS):
             self._ensure_tab_data(self.stack.currentIndex(), force=True)
 
@@ -3225,6 +3473,7 @@ class InstanceDetail(QWidget):
         self.saves_list.setVisible(False)
         self.saves_empty.setText(self.saves_empty_text)
         self.saves_empty.setVisible(True)
+        self._clear_schematics()
         for value in self.modify_values.values():
             value.setText(tr("instances.detail.value.none"))
             value.setToolTip("")
