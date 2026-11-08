@@ -1335,6 +1335,7 @@ class SettingsPage(QWidget):
         """Re-evaluate the busy rule whenever the page (re)appears, then keep watching it."""
         super().showEvent(event)
         self._update_folder_actions()
+        self._update_cf_key_status()  # a 403 may have latched the source off while we were away
         self._folder_busy_timer.start()
 
     def hideEvent(self, event) -> None:

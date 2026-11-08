@@ -239,6 +239,26 @@ def test_403_latches_the_source_off_for_the_rest_of_the_session(monkeypatch) -> 
     assert len(calls) == 1  # the one 403 request; the latch stopped the next call
 
 
+def test_clean_checkout_without_a_bundled_key_is_unavailable(monkeypatch, ws_tmp) -> None:
+    """The release build may have no build/cf_key.txt at all; that is a workload, not a crash."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data"))
+    monkeypatch.setattr(cf.paths, "resource_path", lambda relative: ws_tmp / relative)
+    assert cf._bundled_key() == ""
+    assert cf.effective_api_key() == ""
+    assert not cf.available()
+
+
+def test_key_status_reports_missing_set_and_rejected(monkeypatch) -> None:
+    """The three states the settings page renders, including the session-wide rejection."""
+    monkeypatch.setattr(cf, "effective_api_key", lambda: "")
+    assert cf.key_status() == cf.KEY_STATUS_MISSING
+    monkeypatch.setattr(cf, "effective_api_key", lambda: "key")
+    assert cf.key_status() == cf.KEY_STATUS_SET
+    cf._mark_key_rejected()
+    assert cf.key_status() == cf.KEY_STATUS_REJECTED
+    assert not cf.available()
+
+
 @pytest.mark.parametrize("status", [403, 404])
 def test_client_errors_are_not_retried(monkeypatch, status: int) -> None:
     """403 (key) and 404 (missing project) will answer the same way on a second attempt."""

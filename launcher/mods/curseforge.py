@@ -115,7 +115,10 @@ def effective_api_key() -> str:
     if env_key:
         return env_key
     cfg, _ = config.load()
-    return (cfg.curseforge_api_key or _bundled_key()).strip()
+    # getattr: the resources page's tests and preview tools replace config.load with a minimal
+    # stand-in; a missing field means "no user-entered key", not a crash on the page-open path.
+    stored_key = getattr(cfg, "curseforge_api_key", "") or ""
+    return (stored_key or _bundled_key()).strip()
 
 
 def has_key() -> bool:
