@@ -179,7 +179,7 @@ def test_cards_are_grouped_by_type(app, monkeypatch, ws_tmp):
             ["26w02a"],
             ["fabric-loader-0.19.3-1.21.11", "1.20.1-forge-47.4.22"],
         ]
-        # The cards themselves are unchanged: a 40px icon, 使用 and 管理, the current marker.
+        # The rows themselves keep their content: a 44px icon, 使用 and 管理, the current marker.
         fabric = page.card_for("fabric-loader-0.19.3-1.21.11")
         assert fabric.meta_label.text().startswith("1.21.11 · Fabric 0.19.3")
         assert fabric.use_button.text() == i18n.tr("instances.card.use")
