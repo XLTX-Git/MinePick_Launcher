@@ -74,7 +74,7 @@ from gui.workers import (
     format_rate,
     run_in_background,
 )
-from launcher import config, instances, paths
+from launcher import config, favorites, instances, paths
 from launcher.meta.version import version_json_path
 from launcher.mods import (
     ModsError,
@@ -435,6 +435,8 @@ class _ResourceRow(QWidget):
         *,
         on_select,
         on_install,
+        on_favorite=None,
+        is_favorite: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -447,6 +449,9 @@ class _ResourceRow(QWidget):
         self._kind_label = kind_label
         self._on_select = on_select
         self._on_install = on_install
+        #: The one favorite entry point this page owns: the page's store lives behind this callback.
+        self._on_favorite = on_favorite
+        self._favorite_state = bool(is_favorite)
         self._meta = self._build_meta(entry, source_label)
         self._icon: QPixmap | None = None
         self._fallback_icon = paint_utils.letter_tile_pixmap(self.title, self.ICON, self.RADIUS)
@@ -461,13 +466,36 @@ class _ResourceRow(QWidget):
         # what tells them apart.
         self.install.setAccessibleName(tr("mods.install") + " · " + self.title)
         self.install.clicked.connect(self._activate)
+        # 收藏: the resource page's only new control. It sits to the right of 安装, so the painted text
+        # still ends where it ended before (paintEvent measures the gap from the install button).
+        self.favorite = QPushButton()
+        self.favorite.setObjectName("rowInstall")
+        self.favorite.setFixedHeight(32)
+        self.favorite.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.favorite.clicked.connect(lambda _checked=False: self._toggle_favorite())
+        self.set_favorite_state(self._favorite_state)
         self.setFixedHeight(self.SLOT_HEIGHT)
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, self.PADDING, self.SLOT_HEIGHT - self.HEIGHT)
         row.setSpacing(0)
         row.addStretch(1)
         row.addWidget(self.install, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addSpacing(8)
+        row.addWidget(self.favorite, 0, Qt.AlignmentFlag.AlignVCenter)
         self.setToolTip(self._tooltip_text())
+
+    def set_favorite_state(self, favorited: bool) -> None:
+        """Paint the star as the project's current state; the text is the state (there is no QSS icon)."""
+        self._favorite_state = bool(favorited)
+        text = tr("favorites.favorited") if self._favorite_state else tr("favorites.add")
+        self.favorite.setText(text)
+        name = text + " · " + self.title
+        self.favorite.setAccessibleName(name)
+        self.favorite.setToolTip(name)
+
+    def _toggle_favorite(self) -> None:
+        if self._on_favorite is not None:
+            self._on_favorite()
 
     # ---------- data ----------
 
@@ -507,8 +535,9 @@ class _ResourceRow(QWidget):
         # Tab reaches the install button of the selected row only: thirty identical stops would make
         # Tab unusable inside the list, and the arrow keys already move the selection to every row.
         policy = Qt.FocusPolicy.StrongFocus if selected else Qt.FocusPolicy.ClickFocus
-        if self.install.focusPolicy() != policy:
-            self.install.setFocusPolicy(policy)
+        for button in (self.install, self.favorite):
+            if button.focusPolicy() != policy:
+                button.setFocusPolicy(policy)
 
     # ---------- interaction ----------
 
@@ -1447,6 +1476,36 @@ class _ContentTab(QWidget):
         for row_index, row in enumerate(self._rows):
             row.set_selected(row_index == index)
 
+    def _toggle_favorite(self, index: int) -> None:
+        """Star or unstar the result at ``index``; the favorites page reads the same store.
+
+        The row is the only thing that changes here: the favorite is written by ``launcher.favorites``
+        and the star's two labels are the entire UI state. Nothing else on this page reads the store,
+        which is what keeps the resource flow untouched.
+        """
+        if not 0 <= index < len(self._entries):
+            return
+        entry = self._entries[index]
+        slug = str(getattr(entry, "slug", "") or "").strip()
+        if not slug:
+            return
+        title = display_titles(entry)[0]
+        icon_url = str(getattr(entry, "icon_url", "") or "")
+        try:
+            now_favorite = favorites.store().toggle(self.kind, slug, title, icon_url)
+        except favorites.FavoritesError as exc:
+            set_app_status(self, tr("favorites.save_failed", str(exc)), "error")
+            return
+        except ValueError:
+            return  # a category this store does not know: nothing to write
+        row = self._rows[index] if index < len(self._rows) else None
+        if row is not None:
+            row.set_favorite_state(now_favorite)
+        set_app_status(
+            self,
+            tr("favorites.added" if now_favorite else "favorites.removed", title),
+        )
+
     # ---------- Icons ----------
 
     def _load_icon(self, entry: object, row: _ResourceRow) -> None:
@@ -1509,6 +1568,7 @@ class _ContentTab(QWidget):
         self._rows = []
         self.list.clear()
         kind_label = tr(self.KIND_TITLE_KEY[self.kind])
+        favorite_store = favorites.store()
         for index, entry in enumerate(entries):
             # The item's own text is the accessible/testable representation and keeps the exact counts
             # (the card paints the human-readable form on top). This is what test_e2e asserts on.
@@ -1526,6 +1586,13 @@ class _ContentTab(QWidget):
                 self._entry_source_label(entry),
                 on_select=lambda row_index=index: self.list.setCurrentRow(row_index),
                 on_install=lambda row_index=index: self._install_from_row(row_index),
+                on_favorite=lambda row_index=index: self._toggle_favorite(row_index),
+                is_favorite=bool(
+                    str(getattr(entry, "slug", "") or "").strip()
+                    and favorite_store.contains(
+                        self.kind, str(getattr(entry, "slug", "") or "").strip()
+                    )
+                ),
             )
             self.list.setItemWidget(item, row)
             self._rows.append(row)
