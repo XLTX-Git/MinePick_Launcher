@@ -293,7 +293,8 @@ class LauncherConfig(BaseModel):
         description="Demo Mode",
     )
     theme: str = Field(
-        default="dark", description="UI theme (dark / light)"
+        default="system",
+        description="UI theme: system (follow the OS at startup), dark, or light",
     )
     accent_color: str = Field(
         default="",
