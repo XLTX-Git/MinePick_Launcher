@@ -22,7 +22,17 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt, QTimer
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPropertyAnimation,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -30,6 +40,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QMainWindow,
+    QPushButton,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -164,7 +175,75 @@ ENTRY_START_OPACITY = 0.45  # rolled back to the pre-0.4.0 value at the user's r
 # switch fades in from a clearly translucent state again, which is what it used to look like
 
 
+def _status_dot_icon() -> QIcon:
+    """A small green dot with a light ring, legible on both themes' blue title band."""
+    tokens = theme.current_tokens() or theme.theme_palette("light")
+    accent = tokens.get("ACCENT", "#35a06a")
+    ring = tokens.get("FG_TOPBAR", "#ffffff")
+    pixmap = QPixmap(8, 8)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(QPen(QColor(ring), 1))
+    painter.setBrush(QColor(accent))
+    painter.drawEllipse(QRectF(0.5, 0.5, 7.0, 7.0))
+    painter.end()
+    return QIcon(pixmap)
+
+
+class _LinkCapsule(QPushButton):
+    """The persistent 联机中 capsule in the title bar.
+
+    It is a button, not a label: the room must be one click away from 工具 › 联机 from any page. It
+    styles itself from the applied tokens (the title band is the one blue surface in both themes), and
+    its height is fixed while the bar's own height is fixed, so showing it cannot grow the window.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("linkCapsule")
+        self.setFixedHeight(22)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setIconSize(QSize(8, 8))
+        self.setIcon(_status_dot_icon())
+        self.hide()
+        theme.register_self_styling(self)
+        self._restyle()
+
+    def on_theme_applied(self) -> None:
+        self.setIcon(_status_dot_icon())
+        self._restyle()
+
+    def _restyle(self) -> None:
+        if theme.is_applying():
+            return
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        text = tokens.get("FG_TOPBAR", "#ffffff")
+        ring = tokens.get("FOCUS_RING", text)
+        sheet = (
+            "QPushButton#linkCapsule {"
+            " background: rgba(255, 255, 255, 40);"
+            f" color: {text};"
+            " border: 1px solid transparent;"
+            " border-radius: 11px;"
+            " padding: 0 10px 0 8px;"
+            " font-size: 11px;"
+            " }"
+            "QPushButton#linkCapsule:hover { background: rgba(255, 255, 255, 68); }"
+            "QPushButton#linkCapsule:pressed { background: rgba(255, 255, 255, 92); }"
+            f"QPushButton#linkCapsule:focus {{ border: 1px solid {ring}; }}"
+        )
+        if sheet == self.styleSheet():
+            return
+        self.setStyleSheet(sheet)
+
+
 class MainWindow(QMainWindow):
+    #: Emitted by the session-bus listener (possibly from the poll thread); the queued connection
+    #: below delivers it on the GUI thread, where the title-bar capsule is updated.
+    link_badge_changed = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("MinePick Launcher")
@@ -258,12 +337,28 @@ class MainWindow(QMainWindow):
         outer.setSpacing(0)
         self.title_bar = TitleBar(self, self.windowTitle())
         outer.addWidget(self.title_bar)
+        # The room capsule lives in the title bar (right-aligned, before the window buttons) because
+        # that band is visible on every page. It is hidden until a room exists, so it contributes
+        # neither width nor height to a normal window.
+        self.link_capsule = _LinkCapsule(self.title_bar)
+        self.link_capsule.clicked.connect(self._open_link_page)
+        bar_layout = self.title_bar.layout()
+        if bar_layout is not None:
+            bar_layout.insertWidget(
+                max(0, bar_layout.count() - 2),
+                self.link_capsule,
+                0,
+                Qt.AlignmentFlag.AlignVCenter,
+            )
+        self.link_badge_changed.connect(self._refresh_link_capsule)
+        self.link_bus.add_listener(self.link_badge_changed.emit)
         outer.addWidget(content, 1)
         self.setCentralWidget(central)
         # Restart path: a Terracotta service left running by a previous launcher is attached at
-        # startup. With no such process no session (and no poller) is created here - the page creates
-        # it lazily when the user opens 工具 › 联机.
+        # startup, and its current room becomes the capsule. With no such process no session (and no
+        # poller) is created here - the page creates it lazily when the user opens 工具 › 联机.
         self.link_bus.start_when_room_running()
+        self._refresh_link_capsule()
         # The whole app reports on this one line: pages forward their progress and
         # errors here through gui.widgets.set_app_status (colours follow the severity).
         self.status_label = StatusLabel("")
@@ -688,6 +783,35 @@ class MainWindow(QMainWindow):
             return
         QApplication.clipboard().setText(address)
         self.set_status(tr("tools.joined.copied", address))
+
+    # ---------- the persistent room capsule ----------
+
+    def _refresh_link_capsule(self) -> None:
+        """Show the 联机中 capsule exactly while a room exists, with the room code as of now."""
+        summary = self.link_bus.summary()
+        if not summary.active:
+            self.link_capsule.hide()
+            return
+        code = summary.short_code()
+        text = tr("link.badge.active", code) if code else tr("link.badge.active_no_code")
+        self.link_capsule.setText(text)
+        self.link_capsule.setAccessibleName(text)
+        self.link_capsule.setToolTip(tr("link.badge.tooltip"))
+        self.link_capsule.show()
+
+    def _open_link_page(self) -> None:
+        """The capsule: go to 工具 › 联机, which shows the room as it is now - it never restarts it."""
+        row = NAV_KEYS.index("tools")
+        if self.sidebar.currentRow() == row:
+            # The row is already selected (the download page may be on screen instead), so the
+            # row-change signal would not fire; show the page explicitly.
+            self._show_page(row)
+        else:
+            self.sidebar.setCurrentRow(row)
+        page = self.pages["tools"]
+        focus = getattr(page, "focus_link_tab", None)
+        if callable(focus):
+            focus()
 
     def _fade_in_current_page(self) -> None:
         """Short fade when switching pages: cheap, and it hides the layout jump.
