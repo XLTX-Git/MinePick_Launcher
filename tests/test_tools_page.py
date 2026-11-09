@@ -23,7 +23,7 @@ import threading
 import time
 
 import pytest
-from PySide6.QtCore import QBuffer, QCoreApplication, QEvent, QRect, Qt
+from PySide6.QtCore import QBuffer, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
@@ -44,8 +44,6 @@ from launcher.link import (
     StunVerdict,
     skins,
 )
-from launcher.link.terracotta import TerracottaClient, TerracottaLinkSession
-from tests.link_fakes import FakeCore, FakeTerracotta, wait_until
 
 INSTANCES = [("demo-instance", "1.21.11 · 原版")]
 
@@ -696,31 +694,8 @@ def test_host_starting_uses_its_own_title(app) -> None:
         _close(app, page)
 
 
-def test_destroying_the_page_stops_the_real_poller(app) -> None:
-    fake = FakeTerracotta()
-    session = TerracottaLinkSession(
-        process=FakeCore(fake.port),
-        client_factory=lambda port: TerracottaClient(port, timeout=0.5),
-        poll_interval=0.02,
-        attach_interval=0.02,
-        component_status_fn=lambda: ComponentStatus(
-            downloaded=True, version="0.4.2", supported=True
-        ),
-        stun_probe=lambda: StunVerdict.CONE,
-        player_name=lambda: "Steve",
-    )
-    page = _show(app, session)
-    try:
-        assert wait_until(lambda: session.state() is LinkState.IDLE)
-        assert session.is_polling()
-        page.close()
-        page.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        app.processEvents()
-        assert wait_until(lambda: not session.is_polling())
-    finally:
-        session.dispose(wait=True)
-        fake.stop()
+# The real-poller lifecycle (page destroyed / language switch) lives in tests/test_link_bus.py:
+# the session is owned by the bus now, so a destroyed page must *not* stop the poller.
 
 
 # ------------------------------------------------------------------ navigation

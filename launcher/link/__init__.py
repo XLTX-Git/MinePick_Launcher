@@ -17,6 +17,13 @@
 
 """Multiplayer integration surface (Terracotta)."""
 
+from launcher.link.bus import (
+    ACTIVE_STATES,
+    LinkRoomSummary,
+    LinkSessionBus,
+    default_link_bus,
+    running_terracotta_port,
+)
 from launcher.link.easytier import EasytierPackage, probe_nat_types
 from launcher.link.selfcheck import (
     ComponentStatus,
@@ -39,13 +46,16 @@ from launcher.link.stun import StunVerdict
 from launcher.link.terracotta import TerracottaLinkSession
 
 __all__ = [
+    "ACTIVE_STATES",
     "ComponentStatus",
     "EasytierPackage",
     "FakeLinkSession",
     "LinkDifficulty",
     "LinkDownloadProgress",
     "LinkMember",
+    "LinkRoomSummary",
     "LinkSession",
+    "LinkSessionBus",
     "LinkState",
     "NatProbe",
     "NatProbeError",
@@ -54,6 +64,8 @@ __all__ = [
     "SelfCheckReport",
     "StunVerdict",
     "TerracottaLinkSession",
+    "default_link_bus",
     "default_link_session",
     "probe_nat_types",
+    "running_terracotta_port",
 ]

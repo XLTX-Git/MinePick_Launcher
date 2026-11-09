@@ -17,9 +17,12 @@
 
 """The 工具 page: its 联机 tab and the six reviewed layouts.
 
-The page owns no room logic. It renders a :class:`launcher.link.LinkSession` and forwards user
-actions to it; the session's listener fires :attr:`ToolsPage.session_changed`, which is connected to
-:meth:`_sync` as a queued Qt signal, so a future backend can notify from a worker thread.
+The page owns no room logic and, since the room indicator work, it does not own the session either.
+It renders the :class:`launcher.link.session.LinkSession` held by a
+:class:`launcher.link.bus.LinkSessionBus` and forwards user actions to it; the bus (owned by the
+window, or the process-wide default for a lone page) survives page rebuilds, so a language switch
+cannot stop the poller. The session's listener reaches the page through
+:attr:`ToolsPage.session_changed`, a queued Qt signal, so a worker-thread backend is safe.
 
 Every colour, radius and spacing in the page-level stylesheet comes from the existing theme tokens
 (``gui/resources/style.qss`` and ``style_light.qss``). The small painted widgets read the same tokens
@@ -64,11 +67,13 @@ from launcher.link import (
     LinkDownloadProgress,
     LinkMember,
     LinkSession,
+    LinkSessionBus,
     LinkState,
     NatProbe,
     NatType,
     SelfCheckReport,
     StunVerdict,
+    default_link_bus,
     default_link_session,
     skins,
 )
@@ -445,12 +450,25 @@ class ToolsPage(QWidget):
         self,
         session: LinkSession | None = None,
         *,
+        bus: LinkSessionBus | None = None,
         session_factory: Callable[[], LinkSession] = default_link_session,
         instances_provider: Callable[[], list[tuple[str, str]]] | None = None,
     ) -> None:
         super().__init__()
         self.setObjectName("toolsPage")
-        self._session = session if session is not None else session_factory()
+        # Ownership: the bus owns the session, never this page. The window passes its own bus, so a
+        # rebuild (language switch) or a destroyed page can only unsubscribe; a test/screenshot that
+        # passes a session gets a private bus so the session still outlives the page. A page built
+        # without either falls back to the process-wide bus (see launcher.link.bus).
+        if bus is not None:
+            self._bus = bus
+        elif session is not None:
+            self._bus = LinkSessionBus(session_factory=lambda: session)
+        elif session_factory is not default_link_session:
+            self._bus = LinkSessionBus(session_factory=session_factory)
+        else:
+            self._bus = default_link_bus()
+        self._session = self._bus.session()
         self._instances_provider = instances_provider or _default_instances
         self._unsubscribe: Callable[[], None] | None = None
         self._last_state: LinkState | None = None
@@ -466,9 +484,10 @@ class ToolsPage(QWidget):
         self.download_progress.connect(self._on_download_progress)
         # A bound method of the page itself is not called for its own `destroyed` signal: Qt has
         # already severed the object's connections by then (measured with PySide6 6.11). The lambda
-        # is a plain callable, so it still runs and can stop the poller before the C++ object goes.
-        self.destroyed.connect(lambda *_args: self._dispose_session())
-        self._attach_session(self._session)
+        # is a plain callable, so it still runs and can stop observing before the C++ object goes.
+        # It must not dispose the session: that belongs to the bus.
+        self.destroyed.connect(lambda *_args: self._release())
+        self._attach_bus()
         self._refresh_instances()
         self._sync()
         theme.register_self_styling(self)
@@ -1123,10 +1142,24 @@ class ToolsPage(QWidget):
         return page
 
     # ------------------------------------------------------------------ session wiring
-    def _attach_session(self, session: LinkSession) -> None:
-        self._detach_session()
-        self._session = session
-        self._unsubscribe = session.add_listener(self._emit_session_changed)
+    def _attach_bus(self) -> None:
+        self._detach_bus()
+        self._unsubscribe = self._bus.add_listener(self._on_bus_changed)
+
+    def _on_bus_changed(self) -> None:
+        """Follow a bus that swapped or dropped its session, then repaint from the session.
+
+        The page keeps a reference for its own reads, but the bus owns it: a replacement is adopted
+        here, and a bus without a session (shutdown) is ignored rather than crashed on.
+        """
+        if self._disposed:
+            return
+        session = self._bus.peek_session()
+        if session is None:
+            return
+        if session is not self._session:
+            self._session = session
+        self._emit_session_changed()
 
     def _emit_session_changed(self) -> None:
         """A session may notify from a worker thread; the signal queues it onto the GUI thread."""
@@ -1137,21 +1170,24 @@ class ToolsPage(QWidget):
         except RuntimeError:
             pass  # the page was destroyed between the notification and this call
 
-    def _detach_session(self) -> None:
+    def _detach_bus(self) -> None:
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
 
+    def _release(self) -> None:
+        """Stop observing. The bus keeps the session and its poller alive; the room stays open."""
+        if self._disposed:
+            return
+        self._disposed = True
+        self._detach_bus()
+
     def set_session(self, session: LinkSession) -> None:
-        """Replace the backend, for tests and the screenshot tool."""
-        previous = getattr(self, "_session", None)
-        if previous is not None and previous is not session:
-            dispose = getattr(previous, "dispose", None)
-            if callable(dispose):
-                try:
-                    dispose()
-                except Exception:
-                    log.debug("停止旧联机会话失败", exc_info=True)
+        """Replace the observed backend, for tests and the screenshot tool.
+
+        The bus is the owner, so the swap goes through it: the window's room indicator and this page
+        keep reading the same session. The previous session is not disposed here.
+        """
         self._disposed = False
         self._downloading = False
         self._download_failure = ""
@@ -1162,13 +1198,19 @@ class ToolsPage(QWidget):
             self.self_check_line.setToolTip("")
             self.self_check_button.setText(tr("tools.net.title"))
             self.self_check_button.setEnabled(True)
-        self._attach_session(session)
+        self._attach_bus()
+        self._bus.replace_session(session)
+        self._session = session
         self._refresh_instances()
         self._sync()
 
     def session(self) -> LinkSession:
         """The active backend, read-only for callers that want to script it."""
         return self._session
+
+    def instance_bus(self) -> LinkSessionBus:
+        """The bus this page observes (the window's, or a private one for a supplied session)."""
+        return self._bus
 
     def on_theme_applied(self) -> None:
         """The painted discs/spinner read tokens at paint time; one repaint is all they need."""
@@ -1484,27 +1526,19 @@ class ToolsPage(QWidget):
             else:
                 label.setText(tr("tools.onboard.channels.latency", latency))
 
+    def focus_link_tab(self) -> None:
+        """The title-bar capsule's destination: show 联机 as it is now, never restart anything."""
+        self.tabs.setCurrentIndex(0)
+        self.tabs.setFocus(Qt.FocusReason.OtherFocusReason)
+
     # ------------------------------------------------------------------ lifecycle
     def cancel_running_task(self) -> None:
-        """Language switch: drop the poller, keep the room (the process is detached)."""
-        self._dispose_session()
+        """Language switch: stop observing; the bus keeps polling and the room stays open."""
+        self._release()
 
     def stop_background_work(self) -> None:
-        """Window close: stop polling; the detached Terracotta process keeps its room."""
-        self._dispose_session()
-
-    def _dispose_session(self) -> None:
-        if self._disposed:
-            return
-        self._disposed = True
-        self._detach_session()
-        dispose = getattr(self._session, "dispose", None)
-        if callable(dispose):
-            try:
-                dispose()
-            except Exception:
-                log.debug("停止联机会话失败", exc_info=True)
-
+        """Window close: stop observing. The window shuts the bus down separately."""
+        self._release()
 
     # ------------------------------------------------------------------ test helpers / introspection
     def current_state(self) -> LinkState:

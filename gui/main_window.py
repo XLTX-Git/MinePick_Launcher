@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui import i18n, nav_icons, theme, window_effects
+from launcher.link import LinkSessionBus
 
 tr = i18n.tr
 from gui.pages.about_page import AboutPage
@@ -186,6 +187,10 @@ class MainWindow(QMainWindow):
         # was opened from is remembered here, on the window, so 返回 can go back to it.
         self._downloads: DownloadsPage | None = None
         self._downloads_origin: str = NAV_KEYS[0]
+        # The process-level owner of the multiplayer session. The 工具 › 联机 page observes it, so a
+        # language switch (which rebuilds every page) no longer stops the poller or forgets the room.
+        # See launcher.link.bus for the ownership model: the window creates it and shuts it down.
+        self.link_bus = LinkSessionBus()
         # The DWM corner preference is a one-shot window attribute, applied in showEvent once the
         # native handle exists. False means "not attempted yet", not "failed": on Windows 10 it will
         # simply stay False and the window keeps the square frame it always had.
@@ -255,6 +260,10 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.title_bar)
         outer.addWidget(content, 1)
         self.setCentralWidget(central)
+        # Restart path: a Terracotta service left running by a previous launcher is attached at
+        # startup. With no such process no session (and no poller) is created here - the page creates
+        # it lazily when the user opens 工具 › 联机.
+        self.link_bus.start_when_room_running()
         # The whole app reports on this one line: pages forward their progress and
         # errors here through gui.widgets.set_app_status (colours follow the severity).
         self.status_label = StatusLabel("")
@@ -347,6 +356,10 @@ class MainWindow(QMainWindow):
 
     def _make_page(self, key: str) -> QWidget:
         """Construct one page. Called by the registry the first time that page is needed."""
+        if key == "tools":
+            # The window's bus owns the multiplayer session; the page only observes it, so a rebuild
+            # of this page (language switch) keeps the poller and the room. See launcher.link.bus.
+            return ToolsPage(bus=self.link_bus)
         factories = {
             "launch": LaunchPage,
             "instances": InstancesPage,
@@ -1206,6 +1219,9 @@ class MainWindow(QMainWindow):
             stop_tools = getattr(tools, "stop_background_work", None)
             if callable(stop_tools):
                 stop_tools()
+        # The session lives on the window's bus, not on the page: shut it down here, once, so the
+        # poller stops with the window. The detached Terracotta process keeps the room alive.
+        self.link_bus.shutdown()
         from gui import workers
 
         workers.shutdown_game_processes()  # also covers a watcher whose page was rebuilt
