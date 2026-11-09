@@ -37,7 +37,7 @@ from PySide6.QtCore import Qt, QThreadPool
 
 from gui import i18n, inwindow_dialog
 from gui.pages import instance_detail
-from gui.pages.instance_detail import TAB_MODIFY
+from gui.pages.instance_detail import TAB_EXPORT, TAB_MODIFY
 from gui.tasks import DONE
 from launcher import config as config_mod
 from launcher import paths
@@ -508,3 +508,33 @@ def test_the_export_shows_up_and_finishes_on_the_download_page(app, monkeypatch,
     assert [row.task.kind for row in rows] == ["export"]
     assert rows[0].task.state == DONE
     assert rows[0].icon_name() == "export"
+
+
+# ---------------------------------------------------------------------------
+# 8. 导出为整合包: the page's own flow, offline (the lookup degrades, the file is real)
+# ---------------------------------------------------------------------------
+
+
+def test_the_modpack_export_finishes_on_the_page(app, ws_tmp, window) -> None:
+    built, _game = window
+    detail = _open_detail(app, built, "红石包")
+    detail.set_tab(TAB_EXPORT)
+    assert _pump(app, lambda: detail.export_pack_button.isEnabled())
+
+    dest = ws_tmp / "红石包.mrpack"
+    detail.export_pack_to(dest)
+    assert _pump(app, lambda: detail.export_pack_result.isVisible(), timeout=20.0)
+
+    assert dest.is_file() and zipfile.is_zipfile(dest)
+    text = detail.export_pack_result.text()
+    assert str(dest) in text
+    # The suite has no network, so the lookup degraded: the page has to say that in place.
+    assert i18n.tr("instances.detail.export.pack.offline") in text
+    assert detail.export_pack_open_button.isVisibleTo(detail)
+    assert detail.export_pack_open_button.text() == i18n.tr(
+        "instances.detail.export.pack.open_folder"
+    )
+    assert not list(dest.parent.glob("*.tmp")), "the page's export left its .tmp behind"
+    # Both controls are usable again once the worker is gone.
+    assert detail.export_pack_button.isEnabled()
+    assert detail.export_pack_format.isEnabled()
