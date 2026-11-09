@@ -517,34 +517,24 @@ def _notify_self_styling() -> None:
             pass
 
 
-def apply_theme(
+def stylesheet_text(
     theme: str,
     accent: str | None = None,
     font: str | None = None,
     radius: str | None = None,
-) -> None:
-    """Apply the theme; "system" follows the OS light/dark preference.
+) -> str:
+    """The shipped sheet with every placeholder resolved; empty when the file is missing.
 
-    Re-applying a stylesheet that is already in force is skipped deliberately. ``setStyleSheet`` makes
-    Qt re-polish every widget in the application, and that cost *accumulates*: measured in a clean
-    process with a single window, eight consecutive calls took 0.06s, 0.25s, 0.42s, 0.42s, 0.44s,
-    1.72s, 2.16s. The settings page saves on every control change and re-applies the theme each time,
-    so without this guard a session that touches a few settings pays seconds per change - and the test
-    suite, which drives those saves, spends minutes in it.
+    Split out of :func:`apply_theme` so a caller can style one widget tree without touching the
+    application: ``setStyleSheet`` on the application re-polishes every widget in the process, which is
+    both the slow path documented below and, in a long-lived process, a way to walk widgets whose C++
+    side is already gone.
     """
-    global _last_applied, _last_tokens, _last_theme
-    app = QApplication.instance()
-    if app is None:
-        return
     theme = resolve_theme(theme)
-    scale = device_scale(app)
-    key = (id(app), theme, accent or "", font or "", radius or "", scale)
-    if key == _last_applied:
-        return
     filename = "style_light.qss" if theme == "light" else "style.qss"
     path = paths.resource_path("gui/resources/" + filename)
     if not path.exists():
-        return
+        return ""
     text = path.read_text(encoding="utf-8")
     # url() in QSS cannot reliably resolve relative paths: replace the icon placeholders with the
     # absolute path of the file that matches this theme. The combo chevron ships as one coloured SVG
@@ -574,9 +564,37 @@ def apply_theme(
     text = text.replace("__RADIUS_XS__", f"{extra_small}px")
     text = text.replace("__RADIUS_SM__", f"{small}px")
     text = text.replace("__RADIUS_LG__", f"{large}px")
-    # The palette covers the surfaces Qt draws itself (native popup frames, menu shadows, platform-drawn
-    # viewports, disabled text); the stylesheet covers the widgets we wrote. Both come from the same tokens,
-    # and the palette must be in force *before* the sheet is touched - see the note on clearing below.
+    return text
+
+
+def apply_theme(
+    theme: str,
+    accent: str | None = None,
+    font: str | None = None,
+    radius: str | None = None,
+) -> None:
+    """Apply the theme; "system" follows the OS light/dark preference.
+
+    Re-applying a stylesheet that is already in force is skipped deliberately. ``setStyleSheet`` makes
+    Qt re-polish every widget in the application, and that cost *accumulates*: measured in a clean
+    process with a single window, eight consecutive calls took 0.06s, 0.25s, 0.42s, 0.42s, 0.44s,
+    1.72s, 2.16s. The settings page saves on every control change and re-applies the theme each time,
+    so without this guard a session that touches a few settings pays seconds per change - and the test
+    suite, which drives those saves, spends minutes in it.
+    """
+    global _last_applied, _last_tokens, _last_theme
+    app = QApplication.instance()
+    if app is None:
+        return
+    theme = resolve_theme(theme)
+    scale = device_scale(app)
+    key = (id(app), theme, accent or "", font or "", radius or "", scale)
+    if key == _last_applied:
+        return
+    text = stylesheet_text(theme, accent, font, radius)
+    if not text:
+        return
+    palette = theme_palette(theme, accent)
     app.setPalette(theme_qpalette(theme, accent))
     # Publish the tokens before the sheet: a widget that reacts to StyleChange reads them there.
     _last_tokens = dict(palette)

@@ -64,9 +64,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 
-from gui import i18n
+from gui import i18n, theme
 from gui.main_window import NAV_KEYS, MainWindow
-from gui.theme import apply_theme
 from gui.widgets import ElidedLabel
 from launcher import config as config_mod
 from launcher.instances import INSTANCE_META_FILENAME, Instance
@@ -84,18 +83,6 @@ LARGE_FONT_SIZE = (1000, 760)
 def app():
     application = QApplication.instance() or QApplication([])
     yield application
-
-
-@pytest.fixture(autouse=True)
-def _restore_stylesheet(app):
-    """Leave the application sheet exactly as this module found it.
-
-    ``_make_window`` applies the shipped light sheet (the suite's QApplication predates the test), so
-    without this the next test file would be rendered with a stylesheet it did not ask for.
-    """
-    previous = app.styleSheet()
-    yield
-    app.setStyleSheet(previous)
 
 
 @pytest.fixture(autouse=True)
@@ -149,12 +136,12 @@ def _make_window(app, monkeypatch, ws_tmp) -> MainWindow:
     cfg.game_dir = game
     config_mod.save(cfg, cfg_path)
     i18n.set_language("zh_cn")
-    # The real app applies the QSS in create_app(); this suite's QApplication already exists (conftest
-    # builds it for the screen firewall), so apply the same sheet directly. Without it every control
-    # would be measured against Fusion's metrics instead of the shipped padding and border.
-    apply_theme("light", "", "", "")
-
     window = MainWindow()
+    # The real app applies the QSS to the application in create_app(); this suite's QApplication
+    # already exists (conftest builds it for the screen firewall). Style **this window** instead:
+    # setStyleSheet on the application re-polishes every widget in the process, which reaches widgets
+    # earlier test files already deleted and crashed the run inside Qt. The sheet is the same one.
+    window.setStyleSheet(theme.stylesheet_text("light"))
     window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     window.show()
     _settle(app)
