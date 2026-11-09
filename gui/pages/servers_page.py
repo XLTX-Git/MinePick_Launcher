@@ -21,6 +21,12 @@ The file is the game's, not the launcher's - it is where the multiplayer screen 
 page does not invent a second store. It reads ``servers.dat`` every time it is shown, writes the whole
 list back after every change, and says so in its empty state.
 
+The page is also a section of the instance detail view. :meth:`ServersPage.set_instance` scopes it to
+the instance's effective launch folder (``ResolvedInstance.launch_dir``): an isolated instance has its
+own ``servers.dat`` beside its mods and saves, a shared-mode instance uses the game root's file. The
+header names the exact file in force, because "which list am I editing" is the one question this page
+must never leave ambiguous.
+
 The order is the list's order: the game shows the entries in file order, and 上移/下移 write the new
 order straight back. A write is atomic and leaves a ``servers.dat.bak`` copy of the previous file
 (``launcher.servers`` explains both); a file that cannot be decoded is reported in a line above the
@@ -219,7 +225,7 @@ class ServerRow(CardRow):
 class ServersPage(QWidget):
     """The game's server list, with add/edit/delete/reorder that write ``servers.dat`` back."""
 
-    def __init__(self, path: Path | str | None = None) -> None:
+    def __init__(self, path: Path | str | None = None, *, embedded: bool = False) -> None:
         super().__init__()
         self.setObjectName("serversPage")
         self.setAccessibleName(tr("nav.servers"))
@@ -227,9 +233,25 @@ class ServersPage(QWidget):
         self._file = servers.ServersFile()
         self._rows: list[ServerRow] = []
         self._editing: int | None = None
+        #: True inside the instance detail page: the file comes from the shown instance, not from the
+        #: global game folder, and nothing is read until the detail names that instance.
+        self._embedded = embedded
+        #: (instance id, name, launch dir, isolated) once set_instance has run.
+        self._scope: tuple[str, str, Path, bool] | None = None
 
         self.count_label = QLabel("")
         self.count_label.setObjectName("hint")
+        self.file_label = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideMiddle)
+        self.file_label.setObjectName("hint")
+        self.scope_label = QLabel("")
+        self.scope_label.setObjectName("hint")
+        self.scope_label.setWordWrap(True)
+        self.file_row = QWidget()
+        file_row = QHBoxLayout(self.file_row)
+        file_row.setContentsMargins(0, 0, 0, 0)
+        file_row.setSpacing(8)
+        file_row.addWidget(self.file_label, 1)
+        self.file_row.setVisible(False)
         self.refresh_button = QPushButton(tr("java.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
         self.refresh_button.setFixedHeight(32)
@@ -303,7 +325,12 @@ class ServersPage(QWidget):
         layout = QVBoxLayout(self)
         style_page_layout(layout)
         add_page_top_inset(layout)
+        if embedded:
+            # The instance detail's sections own the content edge to edge (see the mods page there).
+            layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(header)
+        layout.addWidget(self.file_row)
+        layout.addWidget(self.scope_label)
         layout.addWidget(self.read_error)
         layout.addWidget(self.form)
         layout.addWidget(self.stack, 1)
@@ -315,7 +342,48 @@ class ServersPage(QWidget):
         self.name_edit.returnPressed.connect(self.save_form)
         self.address_edit.returnPressed.connect(self.save_form)
         theme.register_self_styling(self)
-        self.refresh()
+        if not embedded:
+            self.refresh()
+
+    # ---------- instance scope ----------
+
+    def set_instance(
+        self,
+        instance_id: str,
+        instance_name: str,
+        launch_dir: Path | str,
+        isolated: bool,
+    ) -> None:
+        """Scope the page to the ``servers.dat`` of one instance's effective launch folder."""
+        self._scope = (instance_id, instance_name, Path(launch_dir), bool(isolated))
+        self.file_row.setVisible(True)
+        self.scope_label.setText(
+            tr("instances.detail.servers.scope.isolated")
+            if isolated
+            else tr("instances.detail.servers.scope.shared")
+        )
+        self._sync_file_label()
+        if self.isVisible():
+            self.refresh()
+
+    def clear_instance(self) -> None:
+        """Drop the scope and the rows (the detail page is being cleared)."""
+        self._scope = None
+        self._file = servers.ServersFile()
+        self._editing = None
+        self.form.setVisible(False)
+        self.file_row.setVisible(False)
+        self.scope_label.setText("")
+        self.read_error.setVisible(False)
+        self._rebuild()
+
+    def has_scope(self) -> bool:
+        return self._scope is not None
+
+    def _sync_file_label(self) -> None:
+        path = self.file_path()
+        self.file_label.setText(tr("instances.detail.servers.file", str(path)))
+        self.file_label.setToolTip(str(path))
 
     def on_theme_applied(self) -> None:
         self.refresh()
@@ -323,9 +391,15 @@ class ServersPage(QWidget):
     # ---------- data ----------
 
     def file_path(self) -> Path:
-        """The ``servers.dat`` this page edits: the current game folder's, unless a test named one."""
+        """The ``servers.dat`` this page edits.
+
+        A test's explicit path wins; then the shown instance's launch folder (isolated: its own
+        folder, shared: the game root); then the current game folder's file.
+        """
         if self._override_path is not None:
             return self._override_path
+        if self._scope is not None:
+            return servers.servers_path(self._scope[2])
         return servers.servers_path(config.active_game_dir())
 
     def entries(self) -> list[servers.ServerEntry]:
@@ -339,7 +413,10 @@ class ServersPage(QWidget):
 
     def refresh(self) -> None:
         """Read the file again and rebuild the list; a broken file is a message, never an exception."""
+        if self._embedded and self._scope is None:
+            return  # the detail has not named an instance yet; never edit the global file here
         path = self.file_path()
+        self._sync_file_label()
         try:
             self._file = servers.read_servers(path)
         except servers.ServersDatError as exc:
@@ -498,5 +575,5 @@ class ServersPage(QWidget):
         would leave the form's index pointing at a different entry.
         """
         super().showEvent(event)
-        if self._editing is None:
+        if (not self._embedded or self._scope is not None) and self._editing is None:
             self.refresh()

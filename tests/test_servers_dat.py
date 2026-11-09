@@ -347,3 +347,35 @@ def test_a_favicon_data_uri_becomes_a_pixmap(app) -> None:
     assert favicon_pixmap("") is None
     assert favicon_pixmap("data:image/png;base64,@@@") is None
     assert favicon_pixmap("https://example.invalid/icon.png") is None
+
+
+def test_the_embedded_page_names_and_reads_the_instances_file(app, ws_tmp) -> None:
+    """Inside the detail page the path and the isolation mode must be explicit, not guessed."""
+    from gui import i18n
+    from gui.pages.servers_page import ServersPage
+
+    instance_dir = ws_tmp / "versions" / "fabric-demo"
+    instance_dir.mkdir(parents=True)
+    instance_file = servers.servers_path(instance_dir)
+    servers.write_servers(
+        instance_file, _file(servers.ServerEntry(name="Instance", ip="instance.example:25565"))
+    )
+    page = ServersPage(embedded=True)
+    try:
+        assert not page.has_scope()
+        page.set_instance("fabric-demo", "演示实例", instance_dir, True)
+        page.refresh()
+        assert page.has_scope()
+        assert page.file_path() == instance_file
+        assert str(instance_file) in page.file_label.text()
+        assert page.file_label.toolTip() == str(instance_file)
+        assert page.file_row.isVisibleTo(page)
+        assert page.scope_label.text() == i18n.tr("instances.detail.servers.scope.isolated")
+        assert [entry.name for entry in page.entries()] == ["Instance"]
+
+        page.clear_instance()
+        assert not page.has_scope()
+        assert page.entries() == []
+        assert not page.file_row.isVisibleTo(page)
+    finally:
+        page.deleteLater()

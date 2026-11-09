@@ -15,11 +15,12 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Instance navigation: card grid, drill-down/back, the eight-entry sidebar and its width gate."""
+"""Instance navigation: card grid, drill-down/back, the ten-entry sidebar and its width gate."""
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -232,8 +233,8 @@ def test_cards_are_a_single_column_and_open_the_detail_page(app, monkeypatch, ws
             _close(app, window)
 
 
-def test_detail_sidebar_is_eight_items_in_three_groups(app, monkeypatch, ws_tmp):
-    """8 stacked pages, deterministic order, 36px rows, 20px group headings and live badges."""
+def test_detail_sidebar_is_eleven_items_in_two_groups(app, monkeypatch, ws_tmp):
+    """11 stacked pages, deterministic order, 36px rows, 20px group headings and live badges."""
     from gui.pages.instance_detail import (
         SIDEBAR_GROUP_HEIGHT,
         SIDEBAR_ITEM_HEIGHT,
@@ -243,6 +244,8 @@ def test_detail_sidebar_is_eight_items_in_three_groups(app, monkeypatch, ws_tmp)
         TAB_MODIFY,
         TAB_RESOURCEPACKS,
         TAB_SAVES,
+        TAB_SCREENSHOTS,
+        TAB_SERVERS,
         TAB_SHADERPACKS,
     )
 
@@ -256,8 +259,8 @@ def test_detail_sidebar_is_eight_items_in_three_groups(app, monkeypatch, ws_tmp)
 
         assert detail.sidebar.width() == SIDEBAR_WIDTH
         assert not detail.sidebar.verticalScrollBar().isVisible()
-        assert len(detail.tabs) == 8
-        assert detail.stack.count() == 8
+        assert len(detail.tabs) == 11
+        assert detail.stack.count() == 11
         assert all(button.height() == SIDEBAR_ITEM_HEIGHT for button in detail.tabs)
         assert all(label.height() == SIDEBAR_GROUP_HEIGHT for label in detail.nav_group_labels)
         assert [label.text() for label in detail.nav_group_labels] == [
@@ -269,7 +272,10 @@ def test_detail_sidebar_is_eight_items_in_three_groups(app, monkeypatch, ws_tmp)
             "mods",
             "resourcepacks",
             "shaderpacks",
+            "schematics",
             "saves",
+            "screenshots",
+            "servers",
             "modify",
             "export",
             "diagnosis",
@@ -288,6 +294,17 @@ def test_detail_sidebar_is_eight_items_in_three_groups(app, monkeypatch, ws_tmp)
         detail.tabs[TAB_SHADERPACKS].click()
         app.processEvents()
         assert detail.stack.currentIndex() == TAB_SHADERPACKS
+
+        # 截图 / 服务器 are real stack pages between 存档 and 修改.
+        assert detail.stack.currentIndex() != TAB_SCREENSHOTS
+        detail.tabs[TAB_SCREENSHOTS].click()
+        app.processEvents()
+        assert detail.stack.currentIndex() == TAB_SCREENSHOTS
+        assert detail.screenshots_page.isVisibleTo(detail)
+        detail.tabs[TAB_SERVERS].click()
+        app.processEvents()
+        assert detail.stack.currentIndex() == TAB_SERVERS
+        assert detail.servers_page.isVisibleTo(detail)
 
         # 修改 shows what the instance runs now, plus the two controls that re-point it.
         detail.tabs[TAB_MODIFY].click()
@@ -527,6 +544,204 @@ def test_instance_detail_replaces_the_main_rail_and_back_restores_it(
         _settle(app, window)
         assert window.nav_rail.isVisible()
         assert window.stack.currentWidget() is window.pages["launch"]
+    finally:
+        if window is not None:
+            _close(app, window)
+
+
+# ---------------------------------------------------------------------------
+# 截图 / 服务器: instance-scoped sections inside the detail sidebar
+# ---------------------------------------------------------------------------
+
+
+def _write_png(path: Path, color: bytes = b"\x89PNG\r\n\x1a\n") -> Path:
+    """A file the scan accepts (it only checks the suffix); decoding it is another test's job."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(color)
+    return path
+
+
+def _open_detail(app, window, instance_id: str):
+    from gui.pages.instance_detail import TAB_OVERVIEW
+
+    page = window.pages["instances"]
+    assert page.open_instance(instance_id)
+    _settle(app, window)
+    detail = page.detail
+    detail.set_tab(TAB_OVERVIEW)
+    app.processEvents()
+    return detail
+
+
+def test_screenshots_section_shows_the_instance_and_the_shared_folder(
+    app, monkeypatch, ws_tmp
+):
+    """Scoped gallery: rows from both folders, each still labelled with its source."""
+    from gui.pages.instance_detail import TAB_SCREENSHOTS
+
+    window = None
+    try:
+        window, game = _window(app, monkeypatch, ws_tmp)
+        own_dir = game / "versions" / "fabric-loader-0.19.3-1.21.11" / "screenshots"
+        # Distinct modification times: the gallery sorts newest first and falls back to the filename
+        # on a tie, so writing both files in the same instant would order them by name, not by age.
+        older = _write_png(game / "screenshots" / "2026-11-08_18.00.00.png")
+        newer = _write_png(own_dir / "2026-11-08_19.00.00.png")
+        os.utime(older, (1_700_000_000, 1_700_000_000))
+        os.utime(newer, (1_700_003_600, 1_700_003_600))
+        detail = _open_detail(app, window, "fabric-loader-0.19.3-1.21.11")
+        detail.set_tab(TAB_SCREENSHOTS)
+        _settle(app, window)
+
+        page = detail.screenshots_page
+        names = [entry.filename for entry in page.entries()]
+        assert names == ["2026-11-08_19.00.00.png", "2026-11-08_18.00.00.png"]
+        assert page.has_scope()
+        assert page.scope_label.isVisibleTo(page)
+        assert page.scope_label.text() == i18n.tr("instances.detail.screenshots.scope")
+
+        # The source column keeps the distinction the unscoped page already had.
+        metas = [row.meta_label.text() for row in page.rows()]
+        assert i18n.tr("screenshots.shared") in metas[1]
+        assert "Fabric Pack" in metas[0]
+        assert metas[0] != metas[1]
+    finally:
+        if window is not None:
+            _close(app, window)
+
+
+def test_screenshots_section_follows_the_instance_switch(app, monkeypatch, ws_tmp):
+    """An isolated instance's own pictures disappear when another instance is opened."""
+    from gui.pages.instance_detail import TAB_SCREENSHOTS
+
+    window = None
+    try:
+        window, game = _window(app, monkeypatch, ws_tmp)
+        own_dir = game / "versions" / "1.20.1" / "screenshots"
+        _write_png(own_dir / "only-this-instance.png")
+        detail = _open_detail(app, window, "1.20.1")
+        detail.set_tab(TAB_SCREENSHOTS)
+        _settle(app, window)
+        assert [e.filename for e in detail.screenshots_page.entries()] == ["only-this-instance.png"]
+
+        detail = _open_detail(app, window, "fabric-loader-0.19.3-1.21.11")
+        detail.set_tab(TAB_SCREENSHOTS)
+        _settle(app, window)
+        assert detail.screenshots_page.entries() == []
+        assert detail.screenshots_page.stack.currentIndex() == 1  # the empty state, not stale rows
+    finally:
+        if window is not None:
+            _close(app, window)
+
+
+def test_servers_section_reads_the_instances_own_file(app, monkeypatch, ws_tmp):
+    """Isolated instance: the page edits and names its own servers.dat, not the global one."""
+    from gui.pages.instance_detail import TAB_SERVERS
+    from launcher import servers
+
+    window = None
+    try:
+        window, game = _window(app, monkeypatch, ws_tmp)
+        instance_dir = game / "versions" / "fabric-loader-0.19.3-1.21.11"
+        servers.write_servers(
+            servers.servers_path(instance_dir),
+            servers.ServersFile(
+                entries=[servers.ServerEntry(name="Instance Only", ip="instance.example:25565")]
+            ),
+        )
+        servers.write_servers(
+            servers.servers_path(game),
+            servers.ServersFile(
+                entries=[servers.ServerEntry(name="Global Only", ip="global.example:25565")]
+            ),
+        )
+        detail = _open_detail(app, window, "fabric-loader-0.19.3-1.21.11")
+        detail.set_tab(TAB_SERVERS)
+        _settle(app, window)
+
+        page = detail.servers_page
+        expected = servers.servers_path(instance_dir)
+        assert page.has_scope()
+        assert page.file_path() == expected
+        assert str(expected) in page.file_label.text()
+        assert page.scope_label.text() == i18n.tr("instances.detail.servers.scope.isolated")
+        assert [entry.name for entry in page.entries()] == ["Instance Only"]
+        assert page.rows()[0].name_label.text() == "Instance Only"
+    finally:
+        if window is not None:
+            _close(app, window)
+
+
+def test_servers_section_uses_the_global_file_in_shared_mode(app, monkeypatch, ws_tmp):
+    """Shared-mode instance: launch_dir is the game root, so the global file is the one in force."""
+    from gui.pages.instance_detail import TAB_SERVERS
+    from launcher import servers
+    from launcher.instances import INSTANCE_META_FILENAME
+
+    window = None
+    try:
+        window, game = _window(app, monkeypatch, ws_tmp)
+        meta_path = game / "versions" / "1.20.2" / INSTANCE_META_FILENAME
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["isolated"] = "off"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        servers.write_servers(
+            servers.servers_path(game),
+            servers.ServersFile(
+                entries=[servers.ServerEntry(name="Global Only", ip="global.example:25565")]
+            ),
+        )
+        detail = _open_detail(app, window, "1.20.2")
+        detail.set_tab(TAB_SERVERS)
+        _settle(app, window)
+
+        page = detail.servers_page
+        assert not detail.resolved.isolated
+        assert page.file_path() == servers.servers_path(game)
+        assert page.scope_label.text() == i18n.tr("instances.detail.servers.scope.shared")
+        assert [entry.name for entry in page.entries()] == ["Global Only"]
+    finally:
+        if window is not None:
+            _close(app, window)
+
+
+def test_the_eleven_item_sidebar_fits_the_610px_window_floor(app, monkeypatch, ws_tmp):
+    """The 610px product floor must show every section without a scrollbar.
+
+    The detail page owns a 200px scroll area; it is allowed to scroll as a fallback, but at the
+    minimum window height all eleven 36px items plus the two 20px group headings have to be visible at
+    once. This is the regression that would otherwise only be caught by looking at a picture.
+    """
+    from gui.pages.instance_detail import (
+        SIDEBAR_GROUP_HEIGHT,
+        SIDEBAR_ITEM_HEIGHT,
+    )
+
+    window = None
+    try:
+        window, _game = _window(app, monkeypatch, ws_tmp)
+        window.resize(1000, 610)
+        detail = _open_detail(app, window, "fabric-loader-0.19.3-1.21.11")
+        _settle(app, window)
+        assert window.height() == 610
+        viewport = detail.sidebar.viewport().height()
+        # Every item is laid out inside the viewport, not merely inside the scroll body.
+        for button in detail.tabs:
+            top = button.mapTo(detail.sidebar.viewport(), QPoint(0, 0)).y()
+            assert top >= 0
+            assert top + button.height() <= viewport, (
+                f"{button.accessibleName()!r} ends at {top + button.height()}px, past {viewport}px"
+            )
+        assert detail.sidebar.verticalScrollBar().maximum() == 0
+        assert not detail.sidebar.verticalScrollBar().isVisible()
+        # The body still has exactly the eleven items and two headings the order test pins.
+        expected = (
+            11 * SIDEBAR_ITEM_HEIGHT
+            + 2 * SIDEBAR_GROUP_HEIGHT
+            + 2 * 8  # the two group headings' 8px lead-in
+            + 1 + 8 + 8  # the separator above 诊断 plus its two spacings
+        )
+        assert detail.sidebar_body.sizeHint().height() == expected
     finally:
         if window is not None:
             _close(app, window)

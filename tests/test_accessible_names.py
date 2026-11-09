@@ -328,9 +328,9 @@ def test_the_gate_covers_every_page_and_sub_page(window) -> None:
     """Guard the guard: a scope list that silently shrinks would make the gate vacuous."""
     scopes = _scopes(window)
     pages = {key for key, _scope in scopes}
-    assert len(pages) == 12, f"expected 12 pages, got {sorted(pages)}"
-    # four resource tabs + six per-instance tabs, plus the twelve main pages
-    assert len(scopes) >= 22, f"only {len(scopes)} scopes: {scopes}"
+    assert len(pages) == 9, f"expected 9 pages, got {sorted(pages)}"
+    # four resource tabs + ten per-instance tabs, plus the nine main pages
+    assert len(scopes) >= 23, f"only {len(scopes)} scopes: {scopes}"
     from gui.main_window import NAV_KEYS
 
     assert pages == set(NAV_KEYS), f"pages do not match the navigation: {sorted(pages)}"

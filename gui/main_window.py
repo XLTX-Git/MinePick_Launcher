@@ -41,14 +41,11 @@ from gui import i18n, nav_icons, theme, window_effects
 tr = i18n.tr
 from gui.pages.about_page import AboutPage
 from gui.pages.downloads_page import DownloadsPage
-from gui.pages.favorites_page import FavoritesPage
 from gui.pages.instances_page import InstancesPage
 from gui.pages.java_page import JavaPage
 from gui.pages.launch_page import LaunchPage
 from gui.pages.login_page import LoginPage
 from gui.pages.mods_page import ResourcesPage
-from gui.pages.screenshots_page import ScreenshotsPage
-from gui.pages.servers_page import ServersPage
 from gui.pages.settings_page import SettingsPage
 from gui.pages.tools_page import ToolsPage
 from gui.pages.versions_tasks import TaskAwareVersionsPage
@@ -63,11 +60,6 @@ NAV_KEYS = [
     "java",
     "account",
     "mods",
-    # 截图 / 服务器 / 收藏夹 sit right after 资源: they are all "the things I collected or joined",
-    # and they stay before 工具 because none of them is a utility the other pages call.
-    "screenshots",
-    "servers",
-    "favorites",
     "tools",
     "settings",
     "about",
@@ -306,7 +298,13 @@ class MainWindow(QMainWindow):
         # Startup update check: delayed so the window is up first, once per session
         self._update_checked = False
         self._startup_update_check = None  # the page-free check, kept alive while it runs
-        QTimer.singleShot(2500, self._auto_check_updates)
+        # A single-shot timer parented to the window rather than QTimer.singleShot: the timer is
+        # destroyed with the window, so the callback cannot fire into a torn-down window, and the
+        # slot still receives no arguments (the context overload passes some).
+        self._startup_timer = QTimer(self)
+        self._startup_timer.setSingleShot(True)
+        self._startup_timer.timeout.connect(self._auto_check_updates)
+        self._startup_timer.start(2500)
 
     def on_theme_applied(self) -> None:
         """Called by apply_theme() after the stylesheet swap: repaint the themed nav icons."""
@@ -358,9 +356,6 @@ class MainWindow(QMainWindow):
             "java": JavaPage,
             "account": LoginPage,
             "mods": ResourcesPage,
-            "screenshots": ScreenshotsPage,
-            "servers": ServersPage,
-            "favorites": FavoritesPage,
             "tools": ToolsPage,
             "settings": SettingsPage,
             "about": AboutPage,
@@ -493,7 +488,7 @@ class MainWindow(QMainWindow):
     def set_nav_rail_visible(self, visible: bool) -> None:
         """Show or hide the main rail.
 
-        The instance detail page has an eight-entry sidebar of its own. Two sidebars side by side left
+        The instance detail page has a ten-entry sidebar of its own. Two sidebars side by side left
         the content 162px narrower and read as two competing navigations, so while a detail page is
         open the main rail steps aside and the detail sidebar owns the left edge; every other page
         shows the main rail again (``_on_nav_changed`` is the safety net, and the detail page's back

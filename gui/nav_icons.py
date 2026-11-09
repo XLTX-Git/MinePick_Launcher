@@ -43,12 +43,12 @@ ICON_FILES: dict[str, str] = {
     "java": "coffee",
     "account": "user",
     "mods": "puzzle",
-    # 截图 / 服务器 / 收藏夹 reuse bundled glyphs rather than shipping three new assets: a grid of
-    # thumbnails (layout-grid), the storage box a saved server list reads as (archive - layers would be
-    # a second 实例 icon in the same rail) and the closest star-like glyph in the set (sparkles).
-    "screenshots": "layout-grid",
-    "servers": "archive",
-    "favorites": "sparkles",
+    # 截图 / 服务器 are sections of the instance detail page now (they used to be top-level rail
+    # entries), so their glyphs serve that sidebar: a picture for the gallery and the rack the
+    # multiplayer list reads as. Both must differ from the glyphs already in the same sidebar:
+    # 概览 uses layout-grid and 存档 uses archive, so neither reuses those two files.
+    "screenshots": "image",
+    "servers": "server",
     # 工具 uses the wrench the instance detail sidebar already ships as "modify".
     "tools": "wrench",
     "settings": "settings",
@@ -56,6 +56,8 @@ ICON_FILES: dict[str, str] = {
     # Instance detail sidebar. The first four deliberately reuse glyphs the rail already ships; the
     # remaining six are the Lucide files added with the detail page (all ISC, same pinned version).
     "overview": "layout-grid",
+    # 投影原理图: a wireframe box, distinct from 概览's grid, 存档's archive and 导出's package.
+    "schematic": "box",
     "resourcepacks": "layers",
     "shaderpacks": "sparkles",
     "saves": "archive",

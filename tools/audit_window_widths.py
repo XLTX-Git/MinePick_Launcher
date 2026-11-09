@@ -73,7 +73,8 @@ DEFAULT_WIDTHS = (1000, 1050, 1400, 1800)
 WINDOW_HEIGHT = 915
 DEFAULT_LANGUAGE = "zh_cn"
 DEFAULT_THEME = "light"
-#: The twelve top-level pages, then the instance detail view (its own pane, its own tables).
+#: The nine top-level pages, then the instance detail view and its two media sections (they have no
+#: rail entry of their own, so the only way to audit them is through the detail page's sidebar).
 SCREENS = (
     "launch",
     "instances",
@@ -81,13 +82,12 @@ SCREENS = (
     "java",
     "account",
     "mods",
-    "screenshots",
-    "servers",
-    "favorites",
     "tools",
     "settings",
     "about",
     "instances/detail",
+    "instances/detail/screenshots",
+    "instances/detail/servers",
 )
 #: Slack for layout rounding. A widget may end exactly on its parent's last pixel.
 EDGE_TOLERANCE = 1
@@ -636,7 +636,13 @@ def _show_screen(app, window, screen: str):
     """Navigate to ``screen`` and return the widget the checks should walk."""
     from gui.main_window import NAV_KEYS
 
-    if screen == "instances/detail":
+    if screen.startswith("instances/detail"):
+        from gui.pages.instance_detail import (
+            TAB_MODS,
+            TAB_SCREENSHOTS,
+            TAB_SERVERS,
+        )
+
         page = window.pages["instances"]
         window.sidebar.setCurrentRow(NAV_KEYS.index("instances"))
         _settle(app, 0.4)
@@ -648,7 +654,12 @@ def _show_screen(app, window, screen: str):
         target = next((card_id for card_id in ids if "fabric" in card_id), ids[0])
         page.open_instance(target)
         _settle(app, 0.4)
-        page.detail_page.detail.set_tab(1)  # 模组: the table, its toolbar and its header
+        tab = {
+            "instances/detail": TAB_MODS,  # 模组: the table, its toolbar and its header
+            "instances/detail/screenshots": TAB_SCREENSHOTS,
+            "instances/detail/servers": TAB_SERVERS,
+        }[screen]
+        page.detail_page.detail.set_tab(tab)
         _settle(app, 0.6)
         return page.detail_page
     window.sidebar.setCurrentRow(NAV_KEYS.index(screen))

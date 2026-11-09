@@ -15,11 +15,11 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Instance detail page: a 200px, eight-entry sidebar next to the instance content.
+"""Instance detail page: a 200px, ten-entry sidebar next to the instance content.
 
 The panel owns everything that acts on one instance (launching, mods, resource
-packs, shaders, saves, settings, diagnosis). It never touches widgets from a worker
-thread: every background job reports through @gui.workers.run_in_background with
+packs, shaders, saves, screenshots, servers, settings, diagnosis). It never touches widgets from a
+worker thread: every background job reports through @gui.workers.run_in_background with
 bound-method callbacks, so a result that arrives after the page was torn down is
 dropped by the owner guard instead of dereferencing a freed C++ object.
 """
@@ -90,6 +90,8 @@ from gui.pages.instance_files import (
     scan_content_files,
     scan_saves,
 )
+from gui.pages.screenshots_page import ScreenshotsPage
+from gui.pages.servers_page import ServersPage
 from gui.pages.versions_install_flow import (
     install_selection,
     loader_install_options,
@@ -165,10 +167,13 @@ TAB_OVERVIEW = 0
 TAB_MODS = 1
 TAB_RESOURCEPACKS = 2
 TAB_SHADERPACKS = 3
-TAB_SAVES = 4
-TAB_MODIFY = 5
-TAB_EXPORT = 6
-TAB_DIAGNOSIS = 7
+TAB_SCHEMATICS = 4
+TAB_SAVES = 5
+TAB_SCREENSHOTS = 6
+TAB_SERVERS = 7
+TAB_MODIFY = 8
+TAB_EXPORT = 9
+TAB_DIAGNOSIS = 10
 # Compatibility aliases for callers that predate the split of resources and the merge of settings
 # into the overview. New code should use the explicit constants above.
 TAB_RESOURCES = TAB_RESOURCEPACKS
@@ -193,7 +198,13 @@ _SECTIONS = (
     ("mods", TAB_MODS, "mods", "instances.detail.nav.mods"),
     ("resourcepacks", TAB_RESOURCEPACKS, "resourcepacks", "instances.detail.nav.resourcepacks"),
     ("shaderpacks", TAB_SHADERPACKS, "shaderpacks", "instances.detail.nav.shaderpacks"),
+    ("schematics", TAB_SCHEMATICS, "schematic", "instances.detail.card.schematic"),
     ("saves", TAB_SAVES, "saves", "instances.detail.nav.saves"),
+    # 截图 / 服务器 are instance data (the game writes both into launch_dir), so they sit with the
+    # other game resources rather than in a third group: two groups keep the rail short enough for
+    # the 610px floor. Their labels are the old top-level nav keys, still translated everywhere.
+    ("screenshots", TAB_SCREENSHOTS, "screenshots", "nav.screenshots"),
+    ("servers", TAB_SERVERS, "servers", "nav.servers"),
     ("modify", TAB_MODIFY, "modify", "instances.detail.nav.modify"),
     ("export", TAB_EXPORT, "export", "instances.detail.nav.export"),
     ("diagnosis", TAB_DIAGNOSIS, "diagnosis", "instances.detail.nav.diagnosis"),
@@ -1823,7 +1834,10 @@ class InstanceDetail(QWidget):
             self._build_mods,
             self._build_resourcepacks_page,
             self._build_shaderpacks_page,
+            self._build_schematic_page,
             self._build_saves,
+            self._build_screenshots,
+            self._build_servers,
             self._build_modify,
             self._build_export,
             self._build_diagnosis,
@@ -1851,7 +1865,7 @@ class InstanceDetail(QWidget):
     # ---------- construction ----------
 
     def _build_sidebar(self) -> QScrollArea:
-        """The eight-entry sidebar: 200px wide, 36px items, 20px group headings, scrollable.
+        """The ten-entry sidebar: 200px wide, 36px items, 20px group headings, scrollable.
 
         Items are real checkable buttons (a screen reader announces the label and the badge, and the
         keyboard can reach every section). Labels are QLabels rather than button text so the 12px
@@ -2119,8 +2133,6 @@ class InstanceDetail(QWidget):
 
         # The former 设置 tab is now the second card of 概览: one destination, no duplicate navigation.
         layout.addWidget(self._build_settings())
-        # 投影: the Litematica file list. Its own block of methods lives after _build_saves.
-        layout.addWidget(self._build_schematic_card())
         layout.addStretch(1)
 
         self.open_folder_button.clicked.connect(self.open_instance_folder)
@@ -2323,11 +2335,69 @@ class InstanceDetail(QWidget):
         self.saves_delete_button.clicked.connect(self.delete_selected_saves)
         return page
 
+    # ---------- 截图 / 服务器 (instance media sections) ----------
+    #
+    # Both used to be top-level pages and are embedded here unchanged (embedded=True): they own the
+    # content edge to edge, like the mods and saves sections beside them. The scope is pushed by
+    # _sync_instance_pages() on every reload; the pages read the instance's *effective* launch_dir,
+    # so an isolated instance shows its own screenshots/servers.dat and a shared one shows the
+    # global pair. Each page refreshes on show and, while it is the visible tab, when the instance
+    # changes (set_instance checks isVisible()), so no extra lazy-load bookkeeping is needed here.
+
+    def _build_screenshots(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.screenshots_page = ScreenshotsPage(embedded=True)
+        layout.addWidget(self.screenshots_page, 1)
+        return page
+
+    def _build_servers(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.servers_page = ServersPage(embedded=True)
+        layout.addWidget(self.servers_page, 1)
+        return page
+
+    def _sync_instance_pages(self) -> None:
+        """Hand the shown instance (or none) to the two media sections.
+
+        Nothing is scanned here unless the section is on screen: ``set_instance`` only refreshes a
+        visible page, and the page's own ``showEvent`` covers the first visit. That is what keeps a
+        detail page on 概览 from decoding a folder of screenshots or reading servers.dat.
+        """
+        if self.resolved is None:
+            self.screenshots_page.clear_instance()
+            self.servers_page.clear_instance()
+            return
+        name = self.instance.name if self.instance is not None else self.resolved.id
+        self.screenshots_page.set_instance(
+            self.resolved.id, name, self.resolved.launch_dir, self.resolved.game_dir
+        )
+        self.servers_page.set_instance(
+            self.resolved.id, name, self.resolved.launch_dir, self.resolved.isolated
+        )
+
     # ---------- 投影 / Litematica schematics ----------
     #
     # One self-contained block: the card, its background read, the row builder, the selection and the
     # folder button. It is a card of the 概览 page, so nothing else had to be re-ordered; the page's
     # life cycle reaches it through reload_schematics() and _clear_schematics() only.
+
+    def _build_schematic_page(self) -> QWidget:
+        """The 投影原理图 tab: the same card, on its own page instead of the bottom of 概览.
+
+        PCL puts it in the sidebar beside 存档 / 截图 / 服务器, and it belongs there for the same
+        reason those do: the files are instance data the user comes back to on purpose.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(self._build_schematic_card())
+        layout.addStretch(1)
+        return page
 
     def _build_schematic_card(self) -> QWidget:
         """The 投影 card: one row per ``.litematic`` file, the selected file's metadata, one button.
@@ -2384,6 +2454,7 @@ class InstanceDetail(QWidget):
         meta_form = QFormLayout(self.schematic_meta)
         style_form(meta_form)
         self.schematic_values: dict[str, QLabel] = {}
+        self.schematic_titles: dict[str, QLabel] = {}
         for key, label_key in (
             ("name", "instances.detail.schematic.meta.name"),
             ("author", "instances.detail.schematic.meta.author"),
@@ -2400,6 +2471,7 @@ class InstanceDetail(QWidget):
             else:
                 value = ElidedLabel("")
             self.schematic_values[key] = value
+            self.schematic_titles[key] = title
             meta_form.addRow(title, value)
         self.schematic_meta.setVisible(False)
         card_layout.addWidget(self.schematic_meta)
@@ -2530,6 +2602,13 @@ class InstanceDetail(QWidget):
         values["author"].setText(info.author or none)
         values["created"].setText(self._schematic_created(info.created_ms))
         values["description"].setText(info.description or none)
+        # A .litematic saved without metadata is common (the file may carry nothing but Regions), so a
+        # panel of 名称 / （无） / （无） says less than one that shows only what the file actually has.
+        form = self.schematic_meta.layout()
+        for value in values.values():
+            empty = not value.text().strip() or value.text() == none
+            if isinstance(form, QFormLayout):
+                form.setRowVisible(value, not empty)
 
     def _selected_schematic(self) -> SchematicFile | None:
         index = self.schematic_list.currentRow()
@@ -3433,6 +3512,7 @@ class InstanceDetail(QWidget):
         self._fill_banners()
         self._fill_modify()
         self._refresh_badge_counts()
+        self._sync_instance_pages()
         self._loaded_tabs = set()
         self._reload_mods()
         # 投影 is a card of this page, not a lazily loaded tab, so it refreshes with the instance.
@@ -3486,6 +3566,14 @@ class InstanceDetail(QWidget):
         self.change_loader_button.setEnabled(False)
         for key in _BADGED_SECTIONS:
             self._set_badge_count(key, 0)
+        # The two media sections are hidden as well; their rows and scope labels must not outlive
+        # the instance they belong to. (Guarded: this can run while the page is being torn down.)
+        screenshots_page = getattr(self, "screenshots_page", None)
+        if screenshots_page is not None:
+            screenshots_page.clear_instance()
+        servers_page = getattr(self, "servers_page", None)
+        if servers_page is not None:
+            servers_page.clear_instance()
 
     def _fill_header(self) -> None:
         inst = self.instance

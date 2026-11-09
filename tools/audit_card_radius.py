@@ -128,6 +128,12 @@ def _check_card(card, window, image, paper: tuple[int, int, int], page_key: str)
         "ok": True,
         "skipped": False,
     }
+    # A card inside a hidden page of the stack still reports a geometry, but the pixels at that
+    # geometry belong to whatever page *is* on screen - measuring them invents a failure. Skip any
+    # card the current page does not actually show.
+    if not card.isVisible():
+        entry["skipped"] = True
+        return entry
     if x0 < 3 or y0 < 3 or x1 >= image.width() - 3 or y1 >= image.height() - 3:
         entry["skipped"] = True
         return entry

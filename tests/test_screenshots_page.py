@@ -29,6 +29,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QImage
 
+from gui import i18n
 from launcher import screenshots
 
 
@@ -51,6 +52,7 @@ def game(ws_tmp, monkeypatch):
 
 
 def _touch(path: Path, when: float) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"x")
     os.utime(path, (when, when))
     return path
@@ -72,6 +74,33 @@ def test_scan_reads_the_shared_folder_and_every_instance_folder(game) -> None:
     assert found[1].instance_name == "整合包演示"
     # newest first, even though the instance file would win a plain name sort
     assert found[0].taken_at > found[1].taken_at
+
+
+def test_scan_instance_reads_only_that_instance_and_the_shared_folder(game) -> None:
+    """The scoped scan used by the instance detail: one instance plus the shared folder, no others."""
+    _touch(game / "screenshots" / "shared.png", 300)
+    _touch(game / "versions" / "fabric-demo" / "screenshots" / "mine.png", 200)
+    _touch(game / "versions" / "other" / "screenshots" / "not-mine.png", 400)
+
+    found = screenshots.scan_instance_screenshots(
+        game, "fabric-demo", "整合包演示", game / "versions" / "fabric-demo"
+    )
+
+    assert [entry.filename for entry in found] == ["shared.png", "mine.png"]
+    assert found[0].is_shared
+    assert found[1].instance_id == "fabric-demo"
+    assert found[1].instance_name == "整合包演示"
+    assert all(entry.filename != "not-mine.png" for entry in found)
+
+
+def test_scan_instance_in_shared_mode_scans_the_shared_folder_once(game) -> None:
+    """A shared-mode instance runs in the game root: the launch_dir is the shared folder."""
+    _touch(game / "screenshots" / "shared.png", 300)
+
+    found = screenshots.scan_instance_screenshots(game, "shared-mode", "共享实例", game)
+
+    assert [entry.filename for entry in found] == ["shared.png"]
+    assert found[0].is_shared
 
 
 def test_scan_without_any_screenshot_folder_is_empty(game) -> None:
@@ -220,5 +249,29 @@ def test_the_empty_state_names_the_folder_it_scanned(app, game) -> None:
         text = page.empty.text()
         assert "还没有截图" in text or "No screenshots yet" in text
         assert str(game / "screenshots") in text
+    finally:
+        page.deleteLater()
+
+
+def test_the_embedded_page_waits_for_a_scope(app, game) -> None:
+    """Inside the detail page the gallery must not scan the whole game folder before it is scoped."""
+    from gui.pages.screenshots_page import ScreenshotsPage
+
+    _touch(game / "screenshots" / "shared.png", 100)
+    page = ScreenshotsPage(embedded=True)
+    try:
+        assert page.entries() == []
+        assert not page.has_scope()
+        page.set_instance(
+            "fabric-demo", "整合包演示", game / "versions" / "fabric-demo", game
+        )
+        page.refresh()
+        assert page.has_scope()
+        assert page.scope_label.isVisibleTo(page)
+        assert page.scope_label.text() == i18n.tr("instances.detail.screenshots.scope")
+        assert [entry.filename for entry in page.entries()] == ["shared.png"]
+        page.clear_instance()
+        assert not page.has_scope()
+        assert page.entries() == []
     finally:
         page.deleteLater()

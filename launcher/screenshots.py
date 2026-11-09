@@ -133,3 +133,38 @@ def scan_screenshots(
         unique.values(),
         key=lambda entry: (-entry.taken_at, entry.filename.casefold(), str(entry.path)),
     )
+
+
+def scan_instance_screenshots(
+    game_dir: Path | str,
+    instance_id: str,
+    instance_name: str,
+    instance_dir: Path | str | None = None,
+) -> list[ScreenshotEntry]:
+    """The screenshots of one instance plus the shared folder's, newest first.
+
+    The instance half is read from the folder the game actually runs in (``instance_dir``, i.e.
+    ``ResolvedInstance.launch_dir``), not from ``versions/<id>``: an isolated instance runs inside its
+    own folder, while a shared-mode instance runs in the game root and therefore writes to the shared
+    ``screenshots/`` only. Reading the *effective* folder is what makes both modes show the truth;
+    passing ``launch_dir`` is the caller's one job. A shared-mode launch directory is the game root,
+    so the second scan is skipped and every row is marked shared.
+
+    The rows keep the same "shared folder" / instance-name distinction the unscoped scan uses, so the
+    page's source column needs no special case.
+    """
+    root = Path(game_dir)
+    shared = screenshots_dir(root)
+    own = (Path(instance_dir) if instance_dir is not None else root / "versions" / instance_id)
+    own_shots = own / "screenshots"
+    found = _entries_in(shared, SHARED_INSTANCE_ID, "")
+    if own != root and own_shots != shared:
+        found.extend(_entries_in(own_shots, instance_id, instance_name))
+    unique: dict[str, ScreenshotEntry] = {}
+    for entry in found:
+        unique.setdefault(str(entry.path), entry)
+    return sorted(
+        unique.values(),
+        key=lambda entry: (-entry.taken_at, entry.filename.casefold(), str(entry.path)),
+    )
+

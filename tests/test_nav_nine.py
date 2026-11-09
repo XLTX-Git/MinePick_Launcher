@@ -15,11 +15,12 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Twelve navigation entries: the order, the rail, the page each row reaches, and the width floor.
+"""Nine navigation entries: the order, the rail, the page each row reaches, and the width floor.
 
-Every place that used to say "nine pages" and index the rail by a literal is exercised here through
-``NAV_KEYS`` itself. The three pages added after 资源 must not move 工具/设置/关于, and the window must
-still fit its 1000px product floor once they are built.
+The three pages that briefly lived on the rail (截图 / 服务器 / 收藏夹) are gone from it: screenshots
+and servers are sections of the instance detail page, favorites was deleted. Every place that indexes
+the rail goes through ``NAV_KEYS`` itself, and this file pins the list back to the nine destinations
+and the 1000px product floor.
 """
 
 from __future__ import annotations
@@ -32,6 +33,18 @@ import pytest
 from PySide6.QtCore import Qt
 
 from gui.main_window import NAV_KEYS
+
+EXPECTED_NAV = [
+    "launch",
+    "instances",
+    "versions",
+    "java",
+    "account",
+    "mods",
+    "tools",
+    "settings",
+    "about",
+]
 
 
 @pytest.fixture(scope="module")
@@ -66,53 +79,48 @@ def window(app, monkeypatch, ws_tmp):
     app.processEvents()
 
 
-def test_the_three_new_entries_sit_between_resources_and_tools() -> None:
-    assert len(NAV_KEYS) == 12
-    assert NAV_KEYS == [
-        "launch",
-        "instances",
-        "versions",
-        "java",
-        "account",
-        "mods",
-        "screenshots",
-        "servers",
-        "favorites",
-        "tools",
-        "settings",
-        "about",
-    ]
-    assert NAV_KEYS.index("screenshots") == NAV_KEYS.index("mods") + 1
-    assert NAV_KEYS.index("servers") == NAV_KEYS.index("mods") + 2
-    assert NAV_KEYS.index("favorites") == NAV_KEYS.index("mods") + 3
-    assert NAV_KEYS.index("tools") == NAV_KEYS.index("mods") + 4
-    # 工具 / 设置 / 关于 keep their relative order after the insertion.
+def test_the_navigation_is_back_to_nine_entries() -> None:
+    assert len(NAV_KEYS) == 9
+    assert NAV_KEYS == EXPECTED_NAV
+    # The three removed destinations must not sneak back between 资源 and 工具.
+    assert NAV_KEYS.index("mods") + 1 == NAV_KEYS.index("tools")
     assert NAV_KEYS[-3:] == ["tools", "settings", "about"]
 
 
-def test_every_nav_key_has_an_icon() -> None:
+def test_the_removed_pages_are_not_rail_destinations(window) -> None:
+    from gui.pages.instance_detail import InstanceDetail
+
+    assert window.pages.get("screenshots") is None
+    assert window.pages.get("servers") is None
+    assert window.pages.get("favorites") is None
+    # Both live inside the instance detail page's stack instead.
+    detail = window.pages["instances"].detail
+    assert isinstance(detail, InstanceDetail)
+    assert "screenshots" in detail.nav_buttons
+    assert "servers" in detail.nav_buttons
+
+
+def test_every_nav_key_has_a_unique_icon() -> None:
     from gui import nav_icons
 
     missing = [key for key in NAV_KEYS if key not in nav_icons.ICON_FILES]
     assert not missing, missing
-    assert nav_icons.ICON_FILES["screenshots"] == "layout-grid"
-    assert nav_icons.ICON_FILES["servers"] == "archive"
-    assert nav_icons.ICON_FILES["favorites"] == "sparkles"
-    # The three new glyphs must not be the ones the rail already uses for another destination.
     rail_icons = [nav_icons.ICON_FILES[key] for key in NAV_KEYS]
     assert len(set(rail_icons)) == len(rail_icons)
+    # The section glyphs must differ from the icons the same detail sidebar already uses.
+    assert nav_icons.ICON_FILES["screenshots"] == "image"
+    assert nav_icons.ICON_FILES["servers"] == "server"
+    assert nav_icons.ICON_FILES["overview"] != nav_icons.ICON_FILES["screenshots"]
+    assert nav_icons.ICON_FILES["saves"] != nav_icons.ICON_FILES["servers"]
+    assert "favorites" not in nav_icons.ICON_FILES
 
 
-def test_the_rail_shows_twelve_translated_entries(window, app) -> None:
+def test_the_rail_shows_nine_translated_entries(window, app) -> None:
     from gui import i18n
 
-    assert window.sidebar.count() == 12
     assert window.sidebar.count() == len(NAV_KEYS)
     for index, key in enumerate(NAV_KEYS):
         assert window.sidebar.item(index).text() == i18n.tr("nav." + key)
-    assert window.sidebar.item(NAV_KEYS.index("screenshots")).text() == i18n.tr("nav.screenshots")
-    assert window.sidebar.item(NAV_KEYS.index("servers")).text() == i18n.tr("nav.servers")
-    assert window.sidebar.item(NAV_KEYS.index("favorites")).text() == i18n.tr("nav.favorites")
 
 
 def test_each_row_reaches_its_own_page(window, app) -> None:
@@ -121,16 +129,6 @@ def test_each_row_reaches_its_own_page(window, app) -> None:
         app.processEvents()
         assert window.stack.currentWidget() is window.pages[key], key
     assert window.stack.count() == len(NAV_KEYS)
-
-
-def test_the_new_pages_are_the_expected_classes(window) -> None:
-    from gui.pages.favorites_page import FavoritesPage
-    from gui.pages.screenshots_page import ScreenshotsPage
-    from gui.pages.servers_page import ServersPage
-
-    assert isinstance(window.pages["screenshots"], ScreenshotsPage)
-    assert isinstance(window.pages["servers"], ServersPage)
-    assert isinstance(window.pages["favorites"], FavoritesPage)
 
 
 def test_the_window_still_fits_the_1000px_floor(window, app) -> None:
@@ -149,11 +147,11 @@ def test_the_window_still_fits_the_1000px_floor(window, app) -> None:
 
 
 def test_the_download_page_returns_to_whichever_entry_opened_it(window, app) -> None:
-    window.sidebar.setCurrentRow(NAV_KEYS.index("favorites"))
+    window.sidebar.setCurrentRow(NAV_KEYS.index("mods"))
     app.processEvents()
     window.open_download_page()
     app.processEvents()
     assert window.stack.currentWidget() is window.downloads_page()
     window.close_download_page()
     app.processEvents()
-    assert window.stack.currentWidget() is window.pages["favorites"]
+    assert window.stack.currentWidget() is window.pages["mods"]

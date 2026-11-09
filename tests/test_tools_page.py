@@ -638,7 +638,7 @@ def test_open_multiplayer_is_wired_to_the_window(app, monkeypatch, ws_tmp) -> No
 
 
 
-def test_tools_is_the_nav_entry_after_the_three_collection_pages(app, monkeypatch, ws_tmp) -> None:
+def test_tools_is_the_nav_entry_after_resources(app, monkeypatch, ws_tmp) -> None:
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data"))
     monkeypatch.setenv("MINECRAFT_GAME_DIR", str(ws_tmp / "game"))
     (ws_tmp / "game").mkdir()
@@ -646,12 +646,8 @@ def test_tools_is_the_nav_entry_after_the_three_collection_pages(app, monkeypatc
     from gui.main_window import NAV_KEYS, MainWindow
 
     assert NAV_KEYS.index("mods") == 5
-    assert NAV_KEYS[NAV_KEYS.index("mods") + 1 : NAV_KEYS.index("mods") + 4] == [
-        "screenshots",
-        "servers",
-        "favorites",
-    ]
-    assert NAV_KEYS.index("tools") == NAV_KEYS.index("mods") + 4
+    # 截图 / 服务器 left the rail for the instance detail sidebar; favorites was deleted.
+    assert NAV_KEYS[NAV_KEYS.index("mods") + 1] == "tools"
     assert NAV_KEYS.index("settings") == NAV_KEYS.index("tools") + 1
     assert nav_icons.ICON_FILES["tools"] == "wrench"
 

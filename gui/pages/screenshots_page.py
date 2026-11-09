@@ -17,10 +17,16 @@
 
 """截图 page: every screenshot Minecraft wrote, newest first, with the actions a gallery needs.
 
-The list is a scan of two kinds of folder (see ``launcher.screenshots``): the shared game folder's
-``screenshots/`` and each instance's own ``screenshots/``. The scan itself only stats files, so it can
-run on the GUI thread; *decoding* the pictures cannot - a 4K screenshot is tens of megabytes of pixels,
-and a folder of them would freeze the window for seconds. Every thumbnail therefore goes through
+Two entry points share one implementation. Standalone (``embedded=False``) the page scans every
+instance, which is what its own tests still drive. Embedded in the instance detail page it is scoped
+by :meth:`ScreenshotsPage.set_instance`: it lists *that* instance's screenshots plus the shared game
+folder's, and every row still says which of the two it came from. A shared-mode instance runs in the
+game root, so its list is just the shared folder - the scan follows ``launch_dir``, not a guessed
+folder name.
+
+The scan of two kinds of folder (see ``launcher.screenshots``) only stats files, so it can run on the
+GUI thread; *decoding* the pictures cannot - a 4K screenshot is tens of megabytes of pixels, and a
+folder of them would freeze the window for seconds. Every thumbnail therefore goes through
 ``QImageReader`` on a worker thread, at a size set *before* the decode, so the full image is never
 materialised. The rows appear immediately with an empty thumbnail slot and fill in as the batches land.
 
@@ -305,9 +311,9 @@ class ScreenshotRow(CardRow):
 
 
 class ScreenshotsPage(QWidget):
-    """The gallery: a scan of both screenshot locations, newest first, with per-row actions."""
+    """The gallery: a scan of the shared folder (plus one instance, when scoped), newest first."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, embedded: bool = False) -> None:
         super().__init__()
         self.setObjectName("screenshotsPage")
         self.setAccessibleName(tr("nav.screenshots"))
@@ -318,9 +324,17 @@ class ScreenshotsPage(QWidget):
         #: Bumped by every rebuild; a batch that lands for an older generation is dropped.
         self._generation = 0
         self._shots_dir = Path()
+        #: True inside the instance detail page. There the page starts with no scope and must not
+        #: scan the shared folder until the detail tells it which instance it is showing.
+        self._embedded = embedded
+        #: (instance id, display name, launch dir, game dir) once set_instance has run.
+        self._scope: tuple[str, str, Path, Path] | None = None
 
         self.count_label = QLabel("")
         self.count_label.setObjectName("hint")
+        self.scope_label = QLabel(tr("instances.detail.screenshots.scope"))
+        self.scope_label.setObjectName("hint")
+        self.scope_label.setVisible(False)
         self.refresh_button = QPushButton(tr("java.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
         self.refresh_button.setFixedHeight(32)
@@ -335,6 +349,7 @@ class ScreenshotsPage(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(8)
         header_layout.addWidget(self.count_label)
+        header_layout.addWidget(self.scope_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.refresh_button)
         header_layout.addWidget(self.open_folder_button)
@@ -360,13 +375,49 @@ class ScreenshotsPage(QWidget):
         layout = QVBoxLayout(self)
         style_page_layout(layout)
         add_page_top_inset(layout)
+        if embedded:
+            # Inside the instance detail the section owns the content area edge to edge, like the
+            # mods/saves pages beside it; a page-level inset here would shift the rows 14px right.
+            layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(header)
         layout.addWidget(self.stack, 1)
 
         self.refresh_button.clicked.connect(self.refresh)
         self.open_folder_button.clicked.connect(self.open_folder)
         theme.register_self_styling(self)
+        if not embedded:
+            self.refresh()
+
+    # ---------- instance scope ----------
+
+    def set_instance(
+        self,
+        instance_id: str,
+        instance_name: str,
+        launch_dir: Path | str,
+        game_dir: Path | str,
+    ) -> None:
+        """Scope the gallery to one instance plus the shared folder.
+
+        ``launch_dir`` is the folder the game actually runs in (``ResolvedInstance.launch_dir``):
+        the instance folder when isolated, the game root when shared. Reading the effective folder
+        rather than ``versions/<id>`` means the list follows the mode instead of assuming one.
+        """
+        self._scope = (instance_id, instance_name, Path(launch_dir), Path(game_dir))
+        self.scope_label.setVisible(True)
+        # Refresh even while the tab is hidden: the detail page names its instance before the gallery
+        # is ever shown, and a scan gated on visibility left ``entries()`` empty until some later show.
+        # The scan is a handful of is_dir() calls, so doing it once more on show costs nothing.
         self.refresh()
+
+    def clear_instance(self) -> None:
+        """Drop the scope and the rows (the detail page is being cleared)."""
+        self._scope = None
+        self._entries = []
+        self._rebuild()
+
+    def has_scope(self) -> bool:
+        return self._scope is not None
 
     def on_theme_applied(self) -> None:
         for row in self._rows:
@@ -383,12 +434,28 @@ class ScreenshotsPage(QWidget):
         return list(self._rows)
 
     def refresh(self) -> None:
-        """Rescan both locations and rebuild the list; thumbnails come from the cache when possible."""
-        game_dir = self._game_dir()
-        self._shots_dir = screenshots.screenshots_dir(game_dir)
-        self._entries = screenshots.scan_screenshots(game_dir, self._instance_names(game_dir))
+        """Rescan the configured locations and rebuild the list; thumbnails come from the cache."""
+        if self._embedded and self._scope is None:
+            return  # the detail has not named an instance yet; never scan the whole game folder here
+        game_dir, instance = self._scan_root()
+        self._shots_dir = (
+            screenshots.screenshots_dir(instance[2]) if instance is not None
+            else screenshots.screenshots_dir(game_dir)
+        )
+        if instance is not None:
+            self._entries = screenshots.scan_instance_screenshots(
+                game_dir, instance[0], instance[1], instance[2]
+            )
+        else:
+            self._entries = screenshots.scan_screenshots(game_dir, self._instance_names(game_dir))
         self._rebuild()
         self._apply_thumbnails()
+
+    def _scan_root(self) -> tuple[Path, tuple[str, str, Path, Path] | None]:
+        """The game folder to scan and - when scoped - the instance tuple that narrows it."""
+        if self._scope is not None:
+            return self._scope[3], self._scope
+        return self._game_dir(), None
 
     @staticmethod
     def _game_dir() -> Path:
@@ -545,4 +612,5 @@ class ScreenshotsPage(QWidget):
     def showEvent(self, event) -> None:
         """Every visit re-reads the folder: the game may have written a screenshot meanwhile."""
         super().showEvent(event)
-        self.refresh()
+        if not self._embedded or self._scope is not None:
+            self.refresh()

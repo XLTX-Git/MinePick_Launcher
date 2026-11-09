@@ -233,6 +233,89 @@ def ensure_preview(root: Path, game_dir: Path | None = None) -> tuple[Path, Path
     return data, game
 
 
+def _write_preview_screenshot(path: Path, *, horizon: int, sun: int) -> None:
+    """Paint one small placeholder picture (no fonts: this runs before/without a UI font pass)."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter
+
+    image = QImage(320, 180, QImage.Format.Format_RGB32)
+    painter = QPainter(image)
+    sky = QLinearGradient(QPointF(0, 0), QPointF(0, 180))
+    sky.setColorAt(0.0, QColor("#5f9bd0"))
+    sky.setColorAt(1.0, QColor("#c9e6f5"))
+    painter.fillRect(image.rect(), sky)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#f4e2a1"))
+    painter.drawRect(sun, 24, 30, 30)
+    painter.setBrush(QColor("#5c8f3f"))
+    painter.drawRect(0, horizon, 320, 180 - horizon)
+    painter.setBrush(QColor("#7a5a37"))
+    painter.drawRect(0, 162, 320, 18)
+    painter.setBrush(QColor("#3f6ea8"))
+    painter.drawRect(36, horizon - 34, 56, 34)
+    painter.setBrush(QColor("#d8dde3"))
+    painter.drawRect(44, horizon - 26, 16, 14)
+    painter.setBrush(QColor("#8a4b2f"))
+    painter.drawRect(232, horizon - 46, 10, 46)
+    painter.setBrush(QColor("#3f7d35"))
+    painter.drawRect(210, horizon - 70, 54, 28)
+    painter.end()
+    image.save(str(path))
+
+
+def seed_preview_media(game_dir: Path) -> None:
+    """Give the two demo instances screenshots and servers.dat so the section shots have content.
+
+    Runs after ``create_app()`` (QPainter needs the GUI application for its raster engine) and before
+    the window exists. Everything is rewritten on every render, so a stale picture cannot leak into a
+    new one. The mtimes are pinned: the shared folder gets the newest picture, which is also what the
+    row order and the "source" column are supposed to demonstrate.
+    """
+    from launcher import servers
+
+    shared = game_dir / "screenshots"
+    shared.mkdir(parents=True, exist_ok=True)
+    for index, (name, when, horizon, sun) in enumerate(
+        (
+            ("2026-11-08_20.31.12.png", 1_762_600_000, 132, 244),
+            ("2026-11-08_17.05.44.png", 1_762_588_000, 126, 36),
+        )
+    ):
+        target = shared / name
+        _write_preview_screenshot(target, horizon=horizon, sun=sun)
+        os.utime(target, (when, when))
+
+    for name, base, horizon, sun in (
+        ("整合包演示", 1_762_580_000, 120, 190),
+        ("生存存档", 1_762_570_000, 140, 70),
+    ):
+        own = game_dir / "versions" / name / "screenshots"
+        own.mkdir(parents=True, exist_ok=True)
+        target = own / f"2026-11-08_{'19' if name == '整合包演示' else '16'}.42.09.png"
+        _write_preview_screenshot(target, horizon=horizon, sun=sun)
+        os.utime(target, (base, base))
+        servers.write_servers(
+            servers.servers_path(own.parent),
+            servers.ServersFile(
+                entries=[
+                    servers.ServerEntry(name="Hypixel", ip="mc.hypixel.net"),
+                    servers.ServerEntry(name="本地测试服", ip="127.0.0.1:25565"),
+                    servers.ServerEntry(name="朋友的世界", ip="play.example.net:25565"),
+                ]
+            ),
+        )
+
+    servers.write_servers(
+        servers.servers_path(game_dir),
+        servers.ServersFile(
+            entries=[
+                servers.ServerEntry(name="2b2t", ip="connect.2b2t.org"),
+                servers.ServerEntry(name="Hypixel", ip="mc.hypixel.net"),
+            ]
+        ),
+    )
+
+
 #: The launcher's default interface language, and the language a render uses when ``--language`` is
 #: not given. A fixed default is the point: the preview data dir is shared by every render, so "keep
 #: whatever the last run left on disk" is exactly how a German render used to turn the next one German.
@@ -591,6 +674,11 @@ def main() -> int:
         help="also render the instance detail page (next index after the nav pages) for the selected demo instance",
     )
     parser.add_argument(
+        "--detail-sections",
+        action="store_true",
+        help="also render the instance detail with 截图 and 服务器 selected (implies --detail-shot)",
+    )
+    parser.add_argument(
         "--tools-states",
         action="store_true",
         help="also render the six reviewed 联机 layouts of the tools page",
@@ -734,6 +822,9 @@ def main() -> int:
     # registered just above (they are not available when create_app() applies the theme).
     cfg, _ = config.load()
     apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+    # The instance detail's 截图 / 服务器 sections need something to show: small painted pictures and
+    # a real servers.dat for each demo instance. QPainter needs the application that now exists.
+    seed_preview_media(Path(game_dir))
     store = AccountStore()
     accounts = store.load()
     if not accounts:
@@ -804,8 +895,8 @@ def main() -> int:
 
     if args.dialog_shot:
         _render_dialog_shot(app, window, Path(game_dir), out_dir, prefix)
-    if args.detail_shot:
-        _render_detail_shot(app, window, out_dir, prefix)
+    if args.detail_shot or args.detail_sections:
+        _render_detail_shot(app, window, out_dir, prefix, sections=args.detail_sections)
     if args.tools_states:
         _render_tools_states(app, window, out_dir, prefix)
 
@@ -892,13 +983,19 @@ def _render_tools_states(app, window, out_dir: Path, prefix: str) -> None:
         print(f"saved {target} ({image.width()}x{image.height()})")
 
 
-def _render_detail_shot(app, window, out_dir: Path, prefix: str) -> None:
+def _render_detail_shot(
+    app, window, out_dir: Path, prefix: str, *, sections: bool = False
+) -> None:
     """Render the instance detail page, the card grid's drill-down target.
 
-    The published set is eight nav pages plus this one: the detail view has no nav-rail entry of its
+    The published set is nine nav pages plus this one: the detail view has no nav-rail entry of its
     own, so the page loop above can never reach it. Opening it also drops the main rail (the detail
-    page has an eight-entry sidebar of its own), which is part of the picture and the reason this
-    pass renders the whole window rather than the page widget.
+    page has a ten-entry sidebar of its own), which is part of the picture and the reason this pass
+    renders the whole window rather than the page widget.
+
+    With ``sections`` it also renders the two 游戏资源 sections that used to be top-level pages
+    (截图 / 服务器): they live only inside this detail view now, so this is the only place a picture of
+    them can be taken.
 
     Runs last on purpose: the rail is hidden while the detail page is up, so a later page pass would
     have to restore the grid first.
@@ -925,10 +1022,28 @@ def _render_detail_shot(app, window, out_dir: Path, prefix: str) -> None:
     for _ in range(10):
         app.processEvents()
         time.sleep(0.05)
+    target = out_dir / f"{prefix}{len(NAV_KEYS)}_instance_detail.png"
+    _save_detail_picture(window, page, target)
+    if not sections:
+        return
+    from gui.pages.instance_detail import TAB_SCREENSHOTS, TAB_SERVERS
+
+    detail = page.detail_page.detail
+    for tab, suffix in ((TAB_SCREENSHOTS, "screenshots"), (TAB_SERVERS, "servers")):
+        detail.set_tab(tab)
+        wait_for_workers(app, QThreadPool.globalInstance(), 8.0)
+        for _ in range(12):
+            app.processEvents()
+            time.sleep(0.05)
+        target = out_dir / f"{prefix}{len(NAV_KEYS)}_instance_detail_{suffix}.png"
+        _save_detail_picture(window, page, target)
+
+
+def _save_detail_picture(window, page, target: Path) -> None:
+    """Defocus, refuse a focus-marked picture, then save the window at the page's own size."""
     defocus_for_shot(window, page)
     assert_no_focus_mark(window, page)
     image = render_page_image(window)
-    target = out_dir / f"{prefix}{len(NAV_KEYS)}_instance_detail.png"
     image.save(str(target))
     print(f"saved {target} ({image.width()}x{image.height()})")
 
