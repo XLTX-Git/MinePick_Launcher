@@ -154,6 +154,15 @@ class LinkSession(Protocol):
     def download_core(self, progress_cb: ProgressCallback) -> None:
         """Download the Terracotta core, reporting 0..1000 through ``progress_cb``."""
 
+    def remove_core(self) -> int:
+        """Delete the downloaded core and return the bytes removed.
+
+        The counterpart of :meth:`download_core`: after a successful call the component is gone and
+        the state is ``NOT_DOWNLOADED``. A failure (a running core keeps its executable open on
+        Windows) raises and must leave the state as it was, so the page can report the reason
+        instead of pretending the component disappeared.
+        """
+
     def add_listener(self, listener: Listener) -> Callable[[], None]:
         """Subscribe to state changes; the return value unsubscribes."""
 
@@ -172,6 +181,9 @@ class FakeLinkSession:
 
     DEFAULT_ROOM_CODE = "U/8F3K-2QX9-7WMD-4TRA"
     DEFAULT_ADDRESS = "127.0.0.1:25566"
+    #: Demo byte count for the delete-completion message: the v0.4.2 archive this launcher installs
+    #: (8,135,914 bytes). Screenshots and fixtures only - the fake deletes nothing.
+    DEMO_REMOVED_BYTES = 8_135_914
     # Demo data for screenshots and fixtures only; not a product default.
     DEMO_STEVE_UUID = "8667ba71-b85a-4004-af54-457a9734eed7"
     DEMO_ALEX_UUID = "ec561538-f3fd-461d-aff5-086b22154bce"
@@ -185,6 +197,7 @@ class FakeLinkSession:
         difficulty: LinkDifficulty | None = None,
         address: str = "",
         failure_key: str = "",
+        removed_bytes: int = DEMO_REMOVED_BYTES,
     ) -> None:
         self._state = state
         self._room_code = room_code
@@ -194,6 +207,7 @@ class FakeLinkSession:
         self._failure_key = failure_key
         self._listeners: list[Listener] = []
         self._instance_id = ""
+        self._removed_bytes = max(0, int(removed_bytes))
 
     # -- observable state -------------------------------------------------
     def state(self) -> LinkState:
@@ -282,6 +296,17 @@ class FakeLinkSession:
         self._state = LinkState.IDLE
         self._failure_key = ""
         self._notify()
+
+    def remove_core(self) -> int:
+        """Forget the component and return the demo byte count; the fake touches no files.
+
+        Deliberately no disk I/O: a page test that clicks 停用联机功能 must never delete the machine's
+        real ``components/terracotta``. The end-to-end deletion is proved by the real backend and by
+        tests that point ``MCLAUNCHER_DATA_DIR`` at a temporary tree.
+        """
+        removed = self._removed_bytes
+        self._reset(LinkState.NOT_DOWNLOADED)
+        return removed
 
     # -- scripted backend events ------------------------------------------
     def publish(

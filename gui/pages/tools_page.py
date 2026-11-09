@@ -53,10 +53,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, paint_utils, theme
+from gui import i18n, inwindow_dialog, paint_utils, theme
 from gui.widgets import (
     add_page_top_inset,
     build_download_progress,
+    set_app_status,
     style_page_layout,
     widget_alive,
 )
@@ -463,6 +464,7 @@ class ToolsPage(QWidget):
         self._downloading = False
         self._download_failure = ""
         self._checking = False
+        self._disabling = False
         self._selected_channel = ""
 
         self._build_ui()
@@ -635,11 +637,17 @@ class ToolsPage(QWidget):
         layout.setSpacing(8)
         provided = QLabel(tr("tools.footer.provided"))
         provided.setObjectName("toolsFooterText")
-        disable = QLabel(tr("tools.footer.disable"))
-        disable.setObjectName("toolsFooterLink")
+        # A button, not a label: 停用联机功能 deletes the downloaded payload, so it has to be a real
+        # control - reachable with Tab, announced as a button, and it must not look clickable while
+        # doing nothing (which is what the label it used to be did).
+        self.disable_link = QPushButton(tr("tools.footer.disable"))
+        self.disable_link.setObjectName("toolsFooterLink")
+        self.disable_link.setAccessibleName(tr("tools.footer.disable"))
+        self.disable_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.disable_link.clicked.connect(self._disable_link)
         layout.addWidget(provided)
         layout.addStretch(1)
-        layout.addWidget(disable)
+        layout.addWidget(self.disable_link)
         return footer
 
     @staticmethod
@@ -1479,6 +1487,59 @@ class ToolsPage(QWidget):
 
     def _close_room(self) -> None:
         self._session.close_room()
+
+    def _disable_link_dialog(self) -> inwindow_dialog.InWindowMessage:
+        """The 停用联机功能 confirmation; the render tool shows this exact card.
+
+        Built here rather than inline so the picture and the shipped question cannot drift apart.
+        The safe answer is the default one: Enter cancels, and only the warning button deletes.
+        """
+        return inwindow_dialog.InWindowMessage(
+            self,
+            tr("tools.disable.title"),
+            tr("tools.disable.message"),
+            severity="warning",
+            buttons=[
+                (tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED),
+                (tr("tools.disable.confirm"), inwindow_dialog.Outcome.ACCEPTED),
+            ],
+            default=inwindow_dialog.Outcome.REJECTED,
+        )
+
+    def _disable_link(self) -> None:
+        """停用联机功能: delete the downloaded payload, then show the onboarding page again.
+
+        The order is the documented one: the room goes first, then the files. Removing the files is
+        the session's job (it is the only owner of the component state), so the page can go back to
+        ``NOT_DOWNLOADED`` without guessing. A running core keeps its executable open on Windows;
+        that failure is reported with the OS reason instead of being swallowed.
+        """
+        if self._disabling:
+            return
+        if self._session.state() is LinkState.NOT_DOWNLOADED:
+            set_app_status(self, tr("tools.disable.none"))
+            return
+        dialog = self._disable_link_dialog()
+        if dialog.parentWidget() is None:
+            log.warning("停用联机功能: 没有可以绘制确认框的窗口，已取消")
+            return
+        if dialog.ask() is not inwindow_dialog.Outcome.ACCEPTED:
+            return
+        self._disabling = True
+        try:
+            self._session.close_room()
+            removed = int(self._session.remove_core() or 0)
+        except Exception as exc:  # noqa: BLE001 - any removal failure has to reach the user
+            detail = str(getattr(exc, "detail", "") or exc or type(exc).__name__)
+            log.warning("删除联机组件失败: %s", detail)
+            set_app_status(self, tr("tools.disable.fail", detail), "error")
+            return
+        finally:
+            self._disabling = False
+        if removed <= 0:
+            set_app_status(self, tr("tools.disable.none"))
+            return
+        set_app_status(self, tr("tools.disable.done", _format_mb(removed)))
 
     def _copy_code(self) -> None:
         code = self._session.room_code()

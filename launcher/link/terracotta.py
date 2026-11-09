@@ -61,6 +61,7 @@ from launcher.link.components import (
     executable_path,
     install,
 )
+from launcher.link.components import remove as remove_component
 from launcher.link.easytier import probe_nat_types
 from launcher.link.mirrors import configured_key
 from launcher.link.selfcheck import (
@@ -817,6 +818,41 @@ class TerracottaLinkSession:
             self._reset_remote()
         self._restart_polling()
         self._notify()
+
+    def remove_core(self) -> int:
+        """Delete the downloaded payload and return its size in bytes.
+
+        ``close_room`` is the caller's step (the page does it first), because closing a room and
+        deleting a component are two different promises. The component state is re-read from disk
+        instead of being assumed: only a removal that succeeded moves the session to
+        ``NOT_DOWNLOADED``. A running core keeps its executable open on Windows, so a failed removal
+        raises :class:`~launcher.link.components.ComponentError` with the OS detail and leaves the
+        state as it was - the page reports the reason and nothing pretends the core is gone.
+        """
+        with self._lock:
+            if self._disposed:
+                return 0
+        try:
+            removed = remove_component()
+        except ComponentError:
+            with self._lock:
+                self._component = self._component_status_fn()
+            raise
+        with self._lock:
+            self._component = self._component_status_fn()
+            self._state = LinkState.NOT_DOWNLOADED
+            self._phase = ""
+            self._room_code = ""
+            self._members = ()
+            self._difficulty = None
+            self._address = ""
+            self._failure_key = ""
+            self._instance_id = ""
+            # Nothing is installed any more, so there is nothing for the poller to report: a service
+            # that outlived the deletion must not paint a room over the onboarding page.
+            self._poll_enabled = False
+        self._notify()
+        return removed
 
     def download_core(self, progress_cb: ProgressCallback) -> None:
         """Install the payload on a worker thread; state moves to ``IDLE`` when it lands."""

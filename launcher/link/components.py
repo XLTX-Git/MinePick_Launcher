@@ -163,6 +163,49 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def remove() -> int:
+    """Delete the installed payload directory; return how many bytes it held.
+
+    Only ``<launcher dir>/components/terracotta`` is touched: ``components/easytier`` belongs to the
+    network self-check and must survive, which is why this resolves the one directory through
+    :func:`component_dir` instead of clearing ``components/``.
+
+    Raises :class:`ComponentError` with a translation key and the OS detail when the directory cannot
+    be removed - on Windows a running Terracotta keeps its own executable open, and that reason has
+    to reach the user instead of being swallowed. A missing directory is not an error: it simply
+    means there was nothing left to delete, and the byte count is 0.
+    """
+    target = component_dir()
+    if not target.is_dir():
+        return 0
+    size = _tree_size(target)
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        raise ComponentError("tools.disable.fail", _describe_os_error(target, exc)) from exc
+    return size
+
+
+def _tree_size(root: Path) -> int:
+    """Total size of the regular files under ``root`` (unreadable entries count as 0)."""
+    total = 0
+    for path in root.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _describe_os_error(target: Path, exc: OSError) -> str:
+    """The reason to show for a failed removal: the OS message names the file that is in use."""
+    filename = str(getattr(exc, "filename", "") or "").strip()
+    if filename:
+        return f"{filename}: {exc.strerror or exc}"
+    return f"{target}: {exc.strerror or exc}"
+
+
 def verify_archive(path: Path, package: PackageSpec) -> bool:
     """Byte length and SHA-256 both have to match the release constants."""
     try:

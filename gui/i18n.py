@@ -309,6 +309,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.tab.link": "联机",
         "tools.footer.provided": "联机由 Terracotta | 陶瓦联机 提供",
         "tools.footer.disable": "停用联机功能",
+        "tools.disable.title": "停用联机功能",
+        "tools.disable.message": (
+            "会删除已下载的陶瓦联机组件（约 8 MB），下次使用联机时需要重新下载。\n\n"
+            "如果大厅正开着，会先关闭。网络自检使用的组件不受影响。"
+        ),
+        "tools.disable.confirm": "删除组件",
+        "tools.disable.done": "已删除联机组件（{} MB），下次使用需要重新下载。",
+        "tools.disable.fail": "删除联机组件失败：{}",
+        "tools.disable.none": "没有已下载的联机组件，无需删除。",
         "tools.onboard.title": "未下载联机核心",
         "tools.onboard.body": (
             "首次使用联机前，需要先下载约 8MiB 的联机核心。\n\n"
@@ -1576,6 +1585,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.tab.link": "Multiplayer",
         "tools.footer.provided": "Multiplayer is provided by Terracotta | 陶瓦联机",
         "tools.footer.disable": "Disable multiplayer",
+        "tools.disable.title": "Disable multiplayer",
+        "tools.disable.message": (
+            "This deletes the downloaded Terracotta multiplayer component (about 8 MB); using "
+            "multiplayer again will download it once more.\n\n"
+            "If a room is open, it is closed first. The component the network check uses is left "
+            "alone."
+        ),
+        "tools.disable.confirm": "Delete component",
+        "tools.disable.done": (
+            "Deleted the multiplayer component ({} MB); it will be downloaded again when you use "
+            "multiplayer."
+        ),
+        "tools.disable.fail": "Could not delete the multiplayer component: {}",
+        "tools.disable.none": "No multiplayer component is downloaded, so there is nothing to delete.",
         "tools.onboard.title": "Multiplayer core not downloaded",
         "tools.onboard.body": (
             "Before using multiplayer, download the ~8 MiB core.\n\n"

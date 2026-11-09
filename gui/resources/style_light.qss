@@ -1708,7 +1708,21 @@ QFrame#toolsFooter {
     border: none;
     border-top: 1px solid __BORDER_TABLE__;
 }
-QLabel#toolsFooterText, QLabel#toolsFooterLink { color: __FG_HINT__; font-size: 12px; }
+QLabel#toolsFooterText { color: __FG_HINT__; font-size: 12px; }
+/* 停用联机功能: a quiet text link that is a real button. The 1px transparent border is the focus
+   ring's placeholder (the same recipe #secondaryButton uses), so focusing it cannot move the footer. */
+QPushButton#toolsFooterLink {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: __RADIUS_SM__;
+    color: __FG_HINT__;
+    padding: 0 4px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QPushButton#toolsFooterLink:hover { color: __FG_TEXT__; border-color: __BORDER_HOVER__; }
+QPushButton#toolsFooterLink:pressed { color: __ACCENT__; }
+QPushButton#toolsFooterLink[keyboardFocus="true"] { color: __FG_TEXT__; border-color: __FOCUS_RING__; }
 
 QLabel#toolsRowTitle { color: __FG_TEXT__; font-size: 13px; }
 QLabel#toolsStepText { color: __FG_TEXT__; font-size: 13px; }
