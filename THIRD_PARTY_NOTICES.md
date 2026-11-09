@@ -8,6 +8,10 @@ Qt for Python (PySide6) is licensed under **LGPL-3.0** and is shipped as a dynam
 
 MinePick Launcher 本体以 **GPL-3.0-only** 发布（见 [LICENSE](LICENSE)）。下列第三方组件与服务各自适用其自身许可与条款；版本号取自实际安装的发行版元数据。Qt for Python（PySide6）以 **LGPL-3.0** 授权，以动态库形式提供且未作修改；单文件构建在启动时会把这些 Qt 库从压缩包解压到临时目录。Qt 源码可从 <https://code.qt.io/> 与 <https://download.qt.io/official_releases/qt/> 获取。应用内的「关于」页展示同一份清单（按界面语言翻译）。
 
+EasyTier is **not bundled** in this repository or in the installer. The network check downloads the official v2.6.4 Windows archive at runtime, verifies its SHA-256, installs only the unmodified `easytier-cli.exe`, and can replace it at any time. EasyTier is licensed under **LGPL-3.0**; the complete licence text is at <https://www.gnu.org/licenses/lgpl-3.0.txt> and the corresponding source for the installed version is at <https://github.com/EasyTier/EasyTier/tree/v2.6.4>. Anyone who redistributes the downloaded CLI must include this notice, the LGPL-3.0 text and a way to obtain that source.
+
+EasyTier **不随**本仓库或安装包分发。网络自检在运行时下载官方 v2.6.4 Windows 压缩包，校验 SHA-256 后只安装未修改的 `easytier-cli.exe`，并可随时替换该文件。EasyTier 以 **LGPL-3.0** 授权；完整许可文本见 <https://www.gnu.org/licenses/lgpl-3.0.txt>，所安装版本对应的源码见 <https://github.com/EasyTier/EasyTier/tree/v2.6.4>。再分发该 CLI 时，必须保留本声明、LGPL-3.0 许可文本以及获取对应源码的途径。
+
 Minecraft block textures - used only as version icons - belong to Mojang. MinePick Launcher does **not distribute** these images. The icon source order is: the user's own ``assets`` / ``client.jar`` → the user's local cache → fetched at runtime from mcmod.cn's image host and cached in the user's configuration directory. Neither the source tree nor the installer contains a Minecraft image.
 
 原版方块材质（仅用作版本图标）归 Mojang 所有；本项目不分发这些图片。图标的来源顺序为：用户本机的 ``assets`` / ``client.jar`` → 用户本机缓存 → 运行时从 mcmod.cn 的图床获取并缓存到用户配置目录。源码与安装包都不包含任何 Minecraft 图片。
@@ -116,6 +120,10 @@ The names and logos of the mod loaders (Fabric, Forge, NeoForge, Quilt) belong t
   - Multiplayer; the unmodified binary is used through its local HTTP API, and its copyright is credited in the interface.
   - 联机功能。以未修改的二进制形式通过本地 HTTP API 交互，界面已标注其版权。
   - <https://github.com/burningtnt/Terracotta>
+- **EasyTier** — `LGPL-3.0`
+  - UDP/TCP NAT-type probe for the network check. The unmodified official CLI is downloaded on first use; LGPL-3.0, with the licence text and source link below.
+  - 网络自检的 UDP/TCP NAT 类型检测。首次使用时下载未修改的官方 CLI；LGPL-3.0，许可文本与源码地址见下。
+  - <https://github.com/EasyTier/EasyTier>
 
 ## Inspiration and community / 灵感与社区
 

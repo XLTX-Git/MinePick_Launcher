@@ -92,6 +92,15 @@ SERVICES: tuple[Credit, ...] = (
         "AGPL-3.0-or-later with exception",
         "https://github.com/burningtnt/Terracotta",
     ),
+    # Downloaded on demand by the network check and never shipped in the installer. The launcher
+    # installs only the unmodified upstream CLI, so the LGPL's relinking requirements are met by
+    # replacing that file, and the generated notices file carries the licence and source links.
+    Credit(
+        "EasyTier",
+        "about.credit.easytier",
+        "LGPL-3.0",
+        "https://github.com/EasyTier/EasyTier",
+    ),
 )
 
 COMMUNITY: tuple[Credit, ...] = (

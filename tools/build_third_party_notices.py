@@ -129,6 +129,25 @@ def render() -> str:
         ),
         "",
         (
+            "EasyTier is **not bundled** in this repository or in the installer. The network check "
+            "downloads the official v2.6.4 Windows archive at runtime, verifies its SHA-256, installs "
+            "only the unmodified `easytier-cli.exe`, and can replace it at any time. EasyTier is "
+            "licensed under **LGPL-3.0**; the complete licence text is at "
+            "<https://www.gnu.org/licenses/lgpl-3.0.txt> and the corresponding source for the "
+            "installed version is at <https://github.com/EasyTier/EasyTier/tree/v2.6.4>. Anyone who "
+            "redistributes the downloaded CLI must include this notice, the LGPL-3.0 text and a way "
+            "to obtain that source."
+        ),
+        "",
+        (
+            "EasyTier **不随**本仓库或安装包分发。网络自检在运行时下载官方 v2.6.4 Windows 压缩包，"
+            "校验 SHA-256 后只安装未修改的 `easytier-cli.exe`，并可随时替换该文件。EasyTier 以 "
+            "**LGPL-3.0** 授权；完整许可文本见 <https://www.gnu.org/licenses/lgpl-3.0.txt>，"
+            "所安装版本对应的源码见 <https://github.com/EasyTier/EasyTier/tree/v2.6.4>。"
+            "再分发该 CLI 时，必须保留本声明、LGPL-3.0 许可文本以及获取对应源码的途径。"
+        ),
+        "",
+        (
             "Minecraft block textures - used only as version icons - belong to Mojang. MinePick "
             "Launcher does **not distribute** these images. The icon source order is: the user's own "
             "``assets`` / ``client.jar`` → the user's local cache → fetched at runtime from "
