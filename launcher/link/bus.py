@@ -154,7 +154,16 @@ class LinkSessionBus:
                 return True
         if running_terracotta_port(process) is None:
             return False
-        self.session()
+        session = self.session()
+        # The probe above is the evidence that a service is up. If the payload check on disk
+        # disagrees (an executable that was moved after the process started), the session is still
+        # told to observe it - otherwise a real room would be invisible exactly on the restart path.
+        observe = getattr(session, "observe_running_instance", None)
+        if callable(observe):
+            try:
+                observe()
+            except Exception:
+                logger.debug("无法让联机会话观察已运行的实例", exc_info=True)
         return True
 
     def replace_session(self, session: LinkSession) -> LinkSession | None:

@@ -205,10 +205,34 @@ def test_clicking_the_capsule_opens_the_live_room_page(
         _close(app, window)
 
 
+def test_the_capsule_is_retranslated_on_a_language_switch(
+    app, monkeypatch, ws_tmp
+) -> None:
+    """The capsule is the window's, not a page's: build_pages() must refresh its text itself."""
+    window = _window(app, monkeypatch, ws_tmp, "language")
+    try:
+        window.link_bus.replace_session(
+            FakeLinkSession(state=LinkState.HOST_READY, room_code=ROOM)
+        )
+        assert _pump(app, lambda: window.link_capsule.isVisibleTo(window))
+        assert window.link_capsule.text() == i18n.tr("link.badge.active", "U/8F3K")
+
+        i18n.set_language("en_us")
+        window.build_pages()
+        _settle(app)
+
+        assert window.link_capsule.isVisibleTo(window)
+        assert window.link_capsule.text() == "Multiplayer · U/8F3K"
+        assert window.link_capsule.toolTip() == "Back to Tools › Multiplayer"
+    finally:
+        i18n.set_language("zh_cn")
+        _close(app, window)
+
+
 # ------------------------------------------------------------------ geometry
 
 
-@pytest.mark.parametrize("language", ["zh_cn", "ja_jp"])
+@pytest.mark.parametrize("language", ["zh_cn", "ja_jp", "de_de"])
 def test_the_capsule_does_not_grow_the_window(
     app, monkeypatch, ws_tmp, language: str
 ) -> None:
@@ -236,6 +260,9 @@ def test_the_capsule_does_not_grow_the_window(
         assert window.title_bar.height() == bar_height == 38
         assert window.link_capsule.height() == 22
         assert window.link_capsule.width() > 0
+        assert window.link_capsule.width() >= window.link_capsule.sizeHint().width(), (
+            "the capsule must get the width its text needs, not a squeezed one"
+        )
         assert _title_bar_clipping(window) == []
     finally:
         i18n.set_language("zh_cn")

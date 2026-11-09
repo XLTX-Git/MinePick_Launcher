@@ -78,6 +78,13 @@ def test_configured_key_reads_the_saved_choice(monkeypatch, ws_tmp) -> None:
     assert mirror_module.normalize_key("auto") == ""
 
 
+def test_the_config_choices_match_the_mirror_table() -> None:
+    """The keys the config accepts and the keys the downloader knows may not drift apart."""
+    assert set(config.TERRACOTTA_MIRROR_CHOICES) == {""} | {
+        mirror.key for mirror in mirror_module.MIRRORS
+    }
+
+
 # ------------------------------------------------------------------ downloader argument
 
 

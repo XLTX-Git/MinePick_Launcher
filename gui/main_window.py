@@ -223,15 +223,15 @@ class _LinkCapsule(QPushButton):
         ring = tokens.get("FOCUS_RING", text)
         sheet = (
             "QPushButton#linkCapsule {"
-            " background: rgba(255, 255, 255, 40);"
+            " background: rgba(0, 0, 0, 44);"
             f" color: {text};"
             " border: 1px solid transparent;"
             " border-radius: 11px;"
             " padding: 0 10px 0 8px;"
             " font-size: 11px;"
             " }"
-            "QPushButton#linkCapsule:hover { background: rgba(255, 255, 255, 68); }"
-            "QPushButton#linkCapsule:pressed { background: rgba(255, 255, 255, 92); }"
+            "QPushButton#linkCapsule:hover { background: rgba(0, 0, 0, 70); }"
+            "QPushButton#linkCapsule:pressed { background: rgba(0, 0, 0, 94); }"
             f"QPushButton#linkCapsule:focus {{ border: 1px solid {ring}; }}"
         )
         if sheet == self.styleSheet():
@@ -344,8 +344,9 @@ class MainWindow(QMainWindow):
         self.link_capsule.clicked.connect(self._open_link_page)
         bar_layout = self.title_bar.layout()
         if bar_layout is not None:
+            index = bar_layout.indexOf(self.title_bar.minimize_button)
             bar_layout.insertWidget(
-                max(0, bar_layout.count() - 2),
+                index if index >= 0 else bar_layout.count(),
                 self.link_capsule,
                 0,
                 Qt.AlignmentFlag.AlignVCenter,
@@ -464,7 +465,6 @@ class MainWindow(QMainWindow):
             "java": JavaPage,
             "account": LoginPage,
             "mods": ResourcesPage,
-            "tools": ToolsPage,
             "settings": SettingsPage,
             "about": AboutPage,
         }
@@ -550,6 +550,9 @@ class MainWindow(QMainWindow):
             self.task_overlay.retranslate()
         # A language switch re-translates the current folder's label too.
         self._refresh_current_folder_label()
+        # The room capsule belongs to the window, not to a page, so the rebuild above did not
+        # recreate it: its text was built in the old language and has to be refreshed here.
+        self._refresh_link_capsule()
 
     def _refresh_current_folder_label(self) -> None:
         """Show which game folder every page is reading, in the status bar's right-hand slot."""

@@ -545,6 +545,24 @@ class TerracottaLinkSession:
         thread = self._poll_thread
         return thread is not None and thread.is_alive()
 
+    def observe_running_instance(self) -> bool:
+        """Poll an already running service even when the component check says the payload is missing.
+
+        The caller has just verified through the lock file that a Terracotta service answers
+        ``/meta`` (see :class:`~launcher.link.bus.LinkSessionBus`). That is stronger evidence than
+        the payload check on disk: the executable can have been moved (or ``installed.json`` removed)
+        while the detached process kept the room. Returns whether polling was started here.
+        """
+        with self._lock:
+            if self._disposed or self._component.downloaded:
+                return False
+            self._component = self._component_status_fn()
+            self._state = LinkState.IDLE
+            self._phase = ""
+            self._failure_key = ""
+        self._start_polling()
+        return True
+
     def _poll_loop(self) -> None:
         while not self._stop.is_set() and not self._disposed:
             with self._lock:

@@ -34,7 +34,13 @@ from launcher.link import LinkState, TerracottaLinkSession
 from launcher.link.bus import ACTIVE_STATES, LinkRoomSummary, LinkSessionBus
 from launcher.link.session import FakeLinkSession
 from launcher.link.terracotta import TerracottaClient, TerracottaProcess
-from tests.link_fakes import FakeCore, FakeTerracotta, component_ready, wait_until
+from tests.link_fakes import (
+    FakeCore,
+    FakeTerracotta,
+    component_missing,
+    component_ready,
+    wait_until,
+)
 
 ROOM = "U/8F3K-2QX9-7WMD-4TRA"
 
@@ -62,12 +68,13 @@ def _session(fake: FakeTerracotta, **kwargs) -> TerracottaLinkSession:
     client_factory = kwargs.pop(
         "client_factory", lambda port: TerracottaClient(port, timeout=0.5)
     )
+    component_status_fn = kwargs.pop("component_status_fn", component_ready)
     return TerracottaLinkSession(
         process=kwargs.pop("process", FakeCore(fake.port)),
         client_factory=client_factory,
         poll_interval=0.02,
         attach_interval=0.02,
-        component_status_fn=component_ready,
+        component_status_fn=component_status_fn,
         player_name=lambda: "Steve",
         **kwargs,
     )
@@ -269,11 +276,13 @@ def test_startup_attaches_a_room_left_running_by_a_previous_launcher(ws_tmp) -> 
         executable=ws_tmp / "terracotta.exe",
         popen=no_launch,
     )
-    bus = LinkSessionBus(
-        session_factory=lambda: _session(fake, process=process)
-    )
+    session = _session(fake, process=process, component_status_fn=component_missing)
+    bus = LinkSessionBus(session_factory=lambda: session)
+    assert session.state() is LinkState.NOT_DOWNLOADED
     try:
         assert bus.start_when_room_running(process=process) is True
+        # The lock + port probe is what proves the service is up; the payload check on disk is not
+        # allowed to hide a room that the process is still serving.
         assert wait_until(lambda: bus.summary().active)
         summary = bus.summary()
         assert summary.state is LinkState.HOST_READY
