@@ -21,12 +21,18 @@ Fabric/Forge/NeoForge/Quilt 加载器、实例隔离管理 —— 打包为免�
     <td align="center"><sub>版本页</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_zh.png" width="480" alt="实例页与本地模组管理"/></td>
-    <td><img src="docs/screenshots/settings_zh.png" width="480" alt="设置页"/></td>
+    <td><img src="docs/screenshots/instances_zh.png" width="480" alt="实例页"/></td>
+    <td><img src="docs/screenshots/mods_zh.png" width="480" alt="资源下载页"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>实例页与本地模组管理</sub></td>
-    <td align="center"><sub>设置页（界面个性化）</sub></td>
+    <td align="center"><sub>实例页</sub></td>
+    <td align="center"><sub>资源</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/link_zh.png" width="720" alt="工具 › 联机"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>工具 › 联机</sub></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/screenshots/diagnosis_zh.png" width="720" alt="崩溃诊断对话框"/></td>

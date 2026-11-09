@@ -14,23 +14,29 @@ recursos de Modrinth y CurseForge, cargadores Fabric/Forge/NeoForge/Quilt, insta
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/launch_es.png" width="480" alt="Página de inicio"/></td>
-    <td><img src="docs/screenshots/versions_es.png" width="480" alt="Página de versiones"/></td>
+    <td><img src="docs/screenshots/launch_en.png" width="480" alt="Página de inicio"/></td>
+    <td><img src="docs/screenshots/versions_en.png" width="480" alt="Página de versiones"/></td>
   </tr>
   <tr>
     <td align="center"><sub>Inicio</sub></td>
     <td align="center"><sub>Versiones</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_es.png" width="480" alt="Instancias y gestor de mods local"/></td>
-    <td><img src="docs/screenshots/settings_es.png" width="480" alt="Ajustes"/></td>
+    <td><img src="docs/screenshots/instances_en.png" width="480" alt="Página de instancias"/></td>
+    <td><img src="docs/screenshots/mods_en.png" width="480" alt="Página de recursos"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>Instancias &amp; gestor de mods local</sub></td>
-    <td align="center"><sub>Ajustes (personalización de la interfaz)</sub></td>
+    <td align="center"><sub>Instancias</sub></td>
+    <td align="center"><sub>Recursos</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/diagnosis_es.png" width="720" alt="Cuadro de diálogo de diagnóstico de fallos"/></td>
+    <td colspan="2"><img src="docs/screenshots/link_en.png" width="720" alt="Herramientas › Multijugador"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Herramientas › Multijugador</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/diagnosis_en.png" width="720" alt="Cuadro de diálogo de diagnóstico de fallos"/></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub>El cuadro de diálogo de diagnóstico de fallos</sub></td>

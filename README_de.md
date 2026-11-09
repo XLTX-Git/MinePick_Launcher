@@ -14,23 +14,29 @@ einzelne portable EXE.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/launch_de.png" width="480" alt="Startseite"/></td>
-    <td><img src="docs/screenshots/versions_de.png" width="480" alt="Versionsseite"/></td>
+    <td><img src="docs/screenshots/launch_en.png" width="480" alt="Startseite"/></td>
+    <td><img src="docs/screenshots/versions_en.png" width="480" alt="Versionsseite"/></td>
   </tr>
   <tr>
     <td align="center"><sub>Start</sub></td>
     <td align="center"><sub>Versionen</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_de.png" width="480" alt="Instanzen und lokaler Mod-Manager"/></td>
-    <td><img src="docs/screenshots/settings_de.png" width="480" alt="Einstellungen"/></td>
+    <td><img src="docs/screenshots/instances_en.png" width="480" alt="Instanzen-Seite"/></td>
+    <td><img src="docs/screenshots/mods_en.png" width="480" alt="Ressourcen-Seite"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>Instanzen &amp; lokaler Mod-Manager</sub></td>
-    <td align="center"><sub>Einstellungen (Anpassung der Oberfläche)</sub></td>
+    <td align="center"><sub>Instanzen</sub></td>
+    <td align="center"><sub>Ressourcen</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/diagnosis_de.png" width="720" alt="Absturzdiagnose-Dialog"/></td>
+    <td colspan="2"><img src="docs/screenshots/link_en.png" width="720" alt="Werkzeuge › Multiplayer"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Werkzeuge › Multiplayer</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/diagnosis_en.png" width="720" alt="Absturzdiagnose-Dialog"/></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub>Der Absturzdiagnose-Dialog</sub></td>

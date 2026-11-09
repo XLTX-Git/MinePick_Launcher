@@ -22,12 +22,18 @@ single portable EXE.
     <td align="center"><sub>Versions</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_en.png" width="480" alt="Instances and local mod manager"/></td>
-    <td><img src="docs/screenshots/settings_en.png" width="480" alt="Settings"/></td>
+    <td><img src="docs/screenshots/instances_en.png" width="480" alt="Instances"/></td>
+    <td><img src="docs/screenshots/mods_en.png" width="480" alt="Resources page"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>Instances &amp; local mod manager</sub></td>
-    <td align="center"><sub>Settings (interface customisation)</sub></td>
+    <td align="center"><sub>Instances</sub></td>
+    <td align="center"><sub>Resources</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/link_en.png" width="720" alt="Tools › Multiplayer"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Tools › Multiplayer</sub></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/screenshots/diagnosis_en.png" width="720" alt="Crash diagnosis dialog"/></td>

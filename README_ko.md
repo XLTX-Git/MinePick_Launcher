@@ -14,23 +14,29 @@ Modrinth & CurseForge 리소스, Fabric/Forge/NeoForge/Quilt 로더, 격리된 �
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/launch_ko.png" width="480" alt="실행 페이지"/></td>
-    <td><img src="docs/screenshots/versions_ko.png" width="480" alt="버전 페이지"/></td>
+    <td><img src="docs/screenshots/launch_en.png" width="480" alt="실행 페이지"/></td>
+    <td><img src="docs/screenshots/versions_en.png" width="480" alt="버전 페이지"/></td>
   </tr>
   <tr>
     <td align="center"><sub>실행</sub></td>
     <td align="center"><sub>버전</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_ko.png" width="480" alt="인스턴스 및 로컬 모드 관리자"/></td>
-    <td><img src="docs/screenshots/settings_ko.png" width="480" alt="설정"/></td>
+    <td><img src="docs/screenshots/instances_en.png" width="480" alt="인스턴스 페이지"/></td>
+    <td><img src="docs/screenshots/mods_en.png" width="480" alt="리소스 페이지"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>인스턴스 &amp; 로컬 모드 관리자</sub></td>
-    <td align="center"><sub>설정(인터페이스 사용자 지정)</sub></td>
+    <td align="center"><sub>인스턴스</sub></td>
+    <td align="center"><sub>리소스</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/diagnosis_ko.png" width="720" alt="크래시 진단 대화 상자"/></td>
+    <td colspan="2"><img src="docs/screenshots/link_en.png" width="720" alt="도구 › 멀티플레이"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>도구 › 멀티플레이</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/diagnosis_en.png" width="720" alt="크래시 진단 대화 상자"/></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub>크래시 진단 대화 상자</sub></td>

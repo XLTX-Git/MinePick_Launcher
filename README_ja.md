@@ -14,23 +14,29 @@ Python + PySide6 で作られたポータブルな Minecraft ランチャー：M
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/launch_ja.png" width="480" alt="起動ページ"/></td>
-    <td><img src="docs/screenshots/versions_ja.png" width="480" alt="バージョンページ"/></td>
+    <td><img src="docs/screenshots/launch_en.png" width="480" alt="起動ページ"/></td>
+    <td><img src="docs/screenshots/versions_en.png" width="480" alt="バージョンページ"/></td>
   </tr>
   <tr>
     <td align="center"><sub>起動</sub></td>
     <td align="center"><sub>バージョン</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_ja.png" width="480" alt="インスタンスとローカル Mod 管理"/></td>
-    <td><img src="docs/screenshots/settings_ja.png" width="480" alt="設定"/></td>
+    <td><img src="docs/screenshots/instances_en.png" width="480" alt="インスタンスページ"/></td>
+    <td><img src="docs/screenshots/mods_en.png" width="480" alt="リソースページ"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>インスタンスとローカル Mod 管理</sub></td>
-    <td align="center"><sub>設定（インターフェースのカスタマイズ）</sub></td>
+    <td align="center"><sub>インスタンス</sub></td>
+    <td align="center"><sub>リソース</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/diagnosis_ja.png" width="720" alt="クラッシュ診断ダイアログ"/></td>
+    <td colspan="2"><img src="docs/screenshots/link_en.png" width="720" alt="ツール › マルチプレイ"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>ツール › マルチプレイ</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/diagnosis_en.png" width="720" alt="クラッシュ診断ダイアログ"/></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub>クラッシュ診断ダイアログ</sub></td>

@@ -14,23 +14,29 @@ dans un seul EXE portable.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/launch_fr.png" width="480" alt="Page de lancement"/></td>
-    <td><img src="docs/screenshots/versions_fr.png" width="480" alt="Page des versions"/></td>
+    <td><img src="docs/screenshots/launch_en.png" width="480" alt="Page de lancement"/></td>
+    <td><img src="docs/screenshots/versions_en.png" width="480" alt="Page des versions"/></td>
   </tr>
   <tr>
     <td align="center"><sub>Lancement</sub></td>
     <td align="center"><sub>Versions</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_fr.png" width="480" alt="Instances et gestionnaire de mods local"/></td>
-    <td><img src="docs/screenshots/settings_fr.png" width="480" alt="Paramètres"/></td>
+    <td><img src="docs/screenshots/instances_en.png" width="480" alt="Page des instances"/></td>
+    <td><img src="docs/screenshots/mods_en.png" width="480" alt="Page des ressources"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>Instances et gestionnaire de mods local</sub></td>
-    <td align="center"><sub>Paramètres (personnalisation de l'interface)</sub></td>
+    <td align="center"><sub>Instances</sub></td>
+    <td align="center"><sub>Ressources</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/diagnosis_fr.png" width="720" alt="Fenêtre de diagnostic de plantage"/></td>
+    <td colspan="2"><img src="docs/screenshots/link_en.png" width="720" alt="Outils › Multijoueur"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Outils › Multijoueur</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/diagnosis_en.png" width="720" alt="Fenêtre de diagnostic de plantage"/></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub>La fenêtre de diagnostic de plantage</sub></td>

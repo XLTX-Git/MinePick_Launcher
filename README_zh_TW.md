@@ -14,23 +14,29 @@ Modrinth 與 CurseForge 資源、Fabric/Forge/NeoForge/Quilt 載入器、隔離�
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/launch_zh_TW.png" width="480" alt="啟動頁面"/></td>
-    <td><img src="docs/screenshots/versions_zh_TW.png" width="480" alt="版本頁面"/></td>
+    <td><img src="docs/screenshots/launch_zh.png" width="480" alt="啟動頁面"/></td>
+    <td><img src="docs/screenshots/versions_zh.png" width="480" alt="版本頁面"/></td>
   </tr>
   <tr>
     <td align="center"><sub>啟動</sub></td>
     <td align="center"><sub>版本</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_zh_TW.png" width="480" alt="實例與本機模組管理"/></td>
-    <td><img src="docs/screenshots/settings_zh_TW.png" width="480" alt="設定"/></td>
+    <td><img src="docs/screenshots/instances_zh.png" width="480" alt="實例頁面"/></td>
+    <td><img src="docs/screenshots/mods_zh.png" width="480" alt="資源下載頁面"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>實例與本機模組管理</sub></td>
-    <td align="center"><sub>設定（介面個人化）</sub></td>
+    <td align="center"><sub>實例</sub></td>
+    <td align="center"><sub>資源</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/diagnosis_zh_TW.png" width="720" alt="崩潰診斷對話方塊"/></td>
+    <td colspan="2"><img src="docs/screenshots/link_zh.png" width="720" alt="工具 › 連線"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>工具 › 連線</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/diagnosis_zh.png" width="720" alt="崩潰診斷對話方塊"/></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub>崩潰診斷對話方塊</sub></td>

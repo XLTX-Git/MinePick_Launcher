@@ -14,23 +14,29 @@
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/launch_ru.png" width="480" alt="Страница запуска"/></td>
-    <td><img src="docs/screenshots/versions_ru.png" width="480" alt="Страница версий"/></td>
+    <td><img src="docs/screenshots/launch_en.png" width="480" alt="Страница запуска"/></td>
+    <td><img src="docs/screenshots/versions_en.png" width="480" alt="Страница версий"/></td>
   </tr>
   <tr>
     <td align="center"><sub>Запуск</sub></td>
     <td align="center"><sub>Версии</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/instances_mods_ru.png" width="480" alt="Экземпляры и локальный менеджер модов"/></td>
-    <td><img src="docs/screenshots/settings_ru.png" width="480" alt="Настройки"/></td>
+    <td><img src="docs/screenshots/instances_en.png" width="480" alt="Страница экземпляров"/></td>
+    <td><img src="docs/screenshots/mods_en.png" width="480" alt="Страница ресурсов"/></td>
   </tr>
   <tr>
-    <td align="center"><sub>Экземпляры и локальный менеджер модов</sub></td>
-    <td align="center"><sub>Настройки (персонализация интерфейса)</sub></td>
+    <td align="center"><sub>Экземпляры</sub></td>
+    <td align="center"><sub>Ресурсы</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/diagnosis_ru.png" width="720" alt="Диалог диагностики сбоя"/></td>
+    <td colspan="2"><img src="docs/screenshots/link_en.png" width="720" alt="Инструменты › Сетевая игра"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Инструменты › Сетевая игра</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/diagnosis_en.png" width="720" alt="Диалог диагностики сбоя"/></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub>Диалог диагностики сбоя</sub></td>
