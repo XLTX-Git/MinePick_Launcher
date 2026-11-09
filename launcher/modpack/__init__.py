@@ -14,9 +14,9 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
-"""Importing modpacks that were downloaded somewhere else.
+"""Importing modpacks that were downloaded somewhere else - and exporting one that can be.
 
-One flow, three formats, and no second installer:
+One import flow, three formats, and no second installer:
 
 * **Modrinth ``.mrpack``** - a zip with ``modrinth.index.json`` (``files[]`` with direct
   ``downloads`` and ``hashes.sha1``, plus ``overrides/``) and the pack's ``dependencies``.
@@ -32,12 +32,30 @@ instance is created by :func:`launcher.instances.create_instance`, and every arc
 written through the launcher's one path guard (``launcher.launch.natives._member_target``).
 Nothing here talks to a server the launcher does not already use: Modrinth files come from the URLs
 the pack itself names, and CurseForge files come from :mod:`launcher.mods.curseforge`.
+
+:func:`launcher.modpack.export.export_modpack` is the other direction, writing a Modrinth or
+CurseForge pack from an instance; it is re-exported below so callers do not reach into the module
+path.
 """
 
 from __future__ import annotations
 
 from launcher.modpack.detect import detect_format, parse_modpack
 from launcher.modpack.errors import ModpackError
+from launcher.modpack.export import (
+    PHASE_HASH,
+    PHASE_MATCH,
+    PHASE_WRITE,
+    ExportEntry,
+    ExportPlan,
+    ExportResult,
+    MatchOutcome,
+    ModCandidate,
+    export_modpack,
+    loader_identity,
+    match_modrinth,
+    plan_export,
+)
 from launcher.modpack.importer import ImportResult, import_modpack
 from launcher.modpack.model import (
     FORMAT_CURSEFORGE,
@@ -60,16 +78,28 @@ __all__ = [
     "FORMAT_MULTIMC",
     "PHASE_DONE",
     "PHASE_FILES",
+    "PHASE_HASH",
     "PHASE_INSTALL",
+    "PHASE_MATCH",
     "PHASE_OVERRIDES",
     "PHASE_PARSE",
+    "PHASE_WRITE",
+    "ExportEntry",
+    "ExportPlan",
+    "ExportResult",
     "ImportResult",
+    "MatchOutcome",
+    "ModCandidate",
     "ModpackError",
     "ModpackProgress",
     "ModpackSpec",
     "PackFile",
     "detect_format",
+    "export_modpack",
     "import_modpack",
+    "loader_identity",
+    "match_modrinth",
     "parse_modpack",
+    "plan_export",
     "strip_version_suffix",
 ]
