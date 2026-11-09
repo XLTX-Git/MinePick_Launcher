@@ -136,9 +136,13 @@ def test_construction_starts_a_background_scan_with_a_visible_placeholder(
     started = time.monotonic()
     page = instances_page.InstancesPage()
     elapsed = time.monotonic() - started
-    assert elapsed < 2.0, (
+    # The claim is "construction does not wait for the scan", not "construction is instant": building
+    # the whole page with the shipped sheet applied costs a second or two on a loaded machine, while
+    # the scan it must not wait for is held here for five. The blocked event is the sharper witness.
+    assert elapsed < 4.5, (
         f"InstancesPage() blocked for {elapsed:.2f}s; the directory scan must run on a worker"
     )
+    assert not release.is_set(), "construction waited for the scan to finish" 
     assert _wait_until(app, lambda: bool(calls)), "the constructor never started the background scan"
 
     # The in-between state is a real hint, not an empty pane and not made-up rows.
