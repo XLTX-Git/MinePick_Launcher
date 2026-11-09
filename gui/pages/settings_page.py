@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
@@ -139,12 +139,13 @@ class AccentPresetButton(QPushButton):
     """
 
     REST_BORDER = "#3a4757"
+    SWATCH_SIZE = 22
 
     def __init__(self, color: str, focus_ring: str) -> None:
         super().__init__()
         self._color = color
         self._focus_ring = focus_ring
-        self.setFixedSize(22, 22)
+        self.setFixedSize(self.SWATCH_SIZE, self.SWATCH_SIZE)
         self.setToolTip(color)
         # WCAG 4.1.2: the button has no text at all - the colour is painted, not written - so the
         # tooltip was its only name and a hex value is not a name. It carries no visible label by
@@ -152,6 +153,17 @@ class AccentPresetButton(QPushButton):
         self.setAccessibleName(tr("a11y.accent_preset", color))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._paint(self.REST_BORDER)
+
+    def minimumSizeHint(self) -> QSize:
+        """The swatch's real minimum: its fixed 22x22 square.
+
+        QPushButton's style hint assumes a text label and adds the button margin and padding on top
+        (measured 58x27), which would claim the swatch cannot exist at the size it is designed at.
+        This control paints a colour disc and a 1px focus border inside its own rect and has no text,
+        so the square is the whole requirement - returning it keeps a geometry audit from reporting a
+        deliberate square as clipped.
+        """
+        return QSize(self.SWATCH_SIZE, self.SWATCH_SIZE)
 
     def _paint(self, border: str) -> None:
         self.setStyleSheet(
@@ -194,7 +206,6 @@ class SettingsPage(QWidget):
         self.folder_busy_label.setVisible(False)
         self.add_folder_button = QPushButton(tr("settings.folder.add"))
         self.add_folder_button.setObjectName("secondaryButton")
-        self.add_folder_button.setFixedHeight(FIELD_HEIGHT)
         self.add_folder_button.clicked.connect(self._browse_add_folder)
         self.folder_box = QWidget()
         folder_box_layout = QVBoxLayout(self.folder_box)
@@ -290,7 +301,6 @@ class SettingsPage(QWidget):
         self.isolation_combo = QComboBox()
         self.isolation_combo.addItem(tr("settings.isolation.combo.on"), True)
         self.isolation_combo.addItem(tr("settings.isolation.combo.off"), False)
-        self.isolation_combo.setFixedHeight(FIELD_HEIGHT)
         self.isolation_combo.setMinimumWidth(0)
         self.isolation_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.isolation_combo.setAccessibleName(tr("settings.isolation.label"))
@@ -740,14 +750,11 @@ class SettingsPage(QWidget):
             self.after_launch_combo,
         )
         for widget in fields:
-            widget.setFixedHeight(FIELD_HEIGHT)
             # The path text otherwise becomes the card's minimum width, which is wider than
             # the window at the 930px floor; the field may shrink and scroll its text instead.
             widget.setMinimumWidth(0)
             widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.add_folder_button.setFixedHeight(FIELD_HEIGHT)
         self.add_folder_button.setMinimumWidth(0)
-        self.browse_java.setFixedHeight(FIELD_HEIGHT)
         self.browse_java.setMinimumWidth(0)
         for row in range(form.rowCount()):
             label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
@@ -759,15 +766,8 @@ class SettingsPage(QWidget):
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                 )
                 label.setWordWrap(True)
-            field_item = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
-            if field_item is not None and field_item.layout() is not None:
-                layout = field_item.layout()
-                for index in range(layout.count()):
-                    child = layout.itemAt(index).widget()
-                    is_field = isinstance(child, (QLineEdit, QComboBox))
-                    is_browse = child is self.browse_java
-                    if is_field or is_browse:
-                        child.setFixedHeight(FIELD_HEIGHT)
+            # The field's height comes from its own stylesheet minimum now (a QLineEdit/QComboBox
+            # grows to 34/35px at the 13px font), so there is no fixed-height pass over the rows here.
         # The folder list is several rows tall: its label reads as the row's heading, so it sits at the
         # top instead of floating in the middle of the list. Row 0 is the game-directory row.
         folder_label = form.itemAt(0, QFormLayout.ItemRole.LabelRole)
@@ -1241,13 +1241,11 @@ class SettingsPage(QWidget):
                 tr("settings.folder.current") if is_current else tr("settings.folder.make_current")
             )
             make_current.setObjectName("secondaryButton")
-            make_current.setFixedHeight(FIELD_HEIGHT)
             make_current.setAccessibleName(
                 tr("settings.folder.a11y.make_current", folder.display_name())
             )
             remove = QPushButton(tr("settings.folder.remove"))
             remove.setObjectName("secondaryButton")
-            remove.setFixedHeight(FIELD_HEIGHT)
             remove.setAccessibleName(tr("settings.folder.a11y.remove", folder.display_name()))
             make_current.clicked.connect(
                 lambda *_, path=folder.path: self._set_current_folder(path)
