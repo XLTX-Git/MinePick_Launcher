@@ -133,7 +133,6 @@ class _AccountRow(QWidget):
 
         self.switch = QPushButton(tr("account.action.switch"))
         self.switch.setObjectName("rowAction")
-        self.switch.setFixedHeight(32)
         self.switch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.switch.setAccessibleName(tr("account.action.switch") + " · " + username)
         self.switch.setEnabled(not is_current)  # already current: nothing to switch to
@@ -141,7 +140,6 @@ class _AccountRow(QWidget):
 
         self.remove = QPushButton(tr("account.action.remove"))
         self.remove.setObjectName("rowDanger")
-        self.remove.setFixedHeight(32)
         self.remove.setCursor(Qt.CursorShape.PointingHandCursor)
         self.remove.setAccessibleName(tr("account.action.remove") + " · " + username)
         self.remove.clicked.connect(on_remove)
@@ -289,7 +287,6 @@ class LoginPage(QWidget):
         self.accounts_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.accounts_list.currentRowChanged.connect(self._on_row_changed)
         self.add_button = QPushButton(tr("account.add"))
-        self.add_button.setFixedHeight(32)
         self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.device_code = QTextEdit()
         self.device_code.setAccessibleName(tr("a11y.device_code"))  # WCAG 4.1.2
@@ -303,10 +300,8 @@ class LoginPage(QWidget):
         self.offline_edit = QLineEdit()
         self.offline_edit.setAccessibleName(tr("a11y.offline_name"))  # WCAG 4.1.2
         self.offline_edit.setPlaceholderText(tr("login.offline.placeholder"))
-        self.offline_edit.setFixedHeight(32)
         self.offline_button = QPushButton(tr("login.offline.button"))
         self.offline_button.setObjectName("secondaryButton")
-        self.offline_button.setFixedHeight(32)
 
         account_row = QHBoxLayout()
         account_row.setSpacing(8)

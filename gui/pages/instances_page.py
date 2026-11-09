@@ -448,7 +448,6 @@ class _InstanceCard(QFrame):
         self.use_button.setObjectName("instanceCardUse")
         self.use_button.setAccessibleName(tr("instances.card.use") + " " + instance.name)
         self.use_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.use_button.setFixedHeight(30)
         self.use_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.use_button.clicked.connect(lambda: self.use_requested.emit(self.instance_id))
         # The secondary sibling: the same quiet outline the card used to draw for 管理.
@@ -456,7 +455,6 @@ class _InstanceCard(QFrame):
         self.manage_button.setObjectName("instanceCardManage")
         self.manage_button.setAccessibleName(tr("instances.card.open", instance.name))
         self.manage_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.manage_button.setFixedHeight(30)
         self.manage_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.manage_button.clicked.connect(lambda: self.manage_requested.emit(self.instance_id))
         layout.addWidget(self.use_button, 0, Qt.AlignmentFlag.AlignVCenter)

@@ -1087,10 +1087,8 @@ class VersionsPage(QWidget):
         self.search_edit.setPlaceholderText(tr("versions.search.placeholder"))
         self.search_edit.setAccessibleName(tr("versions.search.placeholder"))  # WCAG 4.1.2
         self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.setFixedHeight(32)  # the design system's field metric
         self.refresh_button = QPushButton(tr("versions.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
-        self.refresh_button.setFixedHeight(32)
         # Latest version shortcuts: the latest release and the latest snapshot, one full-row card each.
         self.latest_cards: dict[str, _LatestCard] = {}
         self.list = _VersionList()
@@ -1139,7 +1137,7 @@ class VersionsPage(QWidget):
         # the row's height so showing/hiding the buttons never moves the list.
         self.action_hint = QLabel(tr("versions.select.hint"))
         self.action_hint.setObjectName("hint")
-        self.action_hint.setFixedHeight(32)
+        self.action_hint.setMinimumHeight(32)
         self.action_hint.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.auto_jre_check = QCheckBox(tr("versions.auto_jre"))
         self.auto_jre_check.setChecked(True)  # checked by default

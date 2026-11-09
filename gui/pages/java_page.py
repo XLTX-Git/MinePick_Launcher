@@ -396,16 +396,13 @@ class JavaPage(QWidget):
 
         self.refresh_button = QPushButton(tr("java.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
-        self.refresh_button.setFixedHeight(32)
         self.major_combo = QComboBox()
         for major in (8, 11, 17, 21, 25):
             self.major_combo.addItem(str(major), major)
-        self.major_combo.setFixedHeight(32)  # the design system's field metric
         # WCAG 4.1.2: its "major version" label is a plain QLabel in the same row layout, so the combo
         # never received it as a name (only a QFormLayout row passes the label on automatically).
         self.major_combo.setAccessibleName(tr("java.install.major"))
         self.install_button = QPushButton(tr("java.install.button"))
-        self.install_button.setFixedHeight(32)
 
         self.empty_managed = EmptyState(tr("empty.java"))
         self.empty_detected = EmptyState(tr("empty.java"))
@@ -516,7 +513,6 @@ class JavaPage(QWidget):
             size = _dir_size(directory)
             button = QPushButton(tr("java.delete"))
             button.setObjectName("rowDanger")
-            button.setFixedHeight(32)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             # A column of buttons that all read "Delete" is useless with a screen reader.
             button.setAccessibleName(tr("java.delete") + " · Java " + str(major))

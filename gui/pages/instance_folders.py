@@ -60,7 +60,6 @@ FOLDER_RAIL_GAP = 12
 #: One row is 36px, exactly the detail sidebar's item height (one selection language, one rhythm).
 FOLDER_ITEM_HEIGHT = 36
 FOLDER_ROW_PADDING_X = 12
-FOLDER_ADD_HEIGHT = 32
 
 
 def ordered_folders(folders) -> list:
@@ -180,7 +179,6 @@ class FolderRail(QWidget):
         self.add_button.setObjectName("secondaryButton")
         self.add_button.setAccessibleName(tr("settings.folder.add"))
         self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_button.setFixedHeight(FOLDER_ADD_HEIGHT)
         self.add_button.clicked.connect(self.add_requested)
 
         layout.addWidget(self.list, 1)

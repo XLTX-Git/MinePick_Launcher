@@ -99,7 +99,6 @@ ROW_PADDING = 12
 ROW_GAP = 8
 ROW_TITLE_PX = 13
 ROW_SMALL_PX = 12
-ACTION_HEIGHT = 32
 ACTION_MIN_WIDTH = 64
 
 
@@ -154,13 +153,11 @@ class DownloadRow(QWidget):
 
         self.action = QPushButton(task.action_text(), self)
         self.action.setObjectName("secondaryButton")
-        self.action.setFixedHeight(ACTION_HEIGHT)
         self.action.setMinimumWidth(ACTION_MIN_WIDTH)
         self.action.setCursor(Qt.CursorShape.PointingHandCursor)
         self.action.clicked.connect(lambda _checked=False: self._on_action(self.task, "action"))
         self.retry = QPushButton(tr("tasks.retry"), self)
         self.retry.setObjectName("secondaryButton")
-        self.retry.setFixedHeight(ACTION_HEIGHT)
         self.retry.setMinimumWidth(ACTION_MIN_WIDTH)
         self.retry.setCursor(Qt.CursorShape.PointingHandCursor)
         self.retry.clicked.connect(lambda _checked=False: self._on_action(self.task, "retry"))
@@ -289,7 +286,6 @@ class _AllDoneCard(QFrame):
         self.body_label.setWordWrap(True)
         self.back = QPushButton(tr("tasks.page.all_done.back"))
         self.back.setObjectName("secondaryButton")
-        self.back.setMinimumHeight(ACTION_HEIGHT)
         self.back.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back.clicked.connect(self.back_requested.emit)
 
@@ -328,7 +324,6 @@ class DownloadsPage(QWidget):
 
         self.back_button = QPushButton(tr("tasks.page.back"))
         self.back_button.setObjectName("secondaryButton")
-        self.back_button.setMinimumHeight(ACTION_HEIGHT)
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.clicked.connect(self.back_requested.emit)
 
@@ -337,7 +332,6 @@ class DownloadsPage(QWidget):
 
         self.cancel_all_button = QPushButton(tr("tasks.page.cancel_all"))
         self.cancel_all_button.setObjectName("dangerButton")
-        self.cancel_all_button.setMinimumHeight(ACTION_HEIGHT)
         self.cancel_all_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_all_button.clicked.connect(self._on_cancel_all)
         self.cancel_all_button.setVisible(False)
