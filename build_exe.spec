@@ -41,6 +41,44 @@ a = Analysis(
     noarchive=False,
 )
 
+def _windows_version_file() -> str:
+    """Write PyInstaller's version resource from ``launcher.__version__`` and return its path.
+
+    The EXE properties used to show no version at all: the spec never passed ``version=``, so Windows
+    fell back to an empty resource. Reading the constant out of the source keeps the file honest
+    without importing the package into the build.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(SPECPATH)
+    source = (root / "launcher" / "__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'^__version__\s*=\s*"([^"]+)"', source, re.MULTILINE)
+    version = match.group(1) if match else "0.0.0"
+    numbers = (version.split(".") + ["0", "0", "0"])[:4]
+    tuple_text = ", ".join(str(int(part)) if part.isdigit() else "0" for part in numbers)
+    body = f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=({tuple_text}), prodvers=({tuple_text}), mask=0x3f, flags=0x0,
+                    OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('080404b0', [
+      StringStruct('FileVersion', '{version}'),
+      StringStruct('ProductVersion', '{version}'),
+      StringStruct('FileDescription', 'MinePick Launcher'),
+      StringStruct('ProductName', 'MinePick Launcher'),
+      StringStruct('OriginalFilename', 'MinePick_Launcher.exe'),
+      StringStruct('LegalCopyright', 'GPL-3.0-only')])]),
+    VarFileInfo([VarStruct('Translation', [2052, 1200])])
+  ]
+)
+"""
+    target = root / "build" / "version_info.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+    return str(target)
+
+
 pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
@@ -56,4 +94,5 @@ exe = EXE(
     upx=False,
     console=False,
     icon="gui/resources/icon.ico",  # 由 icon.svg 渲染生成（钻石镐+齿轮）
+    version=_windows_version_file(),
 )
