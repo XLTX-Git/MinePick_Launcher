@@ -505,19 +505,33 @@ class ToolsPage(QWidget):
         card = QFrame()
         card.setObjectName("pageCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 8, 16, 8)
-        card_layout.setSpacing(8)
+        # The buttons on this page now grow to their own QSS minimum (35px for an outlined one),
+        # which is 9px more than the old fixed 26/32 boxes. The height comes back from the card's own
+        # vertical padding (8 -> 4) and gap (8 -> 4): both are on the 4/8 ladder, and neither moves
+        # the banner, the cards or the footer horizontally.
+        card_layout.setContentsMargins(16, 4, 16, 4)
+        card_layout.setSpacing(4)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("toolsTabs")
         self.tabs.setAccessibleName(tr("tools.tab.link"))
         self.tabs.tabBar().setExpanding(False)
+        # One tab and no room to grow new ones: the scroll-button reservation is what raised the tab
+        # bar's own minimum width to 123px and made a width audit call the 48px single tab squeezed.
+        # Without it the bar's minimum is its one tab (48px), which is what it actually has.
+        self.tabs.tabBar().setUsesScrollButtons(False)
         self.tabs.setDocumentMode(False)
 
         tab_page = QWidget()
         tab_layout = QVBoxLayout(tab_page)
-        tab_layout.setContentsMargins(0, 4, 0, 0)
-        tab_layout.setSpacing(8)
+        # No 4px top inset: the tab bar's 2px underline already separates it from the banner, and the
+        # card's own padding supplies the rest. This is one of the 16px reclaimed for the taller
+        # buttons (see card_layout above); the page must fit 610px without a scrollbar.
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        # 4px, not 8: the banner and the two cards already own their inner gaps; this one only
+        # separates the banner block from the state card. Together with the footer's 4px top it
+        # reclaims the last 8px the taller buttons took, so 988x599 also fits without scrolling.
+        tab_layout.setSpacing(4)
 
         tab_layout.addWidget(self._build_banner_block())
         self.state_stack = QStackedWidget()
@@ -567,7 +581,9 @@ class ToolsPage(QWidget):
         layout.addWidget(text, 1)
         self.self_check_button = QPushButton(tr("tools.net.title"))
         self.self_check_button.setObjectName("secondaryButton")
-        self.self_check_button.setFixedHeight(26)
+        # No fixed height: #secondaryButton carries `padding: 8px 16px` and a 1px border, so the QSS
+        # itself asks for 35px at the 13px UI font. The old 26px box cut the button's text; leaving
+        # the height to minimumSizeHint also lets a taller font grow it instead of clipping again.
         self.self_check_button.setAccessibleName(tr("tools.net.title"))
         self.self_check_button.setToolTip(tr("tools.net.nat.note"))
         self.self_check_button.clicked.connect(self._run_self_check)
@@ -630,7 +646,7 @@ class ToolsPage(QWidget):
         footer = QFrame()
         footer.setObjectName("toolsFooter")
         layout = QHBoxLayout(footer)
-        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(8)
         provided = QLabel(tr("tools.footer.provided"))
         provided.setObjectName("toolsFooterText")
@@ -721,6 +737,11 @@ class ToolsPage(QWidget):
         # Deliberately no objectName: the base QPushButton rule is the primary (filled) style, and
         # #secondaryButton is the outlined variant. The call to action is the primary one.
         self.download_button.setFixedSize(32, 32)
+        # Icon-only square: the base rule's 12px horizontal padding exists to pad a label, and it
+        # inflates the button's minimum width to 52px for a 16px glyph. The fixed 32px box is the
+        # design; zeroing the padding makes the control's own minimum agree with it instead of
+        # painting an icon into a box the style says is too small.
+        self.download_button.setStyleSheet("padding: 0;")
         self.download_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.download_button.setAccessibleName(tr("tools.onboard.download"))
         self.download_button.setIcon(_download_icon())
@@ -843,14 +864,14 @@ class ToolsPage(QWidget):
         self.join_edit.setObjectName("toolsJoinEdit")
         self.join_edit.setAccessibleName(tr("tools.join.placeholder"))
         self.join_edit.setPlaceholderText(tr("tools.join.placeholder"))
-        self.join_edit.setFixedHeight(32)
         self.clear_button = QPushButton(tr("tools.join.clear"))
         self.clear_button.setObjectName("secondaryButton")
         self.paste_button = QPushButton(tr("tools.join.paste"))
         self.paste_button.setObjectName("secondaryButton")
         self.join_button = QPushButton(tr("tools.join.submit"))
-        for button in (self.clear_button, self.paste_button, self.join_button):
-            button.setFixedHeight(32)
+        # No explicit heights on these: #secondaryButton's QSS padding and the base button rule decide
+        # their minimum (35px / 33px at the 13px font), and the row lets the tallest control set the
+        # height. A 32px floor would sit below that minimum and the layout would compress them again.
         join_row.addWidget(self.join_edit, 1)
         join_row.addWidget(self.clear_button)
         join_row.addWidget(self.paste_button)
@@ -871,12 +892,10 @@ class ToolsPage(QWidget):
         host_label.setObjectName("formLabel")
         self.instance_combo = QComboBox()
         self.instance_combo.setAccessibleName(tr("tools.host.instance"))
-        self.instance_combo.setFixedHeight(32)
         self.refresh_button = QPushButton(tr("mods.installed.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
         self.create_button = QPushButton(tr("tools.host.submit"))
-        for button in (self.refresh_button, self.create_button):
-            button.setFixedHeight(32)
+        # Same as the join row: let the QSS-derived minimum decide, so the font can grow the button.
         host_row = QHBoxLayout()
         host_row.setContentsMargins(0, 0, 0, 0)
         host_row.setSpacing(8)
@@ -930,7 +949,6 @@ class ToolsPage(QWidget):
         cancel_row.addStretch(1)
         self.wait_cancel_button = QPushButton(tr("dialog.cancel"))
         self.wait_cancel_button.setObjectName("secondaryButton")
-        self.wait_cancel_button.setFixedHeight(32)
         self.wait_cancel_button.clicked.connect(self._cancel)
         cancel_row.addWidget(self.wait_cancel_button)
         cancel_row.addStretch(1)
@@ -977,7 +995,6 @@ class ToolsPage(QWidget):
         code_row.addWidget(self.room_code_label, 1)
         self.copy_button = QPushButton(tr("tools.ready.copy"))
         self.copy_button.setObjectName("secondaryButton")
-        self.copy_button.setFixedHeight(32)
         self.copy_button.clicked.connect(self._copy_code)
         code_row.addWidget(self.copy_button, 0, Qt.AlignmentFlag.AlignVCenter)
         room_layout.addLayout(code_row)
@@ -999,7 +1016,6 @@ class ToolsPage(QWidget):
         close_row.setSpacing(8)
         self.close_room_button = QPushButton(tr("tools.ready.close"))
         self.close_room_button.setObjectName("secondaryButton")
-        self.close_room_button.setFixedHeight(32)
         self.close_room_button.clicked.connect(self._close_room)
         close_row.addWidget(self.close_room_button)
         close_row.addStretch(1)
@@ -1052,7 +1068,6 @@ class ToolsPage(QWidget):
         cancel_row.addStretch(1)
         self.connecting_cancel_button = QPushButton(tr("dialog.cancel"))
         self.connecting_cancel_button.setObjectName("secondaryButton")
-        self.connecting_cancel_button.setFixedHeight(32)
         self.connecting_cancel_button.clicked.connect(self._cancel)
         cancel_row.addWidget(self.connecting_cancel_button)
         cancel_row.addStretch(1)
@@ -1080,7 +1095,6 @@ class ToolsPage(QWidget):
         status.addLayout(text_box)
         status.addStretch(1)
         self.open_multiplayer_button = QPushButton(tr("tools.joined.open"))
-        self.open_multiplayer_button.setFixedHeight(32)
         self.open_multiplayer_button.clicked.connect(self._open_multiplayer)
         status.addWidget(self.open_multiplayer_button, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(status)
@@ -1133,7 +1147,6 @@ class ToolsPage(QWidget):
         retry_row.addStretch(1)
         self.retry_button = QPushButton(tr("tasks.retry"))
         self.retry_button.setObjectName("secondaryButton")
-        self.retry_button.setFixedHeight(32)
         self.retry_button.clicked.connect(self._retry)
         retry_row.addWidget(self.retry_button)
         retry_row.addStretch(1)
