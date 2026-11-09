@@ -36,6 +36,9 @@ from launcher.link import (
     LinkDownloadProgress,
     LinkMember,
     LinkState,
+    NatProbe,
+    NatProbeError,
+    NatType,
     ProcessStatus,
     SelfCheckReport,
     StunVerdict,
@@ -77,6 +80,14 @@ def _zh_cn_language():
     i18n.set_language("zh_cn")
     yield
     i18n.set_language(previous)
+
+
+def _line(udp: str, tcp: str) -> str:
+    return i18n.tr("tools.net.nat.line", udp, tcp)
+
+
+def _nat_type(code: NatType) -> str:
+    return i18n.tr("tools.net.nat.types").splitlines()[int(code)]
 
 
 def _show(app, session) -> ToolsPage:
@@ -434,14 +445,14 @@ def test_the_page_has_no_self_check_column(app) -> None:
     try:
         assert not hasattr(page, "self_check_card")
         assert page.self_check_button.text() == i18n.tr("tools.net.title")
-        assert page.self_check_button.toolTip() == i18n.tr("tools.net.note")
+        assert page.self_check_button.toolTip() == i18n.tr("tools.net.nat.note")
         assert page.self_check_button.isVisibleTo(page)
         assert page.self_check_line.isHidden()
     finally:
         _close(app, page)
 
 
-def test_network_check_line_shows_the_cone_verdict(app) -> None:
+def test_network_check_line_shows_the_cone_fallback(app) -> None:
     report = SelfCheckReport(
         component=ComponentStatus(downloaded=True, version="0.4.2", supported=True),
         process=ProcessStatus(running=True, port=25566),
@@ -454,9 +465,42 @@ def test_network_check_line_shows_the_cone_verdict(app) -> None:
         page.self_check_button.click()
         assert _pump(app, lambda: session.checks == 1 and not page._checking)
         assert page.self_check_line.isVisibleTo(page)
-        assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", labels[1])
+        assert page.self_check_line.text() == _line(labels[1], i18n.tr("tools.net.nat.unknown"))
         assert page.self_check_button.text() == i18n.tr("tools.net.refresh")
         assert page.self_check_button.isEnabled()
+    finally:
+        _close(app, page)
+
+
+def test_network_check_line_shows_both_easytier_types(app) -> None:
+    nat = NatProbe(udp=NatType.SYMMETRIC_EASY, tcp=NatType.RESTRICTED_CONE)
+    session = _DiagnosticSession(SelfCheckReport(nat=nat), state=LinkState.IDLE)
+    page = _show(app, session)
+    try:
+        page.self_check_button.click()
+        assert _pump(app, lambda: not page._checking and session.checks == 1)
+        assert page.self_check_line.text() == _line(
+            _nat_type(NatType.SYMMETRIC_EASY), _nat_type(NatType.RESTRICTED_CONE)
+        )
+        assert page.self_check_line.toolTip() == i18n.tr("tools.net.nat.easytier_tip")
+    finally:
+        _close(app, page)
+
+
+def test_tcp_failure_keeps_the_udp_fallback_and_gives_the_reason(app) -> None:
+    nat = NatProbe(error=NatProbeError.TIMEOUT)
+    session = _DiagnosticSession(
+        SelfCheckReport(stun=StunVerdict.CONE, nat=nat), state=LinkState.IDLE
+    )
+    page = _show(app, session)
+    labels = i18n.tr("tools.net.verdicts").splitlines()
+    try:
+        page.self_check_button.click()
+        assert _pump(app, lambda: not page._checking and session.checks == 1)
+        assert page.self_check_line.text() == _line(
+            labels[1], i18n.tr("tools.net.nat.unknown")
+        )
+        assert i18n.tr("tools.net.reason.timeout") in page.self_check_line.toolTip()
     finally:
         _close(app, page)
 
@@ -464,6 +508,7 @@ def test_network_check_line_shows_the_cone_verdict(app) -> None:
 def test_network_check_verdicts_cover_every_probe_result(app) -> None:
     page = _show(app, FakeLinkSession(state=LinkState.IDLE))
     labels = i18n.tr("tools.net.verdicts").splitlines()
+    unknown = i18n.tr("tools.net.nat.unknown")
     try:
         for verdict, expected in zip(
             (StunVerdict.UNKNOWN, StunVerdict.CONE, StunVerdict.SYMMETRIC,
@@ -472,18 +517,20 @@ def test_network_check_verdicts_cover_every_probe_result(app) -> None:
             strict=True,
         ):
             page._on_self_check_ready(SelfCheckReport(stun=verdict), page.session())
-            assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", expected)
+            udp = expected if verdict not in (StunVerdict.UNKNOWN, StunVerdict.ERROR) else unknown
+            assert page.self_check_line.text() == _line(udp, unknown)
     finally:
         _close(app, page)
 
 
 def test_network_check_without_a_backend_reports_a_failed_check(app) -> None:
     page = _show(app, FakeLinkSession(state=LinkState.IDLE))
-    labels = i18n.tr("tools.net.verdicts").splitlines()
+    unknown = i18n.tr("tools.net.nat.unknown")
     try:
         page.self_check_button.click()
         app.processEvents()
-        assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", labels[-1])
+        assert page.self_check_line.text() == _line(unknown, unknown)
+        assert page.self_check_line.toolTip() == i18n.tr("tools.net.nat.failed_tip")
         assert page.self_check_button.isEnabled()
     finally:
         _close(app, page)
@@ -506,13 +553,16 @@ def test_network_check_disables_the_button_while_the_probe_runs(app) -> None:
         page.self_check_button.click()
         app.processEvents()
         assert not page.self_check_button.isEnabled()
-        assert page.self_check_button.text() == i18n.tr("tools.net.refresh")
-        assert page.self_check_line.text() == i18n.tr(
-            "tools.net.udp.line", i18n.tr("tools.net.checking")
+        assert page.self_check_button.text() == i18n.tr("tools.net.checking")
+        assert page.self_check_line.text() == _line(
+            i18n.tr("tools.net.checking"), i18n.tr("tools.net.checking")
         )
+        assert page.self_check_line.toolTip() == i18n.tr("tools.net.nat.checking_tip")
         gate.set()
         assert _pump(app, lambda: page.self_check_button.isEnabled())
-        assert page.self_check_line.text() == i18n.tr("tools.net.udp.line", labels[1])
+        assert page.self_check_line.text() == _line(
+            labels[1], i18n.tr("tools.net.nat.unknown")
+        )
     finally:
         gate.set()
         _close(app, page)

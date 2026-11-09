@@ -61,7 +61,15 @@ from launcher.link.components import (
     executable_path,
     install,
 )
-from launcher.link.selfcheck import ComponentStatus, ProcessStatus, SelfCheckReport
+from launcher.link.easytier import probe_nat_types
+from launcher.link.selfcheck import (
+    ComponentStatus,
+    NatProbe,
+    NatProbeError,
+    NatType,
+    ProcessStatus,
+    SelfCheckReport,
+)
 from launcher.link.session import (
     LinkDifficulty,
     LinkDownloadProgress,
@@ -84,6 +92,18 @@ PORT_FILE_TIMEOUT = 8.0
 #: One HTTP request against a loopback service; generous enough for a loaded machine, short enough
 #: that a dead service is recognised rather than waited on.
 HTTP_TIMEOUT = 2.0
+
+
+def _stun_verdict_for(nat_type: NatType | None) -> StunVerdict:
+    """Keep the old single-verdict contract usable when only an EasyTier type is available."""
+    if nat_type is None:
+        return StunVerdict.UNKNOWN
+    if nat_type is NatType.BLOCKED:
+        return StunVerdict.BLOCKED
+    if nat_type in (NatType.OPEN_INTERNET, NatType.NO_NAT, NatType.FULL_CONE):
+        return StunVerdict.CONE
+    return StunVerdict.SYMMETRIC
+
 
 LOCK_DIRNAME = "terracotta"
 LOCK_FILENAME = "terracotta.lock"
@@ -356,6 +376,7 @@ class TerracottaLinkSession:
         component_status_fn: Callable[[], ComponentStatus] = component_status,
         installer: Callable[[ProgressCallback], ComponentStatus] | None = None,
         stun_probe: Callable[[], StunVerdict] = probe_udp_traversal,
+        nat_probe: Callable[[], NatProbe] = probe_nat_types,
         player_name: Callable[[], str] | None = None,
     ) -> None:
         self._process = process if process is not None else TerracottaProcess()
@@ -365,6 +386,7 @@ class TerracottaLinkSession:
         self._component_status_fn = component_status_fn
         self._installer = installer or (lambda progress: install(progress))
         self._stun_probe = stun_probe
+        self._nat_probe = nat_probe
         self._player_name = player_name or _selected_player_name
 
         self._lock = threading.RLock()
@@ -431,7 +453,7 @@ class TerracottaLinkSession:
         return self._status_cache
 
     def self_check(self) -> SelfCheckReport:
-        """The four self-check rows, including a live UDP probe. Run this off the GUI thread."""
+        """Component state plus live UDP/TCP NAT types. Run this off the GUI thread."""
         component = self._component_status_fn()
         try:
             process = self._process.status()
@@ -442,11 +464,21 @@ class TerracottaLinkSession:
             self._component = component
             self._status_cache = process
         try:
-            stun = self._stun_probe()
-        except Exception:
-            logger.debug("UDP 打洞探测失败", exc_info=True)
-            stun = StunVerdict.ERROR
-        return SelfCheckReport(component=component, process=process, stun=stun)
+            nat = self._nat_probe()
+            if not isinstance(nat, NatProbe):
+                raise TypeError("nat probe returned no NatProbe")
+        except Exception as exc:
+            logger.debug("EasyTier NAT 探测失败", exc_info=True)
+            nat = NatProbe(error=NatProbeError.OS, detail=str(exc)[:200])
+        if nat.tested:
+            stun = _stun_verdict_for(nat.udp)
+        else:
+            try:
+                stun = self._stun_probe()
+            except Exception:
+                logger.debug("UDP 打洞探测失败", exc_info=True)
+                stun = StunVerdict.ERROR
+        return SelfCheckReport(component=component, process=process, stun=stun, nat=nat)
 
     # -- notification -----------------------------------------------------
     def add_listener(self, listener: Listener) -> Callable[[], None]:

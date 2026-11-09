@@ -24,8 +24,63 @@ shape of a report without importing each other. Qt-free like the rest of ``launc
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum, IntEnum
 
 from launcher.link.stun import StunVerdict
+
+
+class NatType(IntEnum):
+    """EasyTier's NAT classification, one value per wire code (0-8)."""
+
+    OPEN_INTERNET = 0
+    NO_NAT = 1
+    FULL_CONE = 2
+    RESTRICTED_CONE = 3
+    PORT_RESTRICTED_CONE = 4
+    SYMMETRIC_EASY = 5
+    SYMMETRIC = 6
+    SYMMETRIC_FIREWALL = 7
+    BLOCKED = 8
+
+    @classmethod
+    def from_code(cls, value: object) -> NatType | None:
+        """The code as a type, or ``None`` for a bool, a string or an out-of-range number."""
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        try:
+            return cls(value)
+        except ValueError:
+            return None
+
+
+class NatProbeError(str, Enum):
+    """Why a probe could not provide both results; the UI translates the value."""
+
+    MISSING = "missing"
+    INSTALL = "install"
+    TIMEOUT = "timeout"
+    BAD_OUTPUT = "bad_output"
+    EXIT = "exit"
+    OS = "os"
+
+
+@dataclass(frozen=True, slots=True)
+class NatProbe:
+    """UDP/TCP NAT types from EasyTier, or ``None`` for a result that was not obtained.
+
+    ``error`` is the reason both results may be absent. A valid probe leaves it empty; a failed
+    probe keeps ``detail`` for the log while the interface only shows the translated category.
+    """
+
+    udp: NatType | None = None
+    tcp: NatType | None = None
+    error: NatProbeError | None = None
+    detail: str = ""
+
+    @property
+    def tested(self) -> bool:
+        """Whether EasyTier returned at least the UDP type."""
+        return self.udp is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +103,13 @@ class ProcessStatus:
 
 @dataclass(frozen=True, slots=True)
 class SelfCheckReport:
-    """Everything the four self-check rows need, produced off the GUI thread."""
+    """Everything the network row needs, produced off the GUI thread.
+
+    ``nat`` is the EasyTier result (UDP + TCP). When it is unavailable, ``stun`` still carries the
+    built-in UDP verdict so the row can show the fallback instead of going blank.
+    """
 
     component: ComponentStatus = field(default_factory=ComponentStatus)
     process: ProcessStatus = field(default_factory=ProcessStatus)
     stun: StunVerdict = StunVerdict.UNKNOWN
+    nat: NatProbe = field(default_factory=NatProbe)

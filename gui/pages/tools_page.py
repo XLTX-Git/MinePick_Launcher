@@ -65,6 +65,8 @@ from launcher.link import (
     LinkMember,
     LinkSession,
     LinkState,
+    NatProbe,
+    NatType,
     SelfCheckReport,
     StunVerdict,
     default_link_session,
@@ -146,6 +148,36 @@ def _verdict_text(verdict: StunVerdict) -> str:
     lines = _lines("tools.net.verdicts")
     index = _STUN_VERDICT_INDEX.get(verdict, len(lines) - 1)
     return lines[index] if index < len(lines) else ""
+
+
+def _nat_type_text(nat_type: NatType | None) -> str:
+    """The EasyTier type name, indexed by its 0-8 wire code; data loss reads as 未检测."""
+    if nat_type is None:
+        return tr("tools.net.nat.unknown")
+    labels = _lines("tools.net.nat.types")
+    index = int(nat_type)
+    return labels[index] if 0 <= index < len(labels) else tr("tools.net.nat.unknown")
+
+
+def _nat_reason(nat: NatProbe | None) -> str:
+    """The translated reason for a probe that did not return both types."""
+    error = nat.error if isinstance(nat, NatProbe) else None
+    key = f"tools.net.reason.{error.value}" if error is not None else "tools.net.reason.not_tested"
+    return tr(key)
+
+
+def _nat_tooltip(nat: NatProbe | None, *, fallback_failed: bool = False) -> str:
+    """The result's source, or the concrete reason TCP/Everything is untested."""
+    if not isinstance(nat, NatProbe):
+        return tr("tools.net.nat.failed_tip")
+    if nat.tested:
+        if nat.tcp is not None:
+            return tr("tools.net.nat.easytier_tip")
+        return tr("tools.net.nat.tcp_tip", _nat_reason(nat))
+    reason = tr("tools.net.nat.fallback_tip", _nat_reason(nat))
+    if fallback_failed:
+        return f"{tr('tools.net.nat.failed_tip')} {reason}"
+    return reason
 
 
 def _download_icon(size: int = 24) -> QIcon:
@@ -489,13 +521,13 @@ class ToolsPage(QWidget):
         self.self_check_button.setObjectName("secondaryButton")
         self.self_check_button.setFixedHeight(26)
         self.self_check_button.setAccessibleName(tr("tools.net.title"))
-        self.self_check_button.setToolTip(tr("tools.net.note"))
+        self.self_check_button.setToolTip(tr("tools.net.nat.note"))
         self.self_check_button.clicked.connect(self._run_self_check)
         layout.addWidget(self.self_check_button, 0, Qt.AlignmentFlag.AlignVCenter)
         return banner
 
     def _run_self_check(self) -> None:
-        """Probe the UDP path and put its single-line verdict under the banner."""
+        """Probe EasyTier's UDP+TCP types and put both results on one line under the banner."""
         if self._checking:
             return
         runner = getattr(self._session, "self_check", None)
@@ -505,16 +537,21 @@ class ToolsPage(QWidget):
         self._checking = True
         session = self._session
         self.self_check_button.setEnabled(False)
-        self.self_check_button.setText(tr("tools.net.refresh"))
-        self._show_self_check_line(tr("tools.net.checking"))
+        self.self_check_button.setText(tr("tools.net.checking"))
+        self._show_self_check_line(
+            tr("tools.net.checking"),
+            tr("tools.net.checking"),
+            tr("tools.net.nat.checking_tip"),
+        )
         run_in_background(
             runner,
             on_result=lambda report: self._on_self_check_ready(report, session),
             on_error=lambda _message: self._on_self_check_ready(None, session),
         )
 
-    def _show_self_check_line(self, verdict: str) -> None:
-        self.self_check_line.setText(tr("tools.net.udp.line", verdict))
+    def _show_self_check_line(self, udp: str, tcp: str, tooltip: str) -> None:
+        self.self_check_line.setText(tr("tools.net.nat.line", udp, tcp))
+        self.self_check_line.setToolTip(tooltip)
         self.self_check_line.show()
 
     def _on_self_check_ready(self, report, session) -> None:
@@ -523,8 +560,23 @@ class ToolsPage(QWidget):
         self._checking = False
         self.self_check_button.setEnabled(True)
         self.self_check_button.setText(tr("tools.net.refresh"))
-        verdict = report.stun if isinstance(report, SelfCheckReport) else StunVerdict.ERROR
-        self._show_self_check_line(_verdict_text(verdict))
+        nat = report.nat if isinstance(report, SelfCheckReport) else None
+        if isinstance(nat, NatProbe) and nat.tested:
+            self._show_self_check_line(
+                _nat_type_text(nat.udp),
+                _nat_type_text(nat.tcp),
+                _nat_tooltip(nat),
+            )
+            return
+        unknown = tr("tools.net.nat.unknown")
+        verdict = report.stun if isinstance(report, SelfCheckReport) else StunVerdict.UNKNOWN
+        fallback_failed = verdict in (StunVerdict.UNKNOWN, StunVerdict.ERROR)
+        udp = unknown if fallback_failed else _verdict_text(verdict)
+        self._show_self_check_line(
+            udp,
+            unknown,
+            _nat_tooltip(nat, fallback_failed=fallback_failed and isinstance(nat, NatProbe)),
+        )
 
     def _build_footer(self) -> QFrame:
         footer = QFrame()
@@ -1049,6 +1101,8 @@ class ToolsPage(QWidget):
         self._checking = False
         if hasattr(self, "self_check_line"):
             self.self_check_line.hide()
+            self.self_check_line.clear()
+            self.self_check_line.setToolTip("")
             self.self_check_button.setText(tr("tools.net.title"))
             self.self_check_button.setEnabled(True)
         self._attach_session(session)

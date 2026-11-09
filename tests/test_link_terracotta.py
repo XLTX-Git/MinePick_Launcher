@@ -32,7 +32,7 @@ import pytest
 
 from launcher.link import LinkDifficulty, LinkState
 from launcher.link.components import ComponentError
-from launcher.link.selfcheck import ProcessStatus
+from launcher.link.selfcheck import NatProbe, NatProbeError, NatType, ProcessStatus
 from launcher.link.stun import StunVerdict
 from launcher.link.terracotta import (
     TerracottaClient,
@@ -65,6 +65,7 @@ def _make_session(fake: FakeTerracotta, *, component: bool = True, core=None, **
         attach_interval=0.02,
         component_status_fn=component_ready if component else component_missing,
         stun_probe=kwargs.pop("stun_probe", lambda: StunVerdict.CONE),
+        nat_probe=kwargs.pop("nat_probe", lambda: NatProbe()),
         player_name=kwargs.pop("player_name", lambda: "Steve"),
         **kwargs,
     )
@@ -421,7 +422,43 @@ def test_self_check_reports_component_process_and_stun(fake) -> None:
         assert report.component.downloaded
         assert report.process == ProcessStatus(running=True, port=fake.port)
         assert report.stun is StunVerdict.CONE
+        assert not report.nat.tested
         assert session.process_status() == report.process
+    finally:
+        session.dispose(wait=True)
+
+
+def test_self_check_reports_easytier_udp_and_tcp_types(fake) -> None:
+    nat = NatProbe(udp=NatType.SYMMETRIC_EASY, tcp=NatType.RESTRICTED_CONE)
+    session = _make_session(
+        fake,
+        nat_probe=lambda: nat,
+        stun_probe=lambda: pytest.fail("the built-in probe must not run when EasyTier answered"),
+    )
+    try:
+        report = session.self_check()
+        assert report.nat == nat
+        assert report.stun is StunVerdict.SYMMETRIC
+    finally:
+        session.dispose(wait=True)
+
+
+def test_self_check_falls_back_to_builtin_udp_when_easytier_fails(fake) -> None:
+    calls: list[str] = []
+
+    def fail() -> NatProbe:
+        raise TimeoutError("cli hung")
+
+    def fallback() -> StunVerdict:
+        calls.append("udp")
+        return StunVerdict.CONE
+
+    session = _make_session(fake, nat_probe=fail, stun_probe=fallback)
+    try:
+        report = session.self_check()
+        assert calls == ["udp"]
+        assert report.nat.error is NatProbeError.OS
+        assert report.stun is StunVerdict.CONE
     finally:
         session.dispose(wait=True)
 
