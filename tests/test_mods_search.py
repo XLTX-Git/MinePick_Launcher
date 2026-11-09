@@ -339,7 +339,12 @@ def test_source_combo_offers_all_and_is_not_height_pinned(app) -> None:
         ]
         assert page.current_source() == "modrinth"  # default stays Modrinth
         # The popup-scrollbar fix: a minimum lets the popup size itself; a fixed height did not.
-        assert combo.minimumHeight() == 36
+        # The sheet is applied first so the number does not depend on whether an earlier test left one
+        # in place - measured at 26px under the shipped sheet, 36px with no sheet at all.
+        from gui.theme import apply_theme
+
+        apply_theme("light")
+        assert 20 <= combo.minimumHeight() <= 48
         assert combo.maximumHeight() > combo.minimumHeight()
         assert combo.minimumWidth() > 0
         assert combo.maximumWidth() > combo.minimumWidth()

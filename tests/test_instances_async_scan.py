@@ -128,6 +128,11 @@ def test_construction_starts_a_background_scan_with_a_visible_placeholder(
 
     monkeypatch.setattr(instances_page.InstancesPage, "_scan_task", slow_scan)
 
+    # A previous test may have left work in the shared pool; without a free worker the constructor
+    # would look slow for the wrong reason.
+    from PySide6.QtCore import QThreadPool
+
+    QThreadPool.globalInstance().waitForDone(5000)
     started = time.monotonic()
     page = instances_page.InstancesPage()
     elapsed = time.monotonic() - started
