@@ -286,6 +286,18 @@ def human_size(size: int) -> str:
     return f"{size} " + tr("unit.bytes")
 
 
+def _safe_export_filename(name: str) -> str:
+    """An instance name as a Windows-legal file name for the save dialog's suggestion.
+
+    The dialog's suggestion is the only place this matters: the user still picks the real path, and
+    a name with ``:`` or ``/`` in it would otherwise make the prefilled dialog unusable.
+    """
+    cleaned = "".join(
+        "-" if char in '<>:"/\\|?*' or ord(char) < 32 else char for char in str(name or "")
+    )
+    return cleaned.strip(" .") or "modpack"
+
+
 def _scaled_icon_pixmap(image: QImage) -> QPixmap:
     """Centre one pack.png in an exact :data:`CONTENT_ICON_SIZE` square, DPR-aware."""
     app = QGuiApplication.instance()
@@ -1786,6 +1798,15 @@ class InstanceDetail(QWidget):
         self._export_stop: threading.Event | None = None
         self._export_rate: RateTracker | None = None
         self._export_dest: Path | None = None
+        #: 导出为整合包: same shape as the zip export above, kept apart so one cancel can never
+        #: stop the other. ``_pack_last`` is the finished archive the "open folder" button reveals.
+        self._pack_task = None
+        self._pack_bridge: ProgressBridge | None = None
+        self._pack_stop: threading.Event | None = None
+        self._pack_rate: RateTracker | None = None
+        self._pack_dest: Path | None = None
+        self._pack_last: Path | None = None
+        self._pack_fmt: str | None = None
 
         # The four card lists, keyed like the pages that own them.
         self.content_lists: dict[str, _ContentList] = {}
@@ -3090,7 +3111,15 @@ class InstanceDetail(QWidget):
         return page
 
     def _build_export(self) -> QWidget:
-        """导出: the whole instance as one zip, run as a task on the download page."""
+        """导出: the whole instance as a zip, or a standard modpack other launchers can import.
+
+        Two products on purpose. The zip is a backup of this folder and only this launcher can read
+        it back as an instance; the 整合包 is the portable artifact (``.mrpack`` / CurseForge zip),
+        which is the thing to hand to somebody else. Both run as tasks on the download page, and the
+        pack's numbers are also shown in place so 取消 is reachable without leaving the page.
+        """
+        from launcher.modpack import FORMAT_CURSEFORGE, FORMAT_MODRINTH
+
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -3104,7 +3133,7 @@ class InstanceDetail(QWidget):
         card_layout.addWidget(self.export_hint)
 
         self.export_button = QPushButton(tr("instances.detail.export.button"))
-        self.export_button.setObjectName("primaryButton")
+        self.export_button.setObjectName("secondaryButton")
         self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
@@ -3113,16 +3142,120 @@ class InstanceDetail(QWidget):
         buttons.addStretch(1)
         card_layout.addLayout(buttons)
 
-        # Not a link: there is no document to point at, so the sentence is the whole answer. The
-        # archive this page offers is the instance itself, never a modpack manifest.
-        self.export_modpack_note = QLabel(tr("instances.detail.export.modpack"))
-        self.export_modpack_note.setObjectName("hint")
-        self.export_modpack_note.setWordWrap(True)
-        card_layout.addWidget(self.export_modpack_note)
+        # A sentence, not a link: the zip has no document to point at. It says what the archive is
+        # *for*, because the difference from the modpack below is the whole point of this page.
+        self.export_zip_note = QLabel(tr("instances.detail.export.zip_note"))
+        self.export_zip_note.setObjectName("hint")
+        self.export_zip_note.setWordWrap(True)
+        card_layout.addWidget(self.export_zip_note)
+
+        self.export_pack_hint = QLabel(tr("instances.detail.export.pack.hint"))
+        self.export_pack_hint.setObjectName("hint")
+        self.export_pack_hint.setWordWrap(True)
+        card_layout.addWidget(self.export_pack_hint)
+
+        self.export_pack_format = QComboBox()
+        self.export_pack_format.addItem(
+            tr("instances.detail.export.pack.format.modrinth"), FORMAT_MODRINTH
+        )
+        self.export_pack_format.addItem(
+            tr("instances.detail.export.pack.format.curseforge"), FORMAT_CURSEFORGE
+        )
+        # The combo shows the format's own name; its field label is not announced with it, so the
+        # accessible name carries the question the control answers.
+        self.export_pack_format.setAccessibleName(
+            tr("instances.detail.export.pack.format")
+        )
+        self.export_pack_format.currentIndexChanged.connect(self._on_export_format_changed)
+        format_row = QFormLayout()
+        style_form(format_row)
+        format_label = QLabel(tr("instances.detail.export.pack.format"))
+        format_label.setObjectName("hint")
+        format_row.addRow(format_label, self.export_pack_format)
+        card_layout.addLayout(format_row)
+
+        self.export_pack_summary = QLabel(tr("instances.detail.export.pack.summary.none"))
+        self.export_pack_summary.setObjectName("hint")
+        self.export_pack_summary.setWordWrap(True)
+        card_layout.addWidget(self.export_pack_summary)
+
+        self.export_pack_button = QPushButton(tr("instances.detail.export.pack.button"))
+        self.export_pack_button.setObjectName("primaryButton")
+        self.export_pack_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_pack_open_button = QPushButton(
+            tr("instances.detail.export.pack.open_folder")
+        )
+        self.export_pack_open_button.setObjectName("secondaryButton")
+        self.export_pack_open_button.setAccessibleName(
+            tr("instances.detail.export.pack.open_folder")
+        )
+        self.export_pack_open_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_pack_open_button.setVisible(False)
+        pack_buttons = QHBoxLayout()
+        pack_buttons.setContentsMargins(0, 0, 0, 0)
+        pack_buttons.setSpacing(6)
+        pack_buttons.addWidget(self.export_pack_button)
+        pack_buttons.addWidget(self.export_pack_open_button)
+        pack_buttons.addStretch(1)
+        card_layout.addLayout(pack_buttons)
+
+        # The same two-place progress the 修改 switch uses: a sentence plus a bar and 取消 in this
+        # card, and the identical numbers in the window's task list (one ProgressBridge feeds both).
+        # It sits above the explanatory note so the window's floating task button (bottom-right
+        # corner) can never cover 取消, which is the control the user needs while it runs.
+        self.export_pack_state = QLabel("")
+        self.export_pack_state.setObjectName("hint")
+        self.export_pack_state.setWordWrap(True)
+        self.export_pack_state.setVisible(False)
+        card_layout.addWidget(self.export_pack_state)
+        (
+            self.export_pack_progress_row,
+            self.export_pack_progress_bar,
+            self.export_pack_progress_text,
+        ) = build_download_progress("packExportProgress")
+        self.export_pack_cancel_button = QPushButton(
+            tr("instances.detail.export.pack.cancel")
+        )
+        self.export_pack_cancel_button.setObjectName("secondaryButton")
+        self.export_pack_cancel_button.setAccessibleName(
+            tr("instances.detail.export.pack.cancel")
+        )
+        self.export_pack_cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_pack_cancel_button.clicked.connect(self.cancel_export_pack)
+        progress_row = QWidget()
+        progress_layout = QHBoxLayout(progress_row)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(8)
+        progress_layout.addWidget(self.export_pack_progress_row, 1)
+        progress_layout.addWidget(self.export_pack_cancel_button)
+        progress_row.setVisible(False)
+        self.export_pack_progress_container = progress_row
+        card_layout.addWidget(progress_row)
+
+        self.export_pack_note = QLabel(tr("instances.detail.export.pack.note"))
+        self.export_pack_note.setObjectName("hint")
+        self.export_pack_note.setWordWrap(True)
+        card_layout.addWidget(self.export_pack_note)
+
+        # The finished archive, in place: the path stays on screen (a status line is overwritten by
+        # the next message) and 打开所在文件夹 is the next thing a person wants to do.
+        self.export_pack_result = QLabel("")
+        self.export_pack_result.setObjectName("hint")
+        self.export_pack_result.setWordWrap(True)
+        self.export_pack_result.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.export_pack_result.setVisible(False)
+        card_layout.addWidget(self.export_pack_result)
 
         layout.addWidget(card)
         layout.addStretch(1)
         self.export_button.clicked.connect(self.export)
+        self.export_pack_button.clicked.connect(self.export_pack)
+        self.export_pack_open_button.clicked.connect(self.open_exported_pack_folder)
+        # Nothing selected yet: _fill_export is what enables these once an instance is loaded.
+        self.export_pack_button.setEnabled(False)
+        self.export_pack_format.setEnabled(False)
         return page
 
     def _refresh_log(self) -> None:
@@ -3405,6 +3538,8 @@ class InstanceDetail(QWidget):
         """Show the given instance (None clears the panel)."""
         if instance_id != self.instance_id:
             self._isolation_warned = False
+            # The finished archive's path belongs to the instance that was shown a moment ago.
+            self._forget_exported_pack()
         self.instance_id = instance_id
         if instance_id is None:
             self.instance = None
@@ -3511,6 +3646,7 @@ class InstanceDetail(QWidget):
         self._fill_settings()
         self._fill_banners()
         self._fill_modify()
+        self._fill_export()
         self._refresh_badge_counts()
         self._sync_instance_pages()
         self._loaded_tabs = set()
@@ -4457,6 +4593,297 @@ class InstanceDetail(QWidget):
         """The worker is gone: drop the bridge so a late queued tick cannot touch it."""
         self._export_bridge = None
         self._export_stop = None
+
+    # ---------- 导出为整合包: a standard pack Modrinth App / Prism / HMCL can import ----------
+
+    def _pack_format(self) -> str:
+        """The format the combo selects (the Modrinth one is the default and the fallback)."""
+        from launcher.modpack import FORMAT_MODRINTH
+
+        return str(self.export_pack_format.currentData() or FORMAT_MODRINTH)
+
+    def _on_export_format_changed(self, _index: int = 0) -> None:
+        """A different format is a different pack: recount before the user commits."""
+        self._fill_export()
+
+    def _fill_export(self) -> None:
+        """Show what the selected format would carry: mods, overrides, file count and total size.
+
+        The scan is local (counts and sizes only), so this runs on the GUI thread without a network
+        round trip or a pause - the same reason the page can afford to refresh it on every format
+        change. While an export runs the labels belong to the worker and are left alone.
+        """
+        from launcher.modpack import FORMAT_CURSEFORGE, plan_export
+
+        if self.instance_id is None or self.resolved is None:
+            self.export_pack_summary.setText(tr("instances.detail.value.none"))
+            self.export_pack_button.setEnabled(False)
+            self.export_pack_format.setEnabled(False)
+            return
+        if self._pack_task is not None and self._pack_task.is_running():
+            return
+        self.export_pack_format.setEnabled(True)
+        fmt = self._pack_format()
+        try:
+            plan = plan_export(self.instance_id, self.game_dir, fmt=fmt)
+        except Exception as exc:  # noqa: BLE001 - a broken instance must not break the page
+            self.export_pack_summary.setText(
+                tr("instances.detail.export.pack.summary.failed", str(exc))
+            )
+            self.export_pack_button.setEnabled(False)
+            return
+        if not plan.entries:
+            self.export_pack_summary.setText(tr("instances.detail.export.pack.summary.none"))
+            self.export_pack_button.setEnabled(False)
+            return
+        self.export_pack_summary.setText(
+            tr(
+                "instances.detail.export.pack.summary",
+                plan.mod_count,
+                plan.mod_count,
+                plan.other_count,
+                human_size(plan.total_bytes),
+            )
+        )
+        self.export_pack_button.setEnabled(True)
+        self.export_pack_note.setText(
+            tr(
+                "instances.detail.export.pack.note.curseforge"
+                if fmt == FORMAT_CURSEFORGE
+                else "instances.detail.export.pack.note"
+            )
+        )
+
+    def export_pack(self) -> None:
+        """导出为整合包: ask where with the native dialog, then hand the work to a task."""
+        from launcher.modpack import FORMAT_MODRINTH
+
+        if self._require_instance() is None:
+            return
+        fmt = self._pack_format()
+        suffix = ".mrpack" if fmt == FORMAT_MODRINTH else ".zip"
+        filter_key = (
+            "instances.detail.export.pack.filter.modrinth"
+            if fmt == FORMAT_MODRINTH
+            else "instances.detail.export.pack.filter.curseforge"
+        )
+        base = self.instance.name if self.instance is not None else (self.instance_id or "")
+        suggested = _safe_export_filename(base) + suffix
+        dest, _selected = QFileDialog.getSaveFileName(
+            self,
+            tr("instances.detail.export.pack.title"),
+            suggested,
+            tr(filter_key),
+        )
+        if not dest:
+            return
+        path = Path(dest)
+        if path.suffix.lower() != suffix:
+            path = path.with_name(path.name + suffix)
+        self.export_pack_to(path, fmt=fmt)
+
+    def export_pack_to(self, dest: Path, *, fmt: str | None = None) -> None:
+        """Start one pack export into ``dest``: worker thread, task row and inline progress."""
+        from launcher.modpack import FORMAT_CURSEFORGE, export_modpack
+
+        instance_id = self.instance_id
+        if instance_id is None or self.resolved is None:
+            return
+        if self._pack_task is not None and self._pack_task.is_running():
+            return  # one pack export at a time; the running row owns 取消
+        chosen = fmt or self._pack_format()
+        center = task_center_of(self)
+        self._pack_fmt = chosen
+        self._pack_dest = Path(dest)
+        self._pack_stop = threading.Event()
+        self._pack_rate = RateTracker()
+        self._pack_bridge = ProgressBridge()
+        self._pack_bridge.progress.connect(self._on_pack_progress)
+        self._pack_task = (
+            center.add_task(
+                "tasks.title.export",
+                instance_id,
+                kind="export",
+                cancel=self._cancel_pack_export,
+            )
+            if center is not None
+            else None
+        )
+        self.export_pack_button.setEnabled(False)
+        self.export_pack_format.setEnabled(False)
+        self.export_pack_open_button.setVisible(False)
+        self.export_pack_result.setVisible(False)
+        self.export_pack_state.setText(
+            tr(
+                "instances.detail.export.pack.state.match.curseforge"
+                if chosen == FORMAT_CURSEFORGE
+                else "instances.detail.export.pack.state.hash"
+            )
+        )
+        self.export_pack_state.setVisible(True)
+        self.export_pack_progress_bar.setRange(0, 0)
+        self.export_pack_progress_text.setVisible(False)
+        self.export_pack_progress_row.setVisible(True)
+        self.export_pack_progress_container.setVisible(True)
+        self.export_pack_cancel_button.setEnabled(True)
+        set_app_status(self, tr("instances.detail.export.running", str(self._pack_dest)))
+        bridge = self._pack_bridge
+        run_in_background(
+            partial(
+                export_modpack,
+                instance_id,
+                self._pack_dest,
+                self.game_dir,
+                fmt=chosen,
+                on_progress=bridge,
+                should_stop=self._pack_stop.is_set,
+            ),
+            on_result=self._on_pack_exported,
+            on_error=self._on_pack_export_failed,
+            on_finished=self._on_pack_export_finished,
+        )
+
+    def _on_pack_progress(self, progress) -> None:
+        """One export tick: the inline row and the task list are fed from the same numbers."""
+        from launcher.modpack import FORMAT_CURSEFORGE, PHASE_MATCH, PHASE_WRITE
+
+        task = self._pack_task
+        rate_tracker = self._pack_rate
+        if task is None or rate_tracker is None:
+            return
+        phase = str(getattr(progress, "phase", "") or "")
+        done_bytes = int(getattr(progress, "done_bytes", 0) or 0)
+        total_bytes = int(getattr(progress, "total_bytes", 0) or 0)
+        done_files = int(getattr(progress, "done_files", 0) or 0)
+        total_files = int(getattr(progress, "total_files", 0) or 0)
+        if phase == PHASE_WRITE:
+            if total_bytes:
+                self.export_pack_progress_bar.setRange(0, 1000)
+                self.export_pack_progress_bar.setValue(
+                    max(0, min(1000, round(done_bytes * 1000 / total_bytes)))
+                )
+                self.export_pack_progress_text.setVisible(True)
+            self.export_pack_state.setText(
+                tr(
+                    "instances.detail.export.pack.state.write",
+                    done_files,
+                    total_files,
+                )
+            )
+        elif phase == PHASE_MATCH:
+            self.export_pack_progress_bar.setRange(0, 0)
+            self.export_pack_progress_text.setVisible(False)
+            self.export_pack_state.setText(
+                tr(
+                    "instances.detail.export.pack.state.match.curseforge"
+                    if self._pack_fmt == FORMAT_CURSEFORGE
+                    else "instances.detail.export.pack.state.match.modrinth"
+                )
+            )
+        else:
+            # Hash phase, or the first tick before a phase is named: an indeterminate bar is the
+            # honest shape while the total is not yet meaningful.
+            self.export_pack_progress_bar.setRange(0, 0)
+            self.export_pack_progress_text.setVisible(False)
+            self.export_pack_state.setText(tr("instances.detail.export.pack.state.hash"))
+        rate_tracker.set_total(total_bytes)
+        rate, _eta = rate_tracker.update(done_bytes)
+        task.set_progress(done_bytes, total_bytes, rate)
+
+    def cancel_export_pack(self) -> None:
+        """The inline 取消: cancel the task, which is what flips its state and asks us to stop.
+
+        The state has to change through :meth:`gui.tasks.Task.cancel` (not by setting the stop flag
+        directly): the failure handler distinguishes "the user stopped it" from "it broke" by that
+        state, and a directly-set flag would leave the row running until it failed.
+        """
+        task = self._pack_task
+        if task is not None:
+            task.cancel()
+        elif self._pack_stop is not None:
+            self._pack_stop.set()
+
+    def _cancel_pack_export(self, task) -> None:
+        if self._pack_stop is not None:
+            self._pack_stop.set()
+        self.export_pack_cancel_button.setEnabled(False)
+        if task is not None:
+            set_app_status(self, tr("tasks.status.cancelled", task.title()))
+            if self.export_pack_state.isVisible():
+                self.export_pack_state.setText(tr("instances.detail.modify.cancelling"))
+
+    def _hide_pack_progress(self) -> None:
+        self.export_pack_state.setVisible(False)
+        self.export_pack_progress_container.setVisible(False)
+
+    def _on_pack_exported(self, result) -> None:
+        task, self._pack_task = self._pack_task, None
+        self._pack_fmt = None
+        if task is not None:
+            task.finish()
+        self._hide_pack_progress()
+        self.export_pack_button.setEnabled(True)
+        self.export_pack_format.setEnabled(True)
+        path = Path(result.path)
+        self._pack_last = path
+        self.export_pack_open_button.setVisible(True)
+        lines = [
+            str(path),
+            tr(
+                "instances.detail.export.pack.report",
+                result.files,
+                result.overrides,
+            ),
+        ]
+        if result.degraded:
+            lines.append(tr("instances.detail.export.pack.offline"))
+        self.export_pack_result.setText("\n".join(lines))
+        self.export_pack_result.setVisible(True)
+        set_app_status(
+            self, tr("instances.detail.export.done", str(path), human_size(result.size))
+        )
+
+    def _on_pack_export_failed(self, message: str) -> None:
+        task, self._pack_task = self._pack_task, None
+        self._pack_fmt = None
+        self._hide_pack_progress()
+        self.export_pack_button.setEnabled(True)
+        self.export_pack_format.setEnabled(True)
+        if task is not None and task.state == CANCELLED:
+            # The user stopped it: the exporter raising on purpose is not a failure to report.
+            self.export_pack_state.setText(tr("instances.detail.export.pack.cancelled"))
+            self.export_pack_state.setVisible(True)
+            set_app_status(self, tr("tasks.status.cancelled", task.title()))
+            return
+        if task is not None:
+            task.fail(message)
+        text = tr("instances.msg.export_fail", message)
+        self.export_pack_state.setText(text)
+        self.export_pack_state.setVisible(True)
+        set_app_status(self, text, "error")
+
+    def _on_pack_export_finished(self) -> None:
+        """The worker is gone: drop the bridge so a late queued tick cannot touch it."""
+        self._pack_bridge = None
+        self._pack_stop = None
+
+    def _forget_exported_pack(self) -> None:
+        """A different instance's archive must not stay on screen (the path would be a lie)."""
+        self._pack_last = None
+        self.export_pack_result.setVisible(False)
+        self.export_pack_result.setText("")
+        self.export_pack_open_button.setVisible(False)
+
+    def open_exported_pack_folder(self) -> None:
+        """打开所在文件夹: reveal the archive this page just wrote."""
+        target = self._pack_last
+        if target is None:
+            return
+        folder = target.parent
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            set_app_status(
+                self, tr("instances.detail.diagnosis.open_failed", str(folder)), "error"
+            )
 
     def delete(self) -> None:
         if self._require_instance() is None:

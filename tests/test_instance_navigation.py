@@ -316,15 +316,20 @@ def test_detail_sidebar_is_eleven_items_in_two_groups(app, monkeypatch, ws_tmp):
         assert detail.change_version_button.isEnabled()
         assert detail.change_loader_button.isEnabled()
 
-        # 导出 offers the zip, and says the modpack manifest is not on offer (no dead link).
+        # 导出 offers the zip and the standard modpack (format chooser + content summary), and
+        # neither is a dead link: the pack section names what will be packed.
         detail.tabs[TAB_EXPORT].click()
         app.processEvents()
         assert detail.stack.currentIndex() == TAB_EXPORT
         export_labels = [
             label.text() for label in detail.stack.widget(TAB_EXPORT).findChildren(QLabel)
         ]
-        assert i18n.tr("instances.detail.export.modpack") in export_labels
+        assert i18n.tr("instances.detail.export.zip_note") in export_labels
+        assert i18n.tr("instances.detail.export.pack.hint") in export_labels
         assert detail.export_button.text() == i18n.tr("instances.detail.export.button")
+        assert detail.export_pack_button.text() == i18n.tr(
+            "instances.detail.export.pack.button"
+        )
 
         # The diagnosis page owns the log viewer and shows the file contents directly.
         detail.tabs[TAB_DIAGNOSIS].click()
