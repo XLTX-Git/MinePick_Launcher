@@ -363,8 +363,10 @@ def test_text_controls_grow_with_a_larger_base_font(app, monkeypatch, ws_tmp):
     try:
         window = _make_window(app, monkeypatch, ws_tmp)
         _force_geometry(window, app, *LARGE_FONT_SIZE)
-        original_sheet = app.styleSheet()
-        app.setStyleSheet(original_sheet + f"\nQWidget {{ font-size: {LARGE_FONT_PX}px; }}\n")
+        # Style this window, never the application: setStyleSheet on the QApplication re-polishes
+        # every widget in the process and reaches the ones earlier test files already destroyed.
+        original_sheet = window.styleSheet()
+        window.setStyleSheet(original_sheet + f"\nQWidget {{ font-size: {LARGE_FONT_PX}px; }}\n")
         _settle(app)
         failures = _scan(app, window)
         assert not failures, (
@@ -372,8 +374,8 @@ def test_text_controls_grow_with_a_larger_base_font(app, monkeypatch, ws_tmp):
             "own minimum:\n  " + "\n  ".join(failures)
         )
     finally:
-        if original_sheet is not None:
-            app.setStyleSheet(original_sheet)
+        if original_sheet is not None and window is not None:
+            window.setStyleSheet(original_sheet)
         if window is not None:
             _close(app, window)
 
