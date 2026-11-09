@@ -455,7 +455,6 @@ class _ResourceRow(QWidget):
 
         self.install = QPushButton(tr("mods.install"))
         self.install.setObjectName("rowInstall")
-        self.install.setFixedHeight(32)
         self.install.setCursor(Qt.CursorShape.PointingHandCursor)
         # 30 buttons all reading "Install" would be useless with a screen reader; the row's title is
         # what tells them apart.
@@ -955,7 +954,6 @@ class _InstancePickerDialog(inwindow_dialog.InWindowDialog):
         self.empty_state.update_for(len(self.choices))
         self.versions_button = QPushButton(tr("mods.instance.go_versions"))
         self.versions_button.setObjectName("secondaryButton")
-        self.versions_button.setFixedHeight(32)
         self.versions_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.versions_button.setAccessibleName(tr("mods.instance.go_versions"))
         self.versions_button.clicked.connect(self._open_versions)
@@ -974,14 +972,14 @@ class _InstancePickerDialog(inwindow_dialog.InWindowDialog):
         button_row.addStretch(1)
         self.cancel_button = QPushButton(tr("mods.instance.cancel"))
         self.cancel_button.setObjectName("secondaryButton")
-        self.cancel_button.setFixedHeight(36)
+        self.cancel_button.setMinimumHeight(36)
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.clicked.connect(
             lambda: self._finish(inwindow_dialog.Outcome.REJECTED)
         )
         self.install_button = QPushButton(tr("mods.instance.install"))
         self.install_button.setObjectName("installPrimary")  # the versions step's pill
-        self.install_button.setFixedHeight(48)
+        self.install_button.setMinimumHeight(48)
         self.install_button.setMinimumWidth(200)
         self.install_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.install_button.setEnabled(False)
@@ -1305,7 +1303,7 @@ class _ContentTab(QWidget):
             self.query_button,
             self.search_button,
         ):
-            control.setFixedHeight(36)
+            control.setMinimumHeight(36)
         self.list = _ResourceList()
         self.list.setObjectName("resourceList")
         # WCAG 4.1.2: the list is a focus stop of its own; the category name tells the four lists apart.
@@ -1344,7 +1342,6 @@ class _ContentTab(QWidget):
         self.next_page_button = QPushButton(tr("mods.page.next"))
         for button in (self.prev_page_button, self.next_page_button):
             button.setObjectName("secondaryButton")
-            button.setFixedHeight(32)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.page_label = QLabel("")
         self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2435,7 +2432,6 @@ class ResourcesPage(QWidget):
             chip = QPushButton(tr(title_key))
             chip.setObjectName("resourceChip")
             chip.setCheckable(True)
-            chip.setFixedHeight(32)
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
             chip.setAccessibleName(tr(title_key))
             self.chip_group.addButton(chip, index)

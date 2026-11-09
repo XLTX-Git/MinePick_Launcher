@@ -1914,7 +1914,7 @@ class InstanceDetail(QWidget):
             if key in group_starts:
                 group = QLabel(tr(group_starts[key]))
                 group.setObjectName("instanceNavGroup")
-                group.setFixedHeight(SIDEBAR_GROUP_HEIGHT)
+                group.setMinimumHeight(SIDEBAR_GROUP_HEIGHT)
                 group.setWordWrap(False)
                 body_layout.addSpacing(8)
                 body_layout.addWidget(group)
@@ -1957,7 +1957,7 @@ class InstanceDetail(QWidget):
         badge = QLabel("")
         badge.setObjectName("instanceNavBadge")
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge.setFixedHeight(18)
+        badge.setMinimumHeight(18)
         badge.setVisible(False)
         badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         row.addWidget(icon)
@@ -2077,6 +2077,10 @@ class InstanceDetail(QWidget):
         self.icon_button = QPushButton()
         self.icon_button.setObjectName("iconButton")
         self.icon_button.setFixedSize(DETAIL_ICON_BUTTON_SIZE, DETAIL_ICON_BUTTON_SIZE)
+        # 40px icon in a 50px square: #iconButton's 4px padding and 1px border already frame it.
+        # The base QPushButton rule's text padding (4px 12px) otherwise claims a 54px minimum for a
+        # control that has no label, so zero it out; the fixed square is the design.
+        self.icon_button.setStyleSheet("padding: 0;")
         self.icon_button.setIconSize(QSize(DETAIL_ICON_SIZE, DETAIL_ICON_SIZE))
         self.icon_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.icon_button.setAccessibleName(tr("instances.icon.change"))

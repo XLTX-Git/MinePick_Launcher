@@ -81,7 +81,6 @@ ICON_SIZE = 40
 ROW_PADDING = 12
 ROW_GAP = 12
 ROW_HEIGHT = 68
-ROW_BUTTON_HEIGHT = 30
 FIELD_HEIGHT = 36
 #: A favicon is a 64×64 PNG in practice; anything near this is not one and is not worth decoding.
 MAX_FAVICON_BYTES = 256 * 1024
@@ -213,7 +212,6 @@ class ServerRow(CardRow):
     def _action(text: str, subject: str, callback, *, object_name: str = "rowInstall") -> QPushButton:
         button = QPushButton(text)
         button.setObjectName(object_name)
-        button.setFixedHeight(ROW_BUTTON_HEIGHT)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         name = f"{text} · {subject}"
         button.setAccessibleName(name)
@@ -254,10 +252,8 @@ class ServersPage(QWidget):
         self.file_row.setVisible(False)
         self.refresh_button = QPushButton(tr("java.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
-        self.refresh_button.setFixedHeight(32)
         self.refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_button = QPushButton(tr("servers.add"))
-        self.add_button.setFixedHeight(32)
         self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
 
         header = QWidget()
@@ -282,10 +278,10 @@ class ServersPage(QWidget):
         fields = QFormLayout()
         style_form(fields)
         self.name_edit = QLineEdit()
-        self.name_edit.setFixedHeight(FIELD_HEIGHT)
+        self.name_edit.setMinimumHeight(FIELD_HEIGHT)
         self.name_edit.setPlaceholderText(tr("servers.name_placeholder"))
         self.address_edit = QLineEdit()
-        self.address_edit.setFixedHeight(FIELD_HEIGHT)
+        self.address_edit.setMinimumHeight(FIELD_HEIGHT)
         self.address_edit.setPlaceholderText(tr("servers.address_placeholder"))
         # QFormLayout passes the label on to the field as its accessible name (WCAG 4.1.2).
         fields.addRow(QLabel(tr("servers.name")), self.name_edit)
@@ -296,10 +292,8 @@ class ServersPage(QWidget):
         form_buttons.addStretch(1)
         self.cancel_button = QPushButton(tr("dialog.cancel"))
         self.cancel_button.setObjectName("secondaryButton")
-        self.cancel_button.setFixedHeight(32)
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_button = QPushButton(tr("servers.save"))
-        self.save_button.setFixedHeight(32)
         self.save_button.setCursor(Qt.CursorShape.PointingHandCursor)
         form_buttons.addWidget(self.cancel_button)
         form_buttons.addWidget(self.save_button)

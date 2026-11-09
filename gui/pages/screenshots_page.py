@@ -85,7 +85,6 @@ THUMB_HEIGHT = 68
 ROW_PADDING = 12
 ROW_GAP = 12
 ROW_RADIUS = 6
-ROW_BUTTON_HEIGHT = 30
 #: How many pictures one worker decodes before reporting back. Small enough that the first row fills
 #: in quickly and that a huge folder cannot queue hundreds of images at once.
 THUMB_BATCH = 12
@@ -292,7 +291,6 @@ class ScreenshotRow(CardRow):
     def _action(text: str, subject: str, callback, *, object_name: str = "rowInstall") -> QPushButton:
         button = QPushButton(text)
         button.setObjectName(object_name)
-        button.setFixedHeight(ROW_BUTTON_HEIGHT)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         # Four buttons reading the same word per row would be useless with a screen reader; the file
         # name is what tells them apart.
@@ -337,11 +335,9 @@ class ScreenshotsPage(QWidget):
         self.scope_label.setVisible(False)
         self.refresh_button = QPushButton(tr("java.refresh"))
         self.refresh_button.setObjectName("secondaryButton")
-        self.refresh_button.setFixedHeight(32)
         self.refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_folder_button = QPushButton(tr("crash.open_folder"))
         self.open_folder_button.setObjectName("secondaryButton")
-        self.open_folder_button.setFixedHeight(32)
         self.open_folder_button.setCursor(Qt.CursorShape.PointingHandCursor)
 
         header = QWidget()
