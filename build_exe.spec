@@ -41,7 +41,7 @@ a = Analysis(
     noarchive=False,
 )
 
-def _windows_version_file() -> str:
+def _windows_version_file() -> str | None:
     """Write PyInstaller's version resource from ``launcher.__version__`` and return its path.
 
     The EXE properties used to show no version at all: the spec never passed ``version=``, so Windows
@@ -52,7 +52,10 @@ def _windows_version_file() -> str:
     from pathlib import Path
 
     root = Path(SPECPATH)
-    source = (root / "launcher" / "__init__.py").read_text(encoding="utf-8")
+    source_path = root / "launcher" / "__init__.py"
+    if not source_path.is_file():
+        return None  # not a checkout (the spec tests exec us from a temp dir): no version resource
+    source = source_path.read_text(encoding="utf-8")
     match = re.search(r'^__version__\s*=\s*"([^"]+)"', source, re.MULTILINE)
     version = match.group(1) if match else "0.0.0"
     numbers = (version.split(".") + ["0", "0", "0"])[:4]
@@ -94,5 +97,6 @@ exe = EXE(
     upx=False,
     console=False,
     icon="gui/resources/icon.ico",  # 由 icon.svg 渲染生成（钻石镐+齿轮）
-    version=_windows_version_file(),
+    # Only under PyInstaller: the tests exec this spec to read ``datas``, where SPECPATH does not exist.
+    version=_windows_version_file() if "SPECPATH" in globals() else None,
 )
