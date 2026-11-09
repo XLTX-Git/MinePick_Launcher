@@ -25,9 +25,9 @@ import time
 import pytest
 from PySide6.QtCore import QBuffer, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel
 
-from gui import i18n, paint_utils
+from gui import i18n, inwindow_dialog, paint_utils
 from gui.pages.tools_page import SCREEN_STATES, ToolsPage, _MemberAvatar
 from launcher.link import (
     ComponentStatus,
@@ -44,8 +44,8 @@ from launcher.link import (
     StunVerdict,
     skins,
 )
-
-INSTANCES = [("demo-instance", "1.21.11 · 原版")]
+from launcher.link import components as components_module
+from launcher.link.components import ComponentError
 
 ROOM_OPTIONS = {
     LinkState.HOST_READY: {
@@ -88,8 +88,11 @@ def _nat_type(code: NatType) -> str:
     return i18n.tr("tools.net.nat.types").splitlines()[int(code)]
 
 
-def _show(app, session) -> ToolsPage:
-    page = ToolsPage(session=session, instances_provider=lambda: list(INSTANCES))
+def _show(app, session, *, game_running: bool = False) -> ToolsPage:
+    page = ToolsPage(
+        session=session,
+        game_running_provider=lambda: game_running,
+    )
     page.resize(820, 600)
     page.show()
     for _ in range(4):
@@ -267,7 +270,6 @@ def test_host_waiting_and_ready_drive_the_step_card_room_code_and_members(app) -
     fake = FakeLinkSession(state=LinkState.IDLE)
     page = _show(app, fake)
     try:
-        assert page.instance_combo.count() == 1
         assert page.create_button.isEnabled()
         page.create_button.click()
         app.processEvents()
@@ -289,6 +291,101 @@ def test_host_waiting_and_ready_drive_the_step_card_room_code_and_members(app) -
         app.processEvents()
         assert page.current_state() is LinkState.IDLE
         assert page.member_row_count() == 0
+    finally:
+        _close(app, page)
+
+
+# ------------------------------------------------------------------ host without an instance picker
+
+
+def test_the_host_card_has_no_instance_picker(app) -> None:
+    """A P2P room does not depend on the instance, so the control is gone - not merely hidden."""
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        assert not hasattr(page, "instance_combo")
+        assert not hasattr(page, "refresh_button")
+        assert page.host_card.findChildren(QComboBox) == []
+        assert page.create_button.isVisibleTo(page)
+        assert page.create_button.text() == i18n.tr("tools.host.submit")
+        assert page.create_button.isEnabled()
+        # The card says why there is nothing to pick; its absence must read as a decision.
+        assert page.host_auto_hint.isVisibleTo(page)
+        assert page.host_auto_hint.text() == i18n.tr("tools.host.auto")
+    finally:
+        _close(app, page)
+
+
+def test_the_host_card_lists_two_steps_without_a_picker_step(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        steps = [
+            label.text()
+            for label in page.host_card.findChildren(QLabel)
+            if label.objectName() == "toolsStepText"
+        ]
+        assert steps == [
+            line.strip() for line in i18n.tr("tools.host.body").splitlines() if line.strip()
+        ]
+        assert len(steps) == 2, "the deleted 'choose an instance' step must not leave a third line"
+    finally:
+        _close(app, page)
+
+
+def test_creating_a_room_needs_no_instance_and_waits_immediately(app) -> None:
+    fake = FakeLinkSession(state=LinkState.IDLE)
+    page = _show(app, fake)
+    try:
+        page.create_button.click()
+        app.processEvents()
+        assert fake.state() is LinkState.HOST_WAITING
+        assert page.current_state() is LinkState.HOST_WAITING
+        # The session interface still has the parameter; the page passes the empty string because a
+        # P2P room does not care which instance holds the world.
+        assert fake.instance_id() == ""
+    finally:
+        _close(app, page)
+
+
+def test_the_waiting_hint_names_the_missing_game_process(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.HOST_WAITING), game_running=False)
+    try:
+        assert page.wait_hint.text() == i18n.tr("tools.wait.no_game")
+        assert "游戏进程" in page.wait_hint.text()
+        # The title keeps saying what the launcher is waiting for; only the hint becomes concrete.
+        assert page.wait_title.text() == i18n.tr("tools.wait.title")
+    finally:
+        _close(app, page)
+
+
+def test_the_waiting_hint_stays_generic_when_a_game_runs(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.HOST_WAITING), game_running=True)
+    try:
+        assert page.wait_hint.text() == i18n.tr("tools.wait.hint")
+    finally:
+        _close(app, page)
+
+
+def _raising_detector() -> bool:
+    raise OSError("no process table")
+
+
+def test_an_unreadable_game_detector_keeps_the_generic_hint(app) -> None:
+    """A broken detector must not turn a normal wait into a false "no game" claim."""
+    page = _show(app, FakeLinkSession(state=LinkState.HOST_WAITING), game_running=False)
+    page._game_running_provider = _raising_detector
+    try:
+        page._apply_waiting()
+        assert page.wait_hint.text() == i18n.tr("tools.wait.hint")
+    finally:
+        _close(app, page)
+
+
+def test_host_starting_never_claims_there_is_no_game(app) -> None:
+    """``host-starting`` means the LAN world was found: a game is running by definition."""
+    page = _show(app, _PhaseSession(state=LinkState.HOST_WAITING), game_running=False)
+    try:
+        assert page.wait_title.text() == i18n.tr("tools.wait.starting")
+        assert page.wait_hint.text() == i18n.tr("tools.wait.hint")
     finally:
         _close(app, page)
 
@@ -696,6 +793,214 @@ def test_host_starting_uses_its_own_title(app) -> None:
 
 # The real-poller lifecycle (page destroyed / language switch) lives in tests/test_link_bus.py:
 # the session is owned by the bus now, so a destroyed page must *not* stop the poller.
+
+
+# ------------------------------------------------------------------ 停用联机功能
+
+
+def _accept(monkeypatch) -> None:
+    """Answer the next in-window question with its destructive button."""
+    monkeypatch.setattr(
+        inwindow_dialog.InWindowDialog, "ask", lambda self: inwindow_dialog.Outcome.ACCEPTED
+    )
+
+
+def _refuse(monkeypatch) -> None:
+    """Answer the next in-window question with its cancel button."""
+    monkeypatch.setattr(
+        inwindow_dialog.InWindowDialog, "ask", lambda self: inwindow_dialog.Outcome.REJECTED
+    )
+
+
+def _component_tree(data_dir, *, payload: bytes = b"x" * 2048):
+    """A fake launcher dir with the Terracotta payload and the EasyTier self-check component."""
+    terracotta = data_dir / "components" / "terracotta"
+    terracotta.mkdir(parents=True)
+    (terracotta / "terracotta-0.4.2-windows-x86_64.exe").write_bytes(payload)
+    easytier = data_dir / "components" / "easytier"
+    easytier.mkdir(parents=True)
+    (easytier / "easytier-core.exe").write_bytes(b"y" * 32)
+    return terracotta, easytier
+
+
+def _statuses(monkeypatch) -> list[tuple[str, str | None]]:
+    """Capture what the page reports on the window's single status line."""
+    import gui.pages.tools_page as tools_page_module
+
+    seen: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        tools_page_module,
+        "set_app_status",
+        lambda _widget, text, level=None: seen.append((text, level)),
+    )
+    return seen
+
+
+def test_disable_link_is_a_focusable_named_button(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        link = page.disable_link
+        assert link.isVisibleTo(page)
+        assert link.text() == i18n.tr("tools.footer.disable")
+        assert link.objectName() == "toolsFooterLink"
+        assert link.accessibleName() == i18n.tr("tools.footer.disable")
+        assert link.cursor().shape() == Qt.CursorShape.PointingHandCursor
+        assert link.focusPolicy() & Qt.FocusPolicy.TabFocus, "the link has to be keyboard reachable"
+    finally:
+        _close(app, page)
+
+
+def test_disable_confirmation_says_what_it_deletes_and_defaults_to_cancel(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        dialog = page._disable_link_dialog()
+        assert dialog.title_label.text() == i18n.tr("tools.disable.title")
+        assert dialog.body_label.text() == i18n.tr("tools.disable.message")
+        assert [button.text() for button in dialog.buttons] == [
+            i18n.tr("dialog.cancel"),
+            i18n.tr("tools.disable.confirm"),
+        ]
+        # Destructive: Enter must keep the component, not delete it.
+        assert dialog.default_button is not None
+        assert dialog.default_button.text() == i18n.tr("dialog.cancel")
+        body = dialog.body_label.text()
+        assert "8 MB" in body, "the size of the download is what the user is giving up"
+        assert "陶瓦" in body, "the deleted component has to be named"
+        assert "关闭" in body, "an open room being closed first has to be stated"
+        dialog.close()
+    finally:
+        _close(app, page)
+
+
+def test_cancelling_the_confirmation_deletes_nothing(app, monkeypatch, ws_tmp) -> None:
+    data_dir = ws_tmp / "disable_cancel"
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(data_dir))
+    terracotta, easytier = _component_tree(data_dir)
+
+    class _Session(FakeLinkSession):
+        def __init__(self) -> None:
+            super().__init__(state=LinkState.IDLE)
+            self.calls: list[str] = []
+
+        def close_room(self) -> None:
+            self.calls.append("close_room")
+            super().close_room()
+
+        def remove_core(self) -> int:
+            self.calls.append("remove_core")
+            return 1
+
+    session = _Session()
+    seen = _statuses(monkeypatch)
+    page = _show(app, session)
+    try:
+        _refuse(monkeypatch)
+        page.disable_link.click()
+        app.processEvents()
+        assert session.calls == [], "a cancelled confirmation must not close or delete anything"
+        assert terracotta.exists() and easytier.exists()
+        assert page.current_state() is LinkState.IDLE
+        assert seen == []
+    finally:
+        _close(app, page)
+
+
+def test_confirming_closes_the_room_then_deletes_only_the_terracotta_component(
+    app, monkeypatch, ws_tmp
+) -> None:
+    data_dir = ws_tmp / "disable_accept"
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(data_dir))
+    terracotta, easytier = _component_tree(data_dir)
+
+    class _DiskSession(FakeLinkSession):
+        """Removes the real (temporary) component tree, the way the real backend does."""
+
+        def __init__(self) -> None:
+            super().__init__(state=LinkState.IDLE)
+            self.calls: list[str] = []
+
+        def close_room(self) -> None:
+            self.calls.append("close_room")
+            super().close_room()
+
+        def remove_core(self) -> int:
+            self.calls.append("remove_core")
+            removed = components_module.remove()
+            self._reset(LinkState.NOT_DOWNLOADED)
+            return removed
+
+    session = _DiskSession()
+    seen = _statuses(monkeypatch)
+    page = _show(app, session)
+    try:
+        _accept(monkeypatch)
+        page.disable_link.click()
+        app.processEvents()
+        assert session.calls == ["close_room", "remove_core"], "the room goes before the files"
+        assert not terracotta.exists(), "the downloaded multiplayer component has to be gone"
+        assert easytier.exists(), "the network self-check component must survive"
+        assert (easytier / "easytier-core.exe").is_file()
+        assert page.current_state() is LinkState.NOT_DOWNLOADED
+        assert page._pages[LinkState.NOT_DOWNLOADED] is page.state_stack.currentWidget()
+        assert len(seen) == 1
+        text, level = seen[0]
+        assert level is None, "a completed deletion is not an error"
+        assert text == i18n.tr("tools.disable.done", "0.0"), f"unexpected completion message: {text}"
+        assert "MB" in text
+    finally:
+        _close(app, page)
+
+
+def test_a_failed_deletion_reports_the_concrete_reason(app, monkeypatch) -> None:
+    class _RefusingSession(FakeLinkSession):
+        def remove_core(self) -> int:
+            raise ComponentError(
+                "tools.disable.fail",
+                "terracotta-0.4.2-windows-x86_64.exe: 另一个程序正在使用此文件",
+            )
+
+    page = _show(app, _RefusingSession(state=LinkState.IDLE))
+    seen = _statuses(monkeypatch)
+    try:
+        _accept(monkeypatch)
+        page.disable_link.click()
+        app.processEvents()
+        assert len(seen) == 1
+        text, level = seen[0]
+        assert level == "error"
+        assert "另一个程序正在使用此文件" in text, "the OS reason has to reach the user"
+        assert text == i18n.tr(
+            "tools.disable.fail", "terracotta-0.4.2-windows-x86_64.exe: 另一个程序正在使用此文件"
+        )
+        # The deletion failed, so the page must not pretend the component is gone.
+        assert page.current_state() is LinkState.IDLE
+    finally:
+        _close(app, page)
+
+
+def test_disable_link_on_the_onboarding_page_deletes_nothing(app, monkeypatch) -> None:
+    """With nothing installed there is no question to ask and no file to delete."""
+    asked: list[object] = []
+    monkeypatch.setattr(
+        inwindow_dialog.InWindowDialog,
+        "ask",
+        lambda self: asked.append(self) or inwindow_dialog.Outcome.REJECTED,
+    )
+
+    class _Session(FakeLinkSession):
+        def remove_core(self) -> int:
+            raise AssertionError("nothing is installed, so nothing may be removed")
+
+    page = _show(app, _Session(state=LinkState.NOT_DOWNLOADED))
+    seen = _statuses(monkeypatch)
+    try:
+        page.disable_link.click()
+        app.processEvents()
+        assert asked == []
+        assert seen == [(i18n.tr("tools.disable.none"), None)]
+        assert page.current_state() is LinkState.NOT_DOWNLOADED
+    finally:
+        _close(app, page)
 
 
 # ------------------------------------------------------------------ navigation

@@ -40,6 +40,7 @@ from launcher.link.components import (
     component_dir,
     component_status,
     install,
+    remove,
     verify_archive,
 )
 from tests.link_fakes import FakeMirror
@@ -306,4 +307,55 @@ def test_verify_archive_reads_the_bytes(data_dir, ws_tmp) -> None:
 def test_component_status_of_a_missing_payload(data_dir) -> None:
     status = component_status()
     assert not status.downloaded
+
+
+# ------------------------------------------------------------------ removal (停用联机功能)
+
+
+def _installed_tree(data_dir) -> tuple[Path, Path]:
+    """A launcher dir with the Terracotta payload and the EasyTier self-check component."""
+    terracotta = data_dir / "components" / "terracotta"
+    terracotta.mkdir(parents=True)
+    (terracotta / "terracotta-0.4.2-windows-x86_64.exe").write_bytes(b"x" * 4096)
+    (terracotta / "installed.json").write_text('{"version": "0.4.2"}', encoding="utf-8")
+    easytier = data_dir / "components" / "easytier"
+    easytier.mkdir(parents=True)
+    (easytier / "easytier-core.exe").write_bytes(b"y" * 64)
+    return terracotta, easytier
+
+
+def test_remove_deletes_only_the_terracotta_tree(data_dir) -> None:
+    """The EasyTier payload belongs to the network self-check and must survive the cleanup."""
+    terracotta, easytier = _installed_tree(data_dir)
+    expected = sum(path.stat().st_size for path in terracotta.rglob("*") if path.is_file())
+    assert remove() == expected
+    assert not terracotta.exists()
+    assert (easytier / "easytier-core.exe").read_bytes() == b"y" * 64
+    assert component_status().supported, "removing the payload must not change platform support"
+
+
+def test_remove_of_a_missing_component_reports_zero(data_dir) -> None:
+    assert remove() == 0
+    assert remove() == 0, "a second call is still a no-op, not an error"
+
+
+def test_a_locked_payload_raises_with_the_os_reason(data_dir, monkeypatch) -> None:
+    """Windows refuses to delete a running executable: the page needs that reason verbatim."""
+    import shutil
+
+    terracotta, _easytier = _installed_tree(data_dir)
+    locked = terracotta / "terracotta-0.4.2-windows-x86_64.exe"
+    real_rmtree = shutil.rmtree
+
+    def refuse(target, *args, **kwargs):
+        if Path(target) == terracotta:
+            raise PermissionError(13, "The process cannot access the file", str(locked))
+        return real_rmtree(target, *args, **kwargs)
+
+    monkeypatch.setattr("launcher.link.components.shutil.rmtree", refuse)
+    with pytest.raises(ComponentError) as info:
+        remove()
+    assert info.value.key == "tools.disable.fail"
+    assert "terracotta-0.4.2-windows-x86_64.exe" in info.value.detail
+    assert "cannot access" in info.value.detail
     assert not (component_dir() / "terracotta-test.exe").exists()

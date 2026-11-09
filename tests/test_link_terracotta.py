@@ -63,7 +63,9 @@ def _make_session(fake: FakeTerracotta, *, component: bool = True, core=None, **
         client_factory=client_factory,
         poll_interval=0.02,
         attach_interval=0.02,
-        component_status_fn=component_ready if component else component_missing,
+        component_status_fn=kwargs.pop(
+            "component_status_fn", component_ready if component else component_missing
+        ),
         stun_probe=kwargs.pop("stun_probe", lambda: StunVerdict.CONE),
         nat_probe=kwargs.pop("nat_probe", lambda: NatProbe()),
         player_name=kwargs.pop("player_name", lambda: "Steve"),
@@ -527,3 +529,55 @@ def test_launch_waits_for_the_port_file_and_checks_meta(ws_tmp, fake) -> None:
         assert flags & 0x00000200  # CREATE_NEW_PROCESS_GROUP
     else:
         assert captured["kwargs"]["start_new_session"] is True
+
+
+# ------------------------------------------------------------------ removing the component
+
+
+def test_remove_core_deletes_the_payload_and_returns_to_the_onboarding_state(
+    fake, session_factory, ws_tmp, monkeypatch
+) -> None:
+    """停用联机功能 through the real session: the state only moves after the disk agrees."""
+    from launcher.link import ComponentStatus
+
+    data_dir = ws_tmp / "remove_core"
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(data_dir))
+    payload = data_dir / "components" / "terracotta" / "terracotta-0.4.2-windows-x86_64.exe"
+    payload.parent.mkdir(parents=True)
+    payload.write_bytes(b"x" * 4096)
+    easytier = data_dir / "components" / "easytier" / "easytier-core.exe"
+    easytier.parent.mkdir(parents=True)
+    easytier.write_bytes(b"y" * 8)
+
+    def installed() -> ComponentStatus:
+        """The on-disk truth, so a successful removal really changes the component state."""
+        return ComponentStatus(
+            downloaded=payload.is_file(), version="0.4.2", supported=True, path=str(payload)
+        )
+
+    fake.set_state("waiting")
+    session = session_factory(fake, component_status_fn=installed)
+    assert wait_until(lambda: session.state() is LinkState.IDLE)
+
+    assert session.remove_core() == 4096
+    assert not payload.exists()
+    assert easytier.exists(), "the network self-check component must survive"
+    assert session.state() is LinkState.NOT_DOWNLOADED
+    assert not session.component_status().downloaded
+
+
+def test_a_failed_removal_keeps_the_state_and_raises_the_reason(fake, session_factory, monkeypatch):
+    fake.set_state("waiting")
+    session = session_factory(fake)
+    assert wait_until(lambda: session.state() is LinkState.IDLE)
+
+    def refuse() -> int:
+        raise ComponentError("tools.disable.fail", "terracotta.exe: file in use")
+
+    monkeypatch.setattr("launcher.link.terracotta.remove_component", refuse)
+    with pytest.raises(ComponentError) as info:
+        session.remove_core()
+    assert info.value.detail == "terracotta.exe: file in use"
+    # Still installed and still idle: a failed cleanup may not fake the onboarding state.
+    assert session.state() is LinkState.IDLE
+    assert session.component_status().downloaded

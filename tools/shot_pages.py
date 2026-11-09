@@ -960,6 +960,11 @@ def _render_tools_states(app, window, out_dir: Path, prefix: str) -> None:
         time.sleep(0.05)
     wait_for_workers(app, QThreadPool.globalInstance(), 5.0)
     page = window.pages["tools"]
+    # The waiting layout is the "now open the LAN world" instruction, and that assumes a game to open
+    # it in. A render machine has no game running, so the page's own detector (the launcher's process
+    # registry) would substitute the "no game process detected" diagnostic for the reviewed copy.
+    # The picture is of the reviewed layout, so the detector answers "a game is running" here.
+    page._game_running_provider = lambda: True
     out_dir.mkdir(parents=True, exist_ok=True)
     for suffix, state_name, options in TOOLS_STATE_SHOTS:
         kwargs = dict(options)
