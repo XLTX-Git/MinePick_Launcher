@@ -330,13 +330,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.host.title": "创建大厅",
         "tools.host.body": (
             "进入世界后，在游戏菜单选择「对局域网开放」。\n"
-            "在下方选择要作为房主的实例。\n"
-            "创建大厅，成功后把大厅编号发给朋友。"
+            "点「创建」，成功后把大厅编号发给朋友。"
         ),
-        "tools.host.instance": "房主实例",
+        "tools.host.auto": "创建后会自动找正在运行的游戏，不需要选择实例；双方版本一致即可联机。",
         "tools.host.submit": "创建",
         "tools.wait.title": "正在等待你开放局域网…",
         "tools.wait.hint": "大厅已经准备好，只等在游戏里把局域网开放出来。",
+        "tools.wait.no_game": (
+            "本机没检测到运行中的游戏进程。请先启动游戏并进入世界，"
+            "再在游戏菜单里选择「对局域网开放」。"
+        ),
         "tools.wait.steps": (
             "进入游戏\n按 Esc 打开暂停菜单\n点击「对局域网开放」，端口保持默认即可"
         ),
@@ -1600,13 +1603,19 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.host.title": "Create a room",
         "tools.host.body": (
             "After entering a world, choose Open to LAN from the game menu.\n"
-            "Select the instance to host below.\n"
-            "Create the room, then send the room code to your friends."
+            "Press Create, then send the room code to your friends."
         ),
-        "tools.host.instance": "Host instance",
+        "tools.host.auto": (
+            "The running game is found automatically, so there is no instance to pick; both sides "
+            "only need the same version."
+        ),
         "tools.host.submit": "Create",
         "tools.wait.title": "Waiting for you to open LAN…",
         "tools.wait.hint": "The room is ready. Just open it to LAN in the game.",
+        "tools.wait.no_game": (
+            "No running game process was detected on this machine. Start the game and enter a "
+            "world, then choose Open to LAN from the game menu."
+        ),
         "tools.wait.steps": (
             "Enter the game\n"
             "Press Esc to open the pause menu\n"

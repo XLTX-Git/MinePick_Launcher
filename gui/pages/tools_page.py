@@ -40,7 +40,6 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QP
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -61,7 +60,7 @@ from gui.widgets import (
     style_page_layout,
     widget_alive,
 )
-from gui.workers import run_in_background
+from gui.workers import has_running_game, run_in_background
 from launcher.link import (
     LinkDifficulty,
     LinkDownloadProgress,
@@ -241,22 +240,6 @@ def _download_icon(size: int = 24) -> QIcon:
 def _chevron_icon(expanded: bool, size: int = 10) -> QPixmap:
     """The disclosure arrow, drawn by the shared helper (no glyph fallback to a tofu box)."""
     return paint_utils.chevron_pixmap(expanded, size)
-
-
-def _default_instances() -> list[tuple[str, str]]:
-    """Instances of the current game folder, as ``(id, label)`` pairs for the host combo."""
-    from launcher import config
-    from launcher.instances import display_version_name, list_instances
-
-    cfg, _ = config.load()
-    folder = cfg.active_folder()
-    game_dir = folder.path if folder is not None else None
-    items: list[tuple[str, str]] = []
-    for instance in list_instances(game_dir).values():
-        version = display_version_name(instance.version_id)
-        label = instance.name if version == instance.name else f"{instance.name} · {version}"
-        items.append((instance.id, label))
-    return items
 
 
 class _RoundBadge(QWidget):
@@ -452,7 +435,7 @@ class ToolsPage(QWidget):
         *,
         bus: LinkSessionBus | None = None,
         session_factory: Callable[[], LinkSession] = default_link_session,
-        instances_provider: Callable[[], list[tuple[str, str]]] | None = None,
+        game_running_provider: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__()
         self.setObjectName("toolsPage")
@@ -469,9 +452,12 @@ class ToolsPage(QWidget):
         else:
             self._bus = default_link_bus()
         self._session = self._bus.session()
-        self._instances_provider = instances_provider or _default_instances
+        #: Whether a game process is running, asked once per waiting-state repaint. It is the
+        #: launcher's own process registry by default, not a new monitor: a game started elsewhere is
+        #: simply not visible here, which is why the hint says "not detected" and keeps the generic
+        #: instruction as the fallback step.
+        self._game_running_provider = game_running_provider or has_running_game
         self._unsubscribe: Callable[[], None] | None = None
-        self._last_state: LinkState | None = None
         self._pages: dict[LinkState, QWidget] = {}
         self._disposed = False
         self._downloading = False
@@ -488,7 +474,6 @@ class ToolsPage(QWidget):
         # It must not dispose the session: that belongs to the bus.
         self.destroyed.connect(lambda *_args: self._release())
         self._attach_bus()
-        self._refresh_instances()
         self._sync()
         theme.register_self_styling(self)
 
@@ -887,24 +872,21 @@ class ToolsPage(QWidget):
         host_card, host_layout = self._section("tools.host.title")
         self.host_card = host_card
         host_layout.addWidget(self._steps("tools.host.body"))
-        host_layout.addStretch(1)
-        host_label = QLabel(tr("tools.host.instance"))
-        host_label.setObjectName("formLabel")
-        self.instance_combo = QComboBox()
-        self.instance_combo.setAccessibleName(tr("tools.host.instance"))
-        self.refresh_button = QPushButton(tr("mods.installed.refresh"))
-        self.refresh_button.setObjectName("secondaryButton")
+        # No instance picker: a P2P room does not depend on which instance started the world, and
+        # Terracotta finds the open LAN world by itself. The line says so, so its absence reads as a
+        # decision rather than a missing control.
+        self.host_auto_hint = QLabel(tr("tools.host.auto"))
+        self.host_auto_hint.setObjectName("hint")
+        self.host_auto_hint.setWordWrap(True)
+        host_layout.addWidget(self.host_auto_hint)
         self.create_button = QPushButton(tr("tools.host.submit"))
         # Same as the join row: let the QSS-derived minimum decide, so the font can grow the button.
         host_row = QHBoxLayout()
         host_row.setContentsMargins(0, 0, 0, 0)
         host_row.setSpacing(8)
-        host_row.addWidget(self.instance_combo, 1)
-        host_row.addWidget(self.refresh_button)
+        host_row.addStretch(1)
         host_row.addWidget(self.create_button)
-        host_layout.addWidget(host_label)
         host_layout.addLayout(host_row)
-        self.refresh_button.clicked.connect(self._refresh_instances)
         self.create_button.clicked.connect(self._host)
         layout.addWidget(host_card)
         layout.addStretch(1)
@@ -1214,7 +1196,6 @@ class ToolsPage(QWidget):
         self._attach_bus()
         self._bus.replace_session(session)
         self._session = session
-        self._refresh_instances()
         self._sync()
 
     def session(self) -> LinkSession:
@@ -1252,19 +1233,10 @@ class ToolsPage(QWidget):
             # The ready page is hidden; do not keep stale rows alive behind it. The next HOST_READY
             # rebuilds them from the session, which is the only source of truth.
             self._rebuild_members(())
-            if (
-                state is LinkState.IDLE
-                and self._last_state is not LinkState.IDLE
-                and self.instance_combo.count() == 0
-            ):
-                self._refresh_instances()
         self._sync_download_row(state)
         self._refresh_channel_speeds()
         self._update_join_enabled()
-        self.create_button.setEnabled(
-            state is LinkState.IDLE and bool(self.instance_combo.currentData())
-        )
-        self._last_state = state
+        self.create_button.setEnabled(state is LinkState.IDLE)
 
     def _apply_waiting(self) -> None:
         """``host-starting`` is the same layout as ``host-scanning`` with a different title."""
@@ -1275,6 +1247,24 @@ class ToolsPage(QWidget):
         self.wait_title.setText(
             tr("tools.wait.starting") if phase == "host-starting" else tr("tools.wait.title")
         )
+        # "Waiting for you to open LAN" assumes there is a game to open it in. The detection is one
+        # cheap read of the launcher's own game-process registry per state change (no timer, no
+        # process-table scan); a game started outside this launcher is not visible, so the wording
+        # says "not detected" and keeps the LAN instruction as the thing to do next.
+        running = self._detect_game_running()
+        if phase == "host-starting":
+            # Terracotta already found the LAN world, so a game is running no matter what the
+            # registry says (the world may have been opened from another launcher).
+            running = True
+        self.wait_hint.setText(tr("tools.wait.hint") if running else tr("tools.wait.no_game"))
+
+    def _detect_game_running(self) -> bool:
+        """Whether a game process is running; an unreadable answer keeps the neutral hint."""
+        try:
+            return bool(self._game_running_provider())
+        except Exception:  # a broken detector must not turn a normal wait into an error page
+            log.debug("无法检测正在运行的游戏进程", exc_info=True)
+            return True
 
     def _sync_download_row(self, state: LinkState) -> None:
         """Keep the onboarding row truthful: progress while transferring, retry after a failure."""
@@ -1471,33 +1461,15 @@ class ToolsPage(QWidget):
         )
 
     def _host(self) -> None:
-        instance_id = str(self.instance_combo.currentData() or "")
-        if instance_id and self._session.state() is LinkState.IDLE:
-            self._session.host(instance_id)
+        """Create a room; the host instance is found by Terracotta's own LAN scan.
 
-    def _refresh_instances(self) -> None:
-        previous = str(self.instance_combo.currentData() or "")
-        try:
-            items = list(self._instances_provider())
-        except Exception:
-            log.exception("could not list instances for the host picker")
-            items = []
-        self.instance_combo.blockSignals(True)
-        try:
-            self.instance_combo.clear()
-            if items:
-                for instance_id, label in items:
-                    self.instance_combo.addItem(label, instance_id)
-                index = self.instance_combo.findData(previous)
-                self.instance_combo.setCurrentIndex(max(index, 0))
-            else:
-                self.instance_combo.addItem("\u2014", "")
-                self.instance_combo.setCurrentIndex(0)
-        finally:
-            self.instance_combo.blockSignals(False)
-        self.create_button.setEnabled(
-            self._session.state() is LinkState.IDLE and bool(self.instance_combo.currentData())
-        )
+        The session interface still takes an instance id, but a P2P room does not depend on it: the
+        two sides only have to run the same version, so the page passes the empty string rather than
+        changing what ``LinkSession.host`` means.
+        """
+        if self._session.state() is not LinkState.IDLE:
+            return
+        self._session.host("")
 
     def _cancel(self) -> None:
         self._session.cancel()

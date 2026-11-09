@@ -337,6 +337,28 @@ _game_processes: set[GameProcessThread] = set()
 _hooked_app: object | None = None
 
 
+def has_running_game() -> bool:
+    """Whether a game process this launcher started is still running.
+
+    A one-shot read of the registry above - no timer, no process-table scan, no new monitoring. It is
+    what 工具 › 联机 asks before claiming that the user only has to open the LAN world: with no game
+    running there is no menu to open it from. A game launched from somewhere else (another launcher,
+    or one that outlived a previous launcher session) is invisible here, which is why the page words
+    its hint as "not detected" instead of "not running".
+    """
+    for thread in tuple(_game_processes):
+        process = getattr(thread, "process", None)
+        if process is None:
+            continue  # the thread exists but its process has not been spawned yet
+        try:
+            running = process.poll() is None
+        except Exception:  # noqa: BLE001 - a wrapper whose process object is already unusable
+            running = False
+        if running:
+            return True
+    return False
+
+
 def _forget_game_process(thread: GameProcessThread) -> None:
     _game_processes.discard(thread)
 

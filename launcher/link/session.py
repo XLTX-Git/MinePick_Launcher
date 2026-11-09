@@ -139,7 +139,11 @@ class LinkSession(Protocol):
         """Start joining the room with this code."""
 
     def host(self, instance_id: str) -> None:
-        """Start hosting the room for one instance id."""
+        """Start hosting the room for one instance id.
+
+        The id is informational: a P2P room only needs matching game versions, and the backend finds
+        the open LAN world by scanning local ports. Callers that have no instance to name pass ``""``.
+        """
 
     def cancel(self) -> None:
         """Cancel connecting or hosting and return to ``IDLE``."""
@@ -245,10 +249,9 @@ class FakeLinkSession:
         self._notify()
 
     def host(self, instance_id: str) -> None:
+        # An id is recorded but not required: it does not change what a P2P room does, and the real
+        # backend accepts "" for exactly that reason (see LinkSession.host).
         instance_id = str(instance_id or "").strip()
-        if not instance_id:
-            self.fail()
-            return
         self._instance_id = instance_id
         self._room_code = ""
         self._members = ()
