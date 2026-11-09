@@ -56,6 +56,10 @@ class _Card:
     def mapTo(self, _window, _point):
         return QPoint(self._left, self._top)
 
+    def isVisible(self) -> bool:
+        # The audit skips cards the current page does not show; this stub models a shown one.
+        return True
+
     def width(self) -> int:
         return self._width
 
@@ -97,3 +101,25 @@ def test_each_corner_samples_three_pixels_along_both_outer_edges():
         assert len(corner) == 5
     # The inner diagonal of the 3x3 block is the antialiased arc, not a corner pixel.
     assert (12, 12) not in points["TL"]
+
+def test_an_invisible_card_is_skipped() -> None:
+    """A card on a hidden page must not be measured against the page that is on screen."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "audit_card_radius", Path(__file__).resolve().parent.parent / "tools/audit_card_radius.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Hidden(_Card):
+        def isVisible(self) -> bool:
+            return False
+
+    from PySide6.QtGui import QImage
+
+    image = QImage(40, 40, QImage.Format.Format_RGB32)
+    image.fill(0xFFFFFFFF)
+    entry = module._check_card(Hidden(5, 5), None, image, (255, 255, 255), "page")
+    assert entry["skipped"] is True

@@ -1710,7 +1710,7 @@ QFrame#toolsFooter {
 }
 QLabel#toolsFooterText, QLabel#toolsFooterLink { color: __FG_HINT__; font-size: 12px; }
 
-QLabel#toolsRowTitle { color: __FG_TEXT__; font-size: 13px; font-weight: 600; }
+QLabel#toolsRowTitle { color: __FG_TEXT__; font-size: 13px; }
 QLabel#toolsStepText { color: __FG_TEXT__; font-size: 13px; }
 QLabel#toolsCenterTitle { color: __FG_TEXT__; font-size: 16px; font-weight: 600; }
 QLabel#toolsRoomCodeText {
@@ -1783,7 +1783,6 @@ QWidget#toolsPage QPushButton#toolsDisclosure {
     padding: 4px 0;
     text-align: left;
     font-size: 13px;
-    font-weight: 600;
 }
 QWidget#toolsPage QPushButton#toolsDisclosure:hover {
     color: __ACCENT_TEXT__;
@@ -1794,7 +1793,6 @@ QWidget#toolsPage QPushButton#toolsDisclosure[keyboardFocus="true"] {
 QWidget#toolsPage QLabel#toolsDisclosureText {
     color: __FG_TEXT__;
     font-size: 13px;
-    font-weight: 600;
 }
 QWidget#toolsPage QLabel#toolsDisclosureArrow {
     color: __FG_HINT__;
