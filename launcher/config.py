@@ -41,6 +41,12 @@ ACCESSIBILITY_PREFERENCE_CHOICES = ("auto", "always_on", "never")
 DOWNLOAD_SOURCE_DEFAULT = "auto"
 DOWNLOAD_SOURCE_CHOICES = ("mirror", "auto", "official")
 
+# Terracotta core download mirror: "" is the automatic race, anything else is one of the three
+# official mirror keys (launcher.link.mirrors owns the addresses). The keys are repeated here rather
+# than imported: launcher/config.py is the core config module and must not depend on the link package.
+TERRACOTTA_MIRROR_DEFAULT = ""
+TERRACOTTA_MIRROR_CHOICES = ("", "cnb", "gitee", "github")
+
 # Common game languages (code, display name); en_us is built into the game, the rest are the game's bundled language packs
 GAME_LANGUAGES: list[tuple[str, str]] = [
     ("", ""),
@@ -268,6 +274,14 @@ class LauncherConfig(BaseModel):
             "resources.download.minecraft.net): mirror / auto / official"
         ),
     )
+    terracotta_mirror: str = Field(
+        default=TERRACOTTA_MIRROR_DEFAULT,
+        description=(
+            "Terracotta core download mirror chosen on 工具 › 联机 › 其他下载渠道: empty = automatic "
+            "race, otherwise one of cnb / gitee / github; it becomes the preferred mirror of the next "
+            "download"
+        ),
+    )
     window_start_mode: str = Field(
         default="default",
         description="Window start state: default / maximized / minimized / remember",
@@ -354,6 +368,26 @@ class LauncherConfig(BaseModel):
             "Invalid download source %r; falling back to %r", value, DOWNLOAD_SOURCE_DEFAULT
         )
         return DOWNLOAD_SOURCE_DEFAULT
+
+    @field_validator("terracotta_mirror", mode="before")
+    @classmethod
+    def _normalize_terracotta_mirror(cls, value: object) -> str:
+        """Keep hand-edited configs loadable: unknown mirror keys fall back to the automatic race.
+
+        ``"auto"`` is accepted as a written-out spelling of the default, so a value copied from the
+        radio label never disables the race by accident.
+        """
+        normalized = value.strip().lower() if isinstance(value, str) else value
+        if normalized == "auto":
+            return TERRACOTTA_MIRROR_DEFAULT
+        if normalized in TERRACOTTA_MIRROR_CHOICES:
+            return str(normalized)
+        logging.getLogger(__name__).warning(
+            "Invalid terracotta_mirror %r; falling back to %r",
+            value,
+            TERRACOTTA_MIRROR_DEFAULT,
+        )
+        return TERRACOTTA_MIRROR_DEFAULT
 
     @model_validator(mode="before")
     @classmethod

@@ -62,6 +62,7 @@ from launcher.link.components import (
     install,
 )
 from launcher.link.easytier import probe_nat_types
+from launcher.link.mirrors import configured_key
 from launcher.link.selfcheck import (
     ComponentStatus,
     NatProbe,
@@ -103,6 +104,17 @@ def _stun_verdict_for(nat_type: NatType | None) -> StunVerdict:
     if nat_type in (NatType.OPEN_INTERNET, NatType.NO_NAT, NatType.FULL_CONE):
         return StunVerdict.CONE
     return StunVerdict.SYMMETRIC
+
+
+def _install_with_saved_mirror(progress: ProgressCallback) -> ComponentStatus:
+    """Install the payload, preferring the mirror saved on 工具 › 联机 (``""`` = the race).
+
+    Read at download time, not at construction time: the session is created once at startup and the
+    user may change the channel before pressing download. A choice made after the payload was already
+    installed is therefore never a reason to download it again - :func:`launcher.link.components.install`
+    returns the existing installation before it looks at any mirror.
+    """
+    return install(progress, preferred=configured_key())
 
 
 LOCK_DIRNAME = "terracotta"
@@ -384,7 +396,7 @@ class TerracottaLinkSession:
         self._poll_interval = max(0.01, float(poll_interval))
         self._attach_interval = max(0.01, float(attach_interval))
         self._component_status_fn = component_status_fn
-        self._installer = installer or (lambda progress: install(progress))
+        self._installer = installer or _install_with_saved_mirror
         self._stun_probe = stun_probe
         self._nat_probe = nat_probe
         self._player_name = player_name or _selected_player_name

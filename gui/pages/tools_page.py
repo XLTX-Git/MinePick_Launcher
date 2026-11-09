@@ -117,6 +117,35 @@ def _lines(key: str) -> list[str]:
     return [line.strip() for line in tr(key).splitlines() if line.strip()]
 
 
+def _configured_mirror() -> str:
+    """The mirror saved on 工具 › 联机 (``""`` = automatic), tolerant of a missing config."""
+    try:
+        from launcher import config
+
+        return str(config.load()[0].terracotta_mirror or "").strip().lower()
+    except Exception:  # an unreadable config simply means "automatic"
+        log.debug("无法读取下载源设置", exc_info=True)
+        return ""
+
+
+def _save_mirror_choice(key: str) -> None:
+    """Persist the chosen mirror; an empty key is the automatic race.
+
+    The downloader reads it when it installs the core, so this is the entire wiring of the radio
+    rows: nothing is downloaded here, and a choice made after an install cannot trigger a reinstall.
+    """
+    try:
+        from launcher import config
+
+        cfg, path = config.load()
+        if cfg.terracotta_mirror == key:
+            return
+        cfg.terracotta_mirror = key
+        config.save(cfg, path)
+    except Exception:  # a failed settings write must not break the page
+        log.debug("无法保存下载源设置", exc_info=True)
+
+
 def _difficulty_labels() -> list[str]:
     """The three localized difficulty names, in ``LinkDifficulty`` order."""
     labels = _lines("tools.difficulty")
@@ -711,11 +740,12 @@ class ToolsPage(QWidget):
         return page
 
     def _build_channels(self) -> QWidget:
-        """The three official mirrors, their last measured latency and the manual-choice rows.
+        """The automatic choice plus the three official mirrors, with their last measurement.
 
-        The manual choice is visual only in this round: the downloader still follows the race and
-        the environment override. The rows and the selection are here so the choice can be wired
-        without redesigning the card; the report says so explicitly.
+        The selected row is persisted in :attr:`launcher.config.LauncherConfig.terracotta_mirror`;
+        the downloader reads it at download time and uses the chosen mirror as its preferred one.
+        The automatic row is exactly the historical race. Toggling a row never starts a download:
+        if the core is already installed, the choice only applies to the next install.
         """
         box = QWidget()
         layout = QVBoxLayout(box)
@@ -725,6 +755,21 @@ class ToolsPage(QWidget):
         self.channel_speed_labels: dict[str, QLabel] = {}
         group = QButtonGroup(box)
         group.setExclusive(True)
+        auto_radio = QRadioButton(tr("tools.onboard.channels.auto"))
+        auto_radio.setAccessibleName(tr("tools.onboard.channels.auto"))
+        auto_radio.toggled.connect(lambda checked: self._on_channel_toggled("", checked))
+        auto_hint = QLabel("")  # the automatic row has no single mirror to measure
+        auto_hint.setObjectName("hint")
+        group.addButton(auto_radio)
+        self.channel_buttons[""] = auto_radio
+        auto_row = QWidget()
+        auto_layout = QHBoxLayout(auto_row)
+        auto_layout.setContentsMargins(0, 0, 0, 0)
+        auto_layout.setSpacing(8)
+        auto_layout.addWidget(auto_radio)
+        auto_layout.addStretch(1)
+        auto_layout.addWidget(auto_hint)
+        layout.addWidget(auto_row)
         for mirror in MIRRORS:
             row = QWidget()
             row_layout = QHBoxLayout(row)
@@ -750,7 +795,19 @@ class ToolsPage(QWidget):
         footer.setWordWrap(True)
         layout.addWidget(footer)
         self._refresh_channel_speeds()
+        self._select_saved_channel()
         return box
+
+    def _select_saved_channel(self) -> None:
+        """Check the persisted mirror, or 自动, without treating it as a new user choice."""
+        saved = _configured_mirror()
+        key = saved if saved in self.channel_speed_labels else ""
+        for radio in self.channel_buttons.values():
+            radio.blockSignals(True)
+        self.channel_buttons[key].setChecked(True)
+        for radio in self.channel_buttons.values():
+            radio.blockSignals(False)
+        self._selected_channel = key
 
 
     def _build_idle_page(self) -> QWidget:
@@ -1411,9 +1468,11 @@ class ToolsPage(QWidget):
             self._refresh_channel_speeds()
 
     def _on_channel_toggled(self, key: str, checked: bool) -> None:
-        """Remember the visual choice; the downloader still follows the race this round."""
-        if checked:
-            self._selected_channel = key
+        """Persist the chosen source; the next download uses it, nothing is downloaded now."""
+        if not checked:
+            return
+        self._selected_channel = key if key in self.channel_buttons else ""
+        _save_mirror_choice(self._selected_channel)
 
     def _refresh_channel_speeds(self) -> None:
         """Show the last measured latency per mirror, or 未测 when no race has run yet."""

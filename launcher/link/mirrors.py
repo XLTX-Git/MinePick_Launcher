@@ -24,9 +24,10 @@ remembers the winner for :data:`MIRROR_TTL` seconds in ``<launcher dir>/cache/mi
 The next download therefore starts immediately instead of measuring again.
 
 A user-chosen mirror always wins over both the cache and the race. The setting arrives either as
-the ``preferred`` argument or as ``MINEPICK_TERRACOTTA_MIRROR`` (``cnb`` / ``gitee`` / ``github``);
-this round the onboarding page only shows the choice, it does not wire it to the downloader, which
-is stated in the delivery report.
+the ``preferred`` argument or as ``MINEPICK_TERRACOTTA_MIRROR`` (``cnb`` / ``gitee`` / ``github``).
+The 工具 › 联机 › 其他下载渠道 rows store their choice in the config; :func:`configured_key` is the
+one reader of that field, and the session passes its answer to the installer as ``preferred`` so the
+next download starts from the chosen mirror instead of measuring again.
 
 The race uses daemon threads so a slow mirror can neither block the download nor keep the
 interpreter alive when the launcher quits. The result is written atomically (temporary file then
@@ -126,6 +127,27 @@ def label_for(key: str) -> str:
 def preferred_key() -> str:
     """The user's manual choice from the environment (``""`` when unset or unknown)."""
     return str(os.environ.get(ENV_MIRROR, "")).strip().lower()
+
+
+def normalize_key(value: object) -> str:
+    """``value`` as a mirror key, or ``""`` when it names no official mirror (automatic)."""
+    text = str(value or "").strip().lower()
+    return text if any(mirror.key == text for mirror in MIRRORS) else ""
+
+
+def configured_key() -> str:
+    """The mirror saved on 工具 › 联机 (``""`` = automatic race, also on any config error).
+
+    The import is local: ``launcher.config`` is the core config module and mirrors are only one of its
+    consumers, so keeping the dependency one-way avoids an import cycle through the GUI startup.
+    """
+    try:
+        from launcher import config
+
+        return normalize_key(config.load()[0].terracotta_mirror)
+    except Exception:  # an unreadable config means "race", never a failed download
+        logger.debug("无法读取已保存的下载源，按自动测速处理", exc_info=True)
+        return ""
 
 
 def read_report(path: Path | None = None) -> MirrorReport:

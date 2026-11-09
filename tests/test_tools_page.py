@@ -324,21 +324,91 @@ def test_join_clear_and_paste_are_wired(app) -> None:
         _close(app, page)
 
 
-def test_channels_disclosure_starts_collapsed_and_expands_sources(app) -> None:
+def test_channels_disclosure_starts_collapsed_and_expands_sources(
+    app, monkeypatch, ws_tmp
+) -> None:
+    # The rows persist the choice, so this test must not touch the developer's own config.
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "channels_disclosure"))
     page = _show(app, FakeLinkSession(state=LinkState.NOT_DOWNLOADED))
     try:
         assert not page.channels_detail.isVisibleTo(page)
         page.channels_button.click()
         app.processEvents()
         assert page.channels_detail.isVisibleTo(page)
-        labels = [page.channel_buttons[key].text() for key in ("cnb", "gitee", "github")]
-        assert labels == ["CNB", "Gitee", "GitHub"]
+        labels = [page.channel_buttons[key].text() for key in ("", "cnb", "gitee", "github")]
+        assert labels[0] == i18n.tr("tools.onboard.channels.auto")
+        assert labels[1:] == ["CNB", "Gitee", "GitHub"]
+        assert page.channel_buttons[""].isChecked(), "自动 must be the default"
         assert page.channel_speed_labels["cnb"].text() == i18n.tr(
             "tools.onboard.channels.unmeasured"
         )
         page.channel_buttons["cnb"].click()
         assert page._selected_channel == "cnb"
         assert page.channel_buttons["cnb"].isChecked()
+    finally:
+        _close(app, page)
+
+
+def test_channel_choice_is_saved_and_restored_without_a_download(
+    app, monkeypatch, ws_tmp
+) -> None:
+    """A radio click is a setting, not a download: it must survive a page rebuild and do nothing else."""
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "channels_persist"))
+    from launcher import config
+
+    fake = FakeLinkSession(state=LinkState.NOT_DOWNLOADED)
+    downloads: list = []
+    fake.download_core = downloads.append  # type: ignore[method-assign]
+    page = _show(app, fake)
+    try:
+        page.channels_button.click()
+        app.processEvents()
+        assert page.channel_buttons[""].isChecked()
+        page.channel_buttons["gitee"].click()
+        app.processEvents()
+        assert config.load()[0].terracotta_mirror == "gitee"
+        assert downloads == [], "picking a source must not re-download the component"
+        assert fake.state() is LinkState.NOT_DOWNLOADED
+    finally:
+        _close(app, page)
+
+    # A rebuilt page (the language switch builds a new one) shows the saved source again.
+    restored = _show(app, FakeLinkSession(state=LinkState.NOT_DOWNLOADED))
+    try:
+        assert restored.channel_buttons["gitee"].isChecked()
+        assert not restored.channel_buttons[""].isChecked()
+        restored.channel_buttons[""].click()
+        app.processEvents()
+        assert config.load()[0].terracotta_mirror == ""
+        assert restored.channel_buttons[""].isChecked()
+    finally:
+        _close(app, restored)
+
+
+def test_channel_rows_show_the_last_measurement_or_unmeasured(app, monkeypatch, ws_tmp) -> None:
+    data_dir = ws_tmp / "channels_speeds"
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(data_dir))
+    from launcher.link import mirrors as mirror_module
+
+    mirror_module._write_report(
+        mirror_module.MirrorReport(
+            chosen="cnb",
+            latency_ms={"cnb": 37, "gitee": 120},
+            measured_at=time.time(),
+        ),
+        data_dir / "cache" / "mirror-pick.json",
+    )
+    page = _show(app, FakeLinkSession(state=LinkState.NOT_DOWNLOADED))
+    try:
+        assert page.channel_speed_labels["cnb"].text() == i18n.tr(
+            "tools.onboard.channels.latency", 37
+        )
+        assert page.channel_speed_labels["gitee"].text() == i18n.tr(
+            "tools.onboard.channels.latency", 120
+        )
+        assert page.channel_speed_labels["github"].text() == i18n.tr(
+            "tools.onboard.channels.unmeasured"
+        )
     finally:
         _close(app, page)
 
