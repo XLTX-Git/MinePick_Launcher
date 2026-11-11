@@ -221,17 +221,37 @@ class _LinkCapsule(QPushButton):
         tokens = theme.current_tokens() or theme.theme_palette("light")
         text = tokens.get("FG_TOPBAR", "#ffffff")
         ring = tokens.get("FOCUS_RING", text)
+        capsule_fill = tokens.get("BG_TOPBAR_CAPSULE")
+        if capsule_fill:
+            # A custom title-bar colour cannot use the translucent black of the default bar: the
+            # opaque chip is derived from that colour and measured against the same text, so the
+            # capsule stays readable on a white, a mid-grey or a near-black bar.
+            chip = QColor(capsule_fill)
+            lighten = text == "#000000"
+            hover = (chip.lighter(112) if lighten else chip.darker(112)).name()
+            pressed = (chip.lighter(125) if lighten else chip.darker(125)).name()
+            base_fill = f" background: {capsule_fill};"
+            state_rules = (
+                f"QPushButton#linkCapsule:hover {{ background: {hover}; }}"
+                f"QPushButton#linkCapsule:pressed {{ background: {pressed}; }}"
+            )
+            ring = text  # the chip's own text colour is guaranteed to read against the chip
+        else:
+            base_fill = " background: rgba(0, 0, 0, 44);"
+            state_rules = (
+                "QPushButton#linkCapsule:hover { background: rgba(0, 0, 0, 70); }"
+                "QPushButton#linkCapsule:pressed { background: rgba(0, 0, 0, 94); }"
+            )
         sheet = (
             "QPushButton#linkCapsule {"
-            " background: rgba(0, 0, 0, 44);"
+            f"{base_fill}"
             f" color: {text};"
             " border: 1px solid transparent;"
             " border-radius: 11px;"
             " padding: 0 10px 0 8px;"
             " font-size: 11px;"
             " }"
-            "QPushButton#linkCapsule:hover { background: rgba(0, 0, 0, 70); }"
-            "QPushButton#linkCapsule:pressed { background: rgba(0, 0, 0, 94); }"
+            f"{state_rules}"
             f"QPushButton#linkCapsule:focus {{ border: 1px solid {ring}; }}"
         )
         if sheet == self.styleSheet():
@@ -1135,7 +1155,7 @@ class MainWindow(QMainWindow):
         cfg.ui_language = code
         config.save(cfg, cfg_path)
         i18n.set_language(code)
-        apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+        apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius, cfg.title_bar_color)
         self._rebuild_wizard()
 
     def _rebuild_wizard(self) -> None:
@@ -1180,7 +1200,7 @@ class MainWindow(QMainWindow):
         self._game_dir_snapshot = cfg.game_dir
         config.initialize_language(cfg, cfg_path)
         i18n.set_language(cfg.ui_language)
-        apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+        apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius, cfg.title_bar_color)
         self.build_pages()
         self.statusBar().show()
         self.set_status(tr("status.ready"))

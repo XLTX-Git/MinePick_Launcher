@@ -154,7 +154,7 @@ def create_app(argv: list[str] | None = None) -> QApplication:
     # Theme: dark / light QSS plus the custom accent color and UI font
     from gui.theme import apply_theme
 
-    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius, cfg.title_bar_color)
     # The wheel only scrolls page content; combo/spin/tab-bar wheel input is blocked
     from gui.widgets import ComboArrowState, KeyboardFocusTracker, WheelBlocker
 

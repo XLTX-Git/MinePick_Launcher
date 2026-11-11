@@ -314,6 +314,13 @@ class LauncherConfig(BaseModel):
         default="",
         description="Custom accent color as #rrggbb; empty = the theme's default accent",
     )
+    title_bar_color: str = Field(
+        default="",
+        description=(
+            "Custom title bar color as #rrggbb; empty = the theme's default title bar. The bar's "
+            "text, window-button hovers and the link capsule are derived from it at theme time"
+        ),
+    )
     ui_font: str = Field(
         default="",
         description="UI font family; empty = Microsoft YaHei UI with the built-in fallbacks",

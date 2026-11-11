@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Theme application: dark / light QSS with a custom accent color and UI font (applied immediately)."""
+"""Theme application: dark / light QSS with a custom accent color, title-bar color and UI font (applied immediately)."""
 
 from __future__ import annotations
 
@@ -182,6 +182,63 @@ def accent_palette(theme: str, accent: str | None = None) -> dict[str, str]:
     }
 
 
+def _title_bar_text(fill: str, theme: str) -> str:
+    """White or black, whichever is readable on ``fill``; the theme breaks a near-tie.
+
+    Both candidates clear 4.5:1 except in a narrow mid-grey band where only one does, so the
+    preferred colour is tried first and the other is the fallback. Preferring white in the dark
+    theme and black in the light one is what makes the same custom fill still feel like it belongs
+    to the theme around it, and it is why the two themes may derive different text for one colour.
+    """
+    white = contrast_ratio("#ffffff", fill) >= 4.5
+    black = contrast_ratio("#000000", fill) >= 4.5
+    if theme == "light":
+        return "#000000" if black else "#ffffff"
+    return "#ffffff" if white else "#000000"
+
+
+def _title_bar_step(fill: str, text: str, ratio: float, target: float) -> str:
+    """A hover/capsule shade of ``fill`` that keeps ``text`` at ``target`` contrast.
+
+    The first step moves away from the text colour (dark under white text, light under dark text),
+    which is the usual hover direction and can only raise the ratio. A pure black or pure white
+    fill cannot move that way, so the second step moves *toward* the text just enough to become
+    visible; it is taken only when it still clears the target. Larger steps away are the fallback,
+    capped at 60% so the result still reads as a shade of the bar rather than a new colour.
+    """
+    away = "#000000" if text == "#ffffff" else "#ffffff"
+    toward = "#ffffff" if away == "#000000" else "#000000"
+    for colour in (away, toward):
+        shade = _mix(fill, colour, ratio)
+        if shade != fill and contrast_ratio(text, shade) >= target:
+            return shade
+    for step in range(max(1, round(ratio * 100)), 61):
+        shade = _mix(fill, away, step / 100)
+        if contrast_ratio(text, shade) >= target:
+            return shade
+    return fill
+
+
+def title_bar_palette(theme: str, title_bar: str = "") -> dict[str, str]:
+    """Tokens derived from a user-supplied title-bar colour; empty when it follows the theme.
+
+    The configured fill is kept exactly as asked. Everything painted on it is derived here, because
+    a colour picked for looks cannot be trusted to carry white text, a hover state or the link
+    capsule. The close and minimize hovers only owe WCAG's 3:1 non-text minimum; the capsule carries
+    a label, so its fill is held to the 4.5:1 AA target.
+    """
+    fill = normalize_hex(title_bar)
+    if fill is None:
+        return {}
+    text = _title_bar_text(fill, theme)
+    return {
+        "BG_TOPBAR": fill,
+        "FG_TOPBAR": text,
+        "BG_TITLEBAR_CLOSE": _title_bar_step(fill, text, 0.20, 3.0),
+        "BG_TITLEBAR_MINIMIZE": _title_bar_step(fill, text, 0.12, 3.0),
+        "BG_TOPBAR_CAPSULE": _title_bar_step(fill, text, 0.18, 4.5),
+    }
+
 
 # Neutral / semantic palette: one entry per role, one value per theme. Together with
 # accent_palette() these are the only colours the QSS files may reference, through __TOKEN__
@@ -263,10 +320,10 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "BG_SECTION": {"dark": "#1c2531", "light": "#f1f3f6"},
     "BG_SEPARATOR": {"dark": "#27303d", "light": "#dfe4ea"},
     "BG_SIDEBAR": {"dark": "#1c2531", "light": "#e7ebf0"},
-    # The one blue band at the top of the window. Both themes use the same shade so the chrome
-    # reads as the launcher's frame rather than a theme surface; #1e6fd9 gives white text 4.85:1
-    # (the PCL blue #2078da only reaches 4.41:1 and would fail AA). The hover token is the same
-    # blue one step deeper, used behind the minimize glyph; close keeps its red.
+    # The default title-bar fill per theme. A custom fill overrides it in title_bar_palette() and
+    # re-derives the text, window-button hovers and link capsule against that fill. #1e6fd9 gives
+    # white text 4.85:1 (the PCL blue #2078da only reaches 4.41:1 and would fail AA); the dark value
+    # is the deeper blue of the dark frame.
     "BG_TOPBAR": {"dark": "#1a4e8c", "light": "#1e6fd9"},
     "BG_TITLEBAR_CLOSE": {"dark": "#cf3f3f", "light": "#cf3f3f"},
     "BG_TITLEBAR_MINIMIZE": {"dark": "#1a63c4", "light": "#1a63c4"},
@@ -329,15 +386,17 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     "FG_SELECTED": {"dark": "#ffffff", "light": "#ffffff"},
     "FG_STATUS_WARNING": {"dark": "#e5c07b", "light": "#87691b"},
     "FG_TEXT": {"dark": "#e6ecf5", "light": "#1f2a36"},
-    # White text on the one blue title bar; see BG_TOPBAR for the 4.85:1 measurement.
+    # The default title-bar text: white on either default blue. A custom bar derives this token in
+    # title_bar_palette() instead, so this value only governs the empty ("follow theme") case.
     "FG_TOPBAR": {"dark": "#ffffff", "light": "#ffffff"},
 }
 
 
-def theme_palette(theme: str, accent: str | None = None) -> dict[str, str]:
-    """Every __TOKEN__ value for one theme: the neutral table plus the accent family."""
+def theme_palette(theme: str, accent: str | None = None, title_bar: str = "") -> dict[str, str]:
+    """Every __TOKEN__ value for one theme: neutral table, accent family, title-bar family."""
     palette = {name: values.get(theme, values["dark"]) for name, values in NEUTRAL_TOKENS.items()}
     palette.update(accent_palette(theme, accent))
+    palette.update(title_bar_palette(theme, title_bar))
     return palette
 
 
@@ -445,8 +504,8 @@ def radius_scale(radius: str | None) -> tuple[int, int, int]:
     return RADIUS_SCALES.get(radius or DEFAULT_RADIUS, RADIUS_SCALES[DEFAULT_RADIUS])
 
 
-# The (application, theme, accent, font, radius, device scale) last handed to setStyleSheet.
-_last_applied: tuple[int, str, str, str, str, int] | None = None
+# The (application, theme, accent, font, radius, device scale, title-bar colour) last handed to setStyleSheet.
+_last_applied: tuple[int, str, str, str, str, int, str] | None = None
 
 # The concrete theme behind the style currently in force. Most colour is read from the token table
 # below, but a few surfaces are painted rather than declared - the overlay scrim is composited in
@@ -522,6 +581,7 @@ def stylesheet_text(
     accent: str | None = None,
     font: str | None = None,
     radius: str | None = None,
+    title_bar: str = "",
 ) -> str:
     """The shipped sheet with every placeholder resolved; empty when the file is missing.
 
@@ -556,7 +616,7 @@ def stylesheet_text(
     )
     text = text.replace("__CHECK__", paths.resource_path("gui/resources/check.png").as_posix())
     text = text.replace("__FONT__", font_stack(font))
-    palette = theme_palette(theme, accent)
+    palette = theme_palette(theme, accent, title_bar)
     # longest placeholders first so __ACCENT__ never eats the prefixed variants
     for token in sorted(palette, key=len, reverse=True):
         text = text.replace(f"__{token}__", palette[token])
@@ -572,6 +632,7 @@ def apply_theme(
     accent: str | None = None,
     font: str | None = None,
     radius: str | None = None,
+    title_bar: str = "",
 ) -> None:
     """Apply the theme; "system" follows the OS light/dark preference.
 
@@ -588,13 +649,14 @@ def apply_theme(
         return
     theme = resolve_theme(theme)
     scale = device_scale(app)
-    key = (id(app), theme, accent or "", font or "", radius or "", scale)
+    title_bar = normalize_hex(title_bar) or ""
+    key = (id(app), theme, accent or "", font or "", radius or "", scale, title_bar)
     if key == _last_applied:
         return
-    text = stylesheet_text(theme, accent, font, radius)
+    text = stylesheet_text(theme, accent, font, radius, title_bar)
     if not text:
         return
-    palette = theme_palette(theme, accent)
+    palette = theme_palette(theme, accent, title_bar)
     app.setPalette(theme_qpalette(theme, accent))
     # Publish the tokens before the sheet: a widget that reacts to StyleChange reads them there.
     _last_tokens = dict(palette)
