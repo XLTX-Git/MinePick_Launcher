@@ -94,6 +94,75 @@ def test_zh_name_and_unknown_slug() -> None:
     assert zh_name("__definitely_not_a_mod__") == ""
 
 
+#: The 29 shader projects whose only Chinese spelling used to be "<English> 光影". Shader packs have
+#: no settled Chinese name, so the invented suffix is gone and the row keeps the API's English title.
+NO_LONGER_NAMED_SHADERS = (
+    "astralex",
+    "bliss-shader",
+    "bloop-shaders",
+    "body-camera-shader",
+    "bsl-shaders",
+    "bsl-shaders-classic",
+    "complementary-reimagined",
+    "complementary-unbound",
+    "fastpbr",
+    "hysteria-shaders",
+    "insanity-shader",
+    "iris",
+    "kappa-shader",
+    "makeup-ultra-fast-shaders",
+    "mellow",
+    "miniature-shader",
+    "noble",
+    "nostalgia-shader",
+    "pastel-shaders",
+    "photon-shader",
+    "potato-shaders",
+    "rethinking-voxels",
+    "shrimple",
+    "solas-shader",
+    "spooklementary",
+    "super-duper-vanilla",
+    "vanilla-plus-shader",
+    "vanillaa",
+    "visual-vibrance",
+)
+
+
+def test_no_alias_ends_with_the_invented_shader_suffix() -> None:
+    """「光影」 was appended to English names; it is not a name the community uses."""
+    offenders = [
+        (slug, alias)
+        for slug, aliases in zh_aliases().items()
+        for alias in aliases
+        if alias.endswith("光影")
+    ]
+    assert offenders == [], f"invented shader suffix is back: {offenders}"
+
+
+def test_shader_projects_are_not_in_the_chinese_name_table() -> None:
+    """Not just the suffix: the whole alias is gone, so the API's English title is shown."""
+    for slug in NO_LONGER_NAMED_SHADERS:
+        assert slug not in zh_aliases(), slug
+        assert zh_name(slug) == "", slug
+    # The user's example: this row must read "Complementary Shaders - Reimagined", the API title.
+    assert zh_name("complementary-reimagined") == ""
+
+
+def test_zombie_invade_uses_the_community_name_and_keeps_the_old_one_searchable() -> None:
+    assert zh_name("zombie-invade-100-days") == "惊变100天"
+    assert search_local("僵尸入侵100天")[:1] == ["zombie-invade-100-days"]
+    assert search_local("惊变100天")[:1] == ["zombie-invade-100-days"]
+
+
+def test_the_deleted_shader_alias_is_a_plain_miss_not_an_error() -> None:
+    """「BSL 光影」 used to hit the table through the invented alias; now it just finds nothing."""
+    assert match_slugs("BSL 光影") == []
+    assert search_local("BSL 光影") == []
+    # English still reaches the API by the ordinary search path; the local table no longer claims it.
+    assert zh_name("bsl-shaders") == ""
+
+
 def test_has_cjk() -> None:
     assert has_cjk("钠") is True
     assert has_cjk("优化 钠") is True

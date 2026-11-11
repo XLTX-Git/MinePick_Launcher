@@ -56,6 +56,22 @@ def _hit(slug: str, title: str, source: str) -> ModSearchHit:
     return ModSearchHit(slug=slug, title=title, source=source)
 
 
+def test_shader_pack_without_a_chinese_name_keeps_the_api_title() -> None:
+    """The shader tab rows show the API title; there is no invented "… 光影" headline any more."""
+    from gui.pages.mods_page import display_titles
+
+    hit = ModSearchHit(
+        slug="complementary-reimagined",
+        title="Complementary Shaders - Reimagined",
+        description="A comprehensive shader pack based on Complementary Shaders",
+        source="modrinth",
+    )
+    title, second, is_chinese = display_titles(hit)
+    assert title == "Complementary Shaders - Reimagined"
+    assert second == "A comprehensive shader pack based on Complementary Shaders"
+    assert is_chinese is False
+
+
 def test_page_offset_for_both_page_sizes() -> None:
     assert PAGE_SIZE == 30
     assert ALL_PAGE_SIZE == 15

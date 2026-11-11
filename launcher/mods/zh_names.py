@@ -33,6 +33,11 @@ Where the table comes from (public pages, fetched 2026-11-01):
 
 Only that "slug <-> 中文名" pairing is bundled: no database file, description or other content is
 copied, and a name MC百科 does not publish is simply left out rather than translated here.
+
+Shader packs are deliberately absent. They have no settled Chinese name in the community; the
+"<English name> 光影" rows MC百科 offers are a descriptive suffix, not a name, and a row should keep
+the API's English title (and its description as the second line) instead. The same rule is why a
+project whose only alias would be an invented suffix is left out of the table entirely.
 """
 
 from __future__ import annotations
