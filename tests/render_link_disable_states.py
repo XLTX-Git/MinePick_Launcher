@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Render the three 宸ュ叿 鈥?鑱旀満 states this change touches (zh_cn, light and dark).
+"""Render the four 宸ュ叿 鈥?鑱旀満 states this change touches (zh_cn, light and dark).
 
 The pictures prove the two reviews: the 鍒涘缓澶у巺 card no longer has a host-instance dropdown, and
 鍋滅敤鑱旀満鍔熻兘 is a real confirmation plus the onboarding page with a completion line. Rendering goes
@@ -157,7 +157,21 @@ def main() -> int:
     dialog.close()
     _settle(app, 0.2)
 
-    # 3. What the window shows after the deletion: the onboarding page plus the completion line on
+    # 3. The second confirmation: only shown when the running core locks its executable. It is built
+    #    by the page itself, so the picture and the shipped question are the same card.
+    locked = page._disable_link_locked_dialog()
+    locked.show()
+    _settle(app)
+    shot_pages.defocus_for_shot(window, locked)
+    shot_pages.assert_no_focus_mark(window, locked)
+    image = shot_pages.render_page_image(window)
+    target = out / f"zh_cn_{args.theme}_3_locked_confirm.png"
+    image.save(str(target))
+    print(f"saved {target} ({image.width()}x{image.height()})")
+    locked.close()
+    _settle(app, 0.2)
+
+    # 4. What the window shows after the deletion: the onboarding page plus the completion line on
     #    the status bar. The confirmation is answered by replacing its one blocking entry point, the
     #    same seam tests/conftest.py uses, so the product flow itself runs.
     original_ask = inwindow_dialog.InWindowMessage.ask
@@ -171,7 +185,7 @@ def main() -> int:
         raise SystemExit(
             f"refusing to save: the page is still on {page.current_state()} after the deletion"
         )
-    save("3_disabled")
+    save("4_disabled")
 
     window.close()
     return 0

@@ -857,6 +857,21 @@ def _refuse(monkeypatch) -> None:
     )
 
 
+def _answers(
+    monkeypatch, outcomes: list[inwindow_dialog.Outcome]
+) -> list[inwindow_dialog.InWindowDialog]:
+    """Answer successive in-window questions from a list, keeping the dialogs for inspection."""
+    dialogs: list[inwindow_dialog.InWindowDialog] = []
+    queue = iter(outcomes)
+
+    def ask(dialog: inwindow_dialog.InWindowDialog) -> inwindow_dialog.Outcome:
+        dialogs.append(dialog)
+        return next(queue)
+
+    monkeypatch.setattr(inwindow_dialog.InWindowDialog, "ask", ask)
+    return dialogs
+
+
 def _component_tree(data_dir, *, payload: bytes = b"x" * 2048):
     """A fake launcher dir with the Terracotta payload and the EasyTier self-check component."""
     terracotta = data_dir / "components" / "terracotta"
@@ -1021,6 +1036,165 @@ def test_a_failed_deletion_reports_the_concrete_reason(app, monkeypatch) -> None
         assert page.current_state() is LinkState.IDLE
     finally:
         _close(app, page)
+
+
+def test_a_locked_component_asks_before_ending_the_core(app, monkeypatch) -> None:
+    """The sharing violation is the one failure the user can solve here: ask, then retry."""
+    locked_detail = (
+        "terracotta-0.4.2-windows-x86_64.exe: 另一个程序正在使用此文件，进程无法访问。"
+    )
+
+    class _LockedSession(FakeLinkSession):
+        def __init__(self) -> None:
+            super().__init__(state=LinkState.IDLE)
+            self.calls: list[str] = []
+
+        def remove_core(self) -> int:
+            self.calls.append("remove_core")
+            raise ComponentError("tools.disable.locked", locked_detail)
+
+        def force_remove_core(self) -> int:
+            self.calls.append("force_remove_core")
+            self._reset(LinkState.NOT_DOWNLOADED)
+            return 2048
+
+    session = _LockedSession()
+    dialogs = _answers(
+        monkeypatch,
+        [inwindow_dialog.Outcome.ACCEPTED, inwindow_dialog.Outcome.ACCEPTED],
+    )
+    seen = _statuses(monkeypatch)
+    page = _show(app, session)
+    try:
+        page.disable_link.click()
+        app.processEvents()
+        assert len(dialogs) == 2, "the lock has to produce a second, explicit question"
+        assert dialogs[0].title_label.text() == i18n.tr("tools.disable.title")
+        locked = dialogs[1]
+        assert locked.title_label.text() == i18n.tr("tools.disable.locked.title")
+        assert locked.body_label.text() == i18n.tr("tools.disable.locked.message")
+        assert [button.text() for button in locked.buttons] == [
+            i18n.tr("dialog.cancel"),
+            i18n.tr("tools.disable.locked.confirm"),
+        ]
+        assert locked.default_button is not None
+        assert locked.default_button.text() == i18n.tr("dialog.cancel")
+        body = locked.body_label.text()
+        assert "结束" in body, "the action the button will take has to be stated"
+        assert "HMCL" in body, "another program's room disconnecting has to be stated"
+        assert "重新下载" in body, "the need to download again has to be stated"
+        assert session.calls == ["remove_core", "force_remove_core"], "the retry is a separate call"
+        assert page.current_state() is LinkState.NOT_DOWNLOADED
+        assert seen == [(i18n.tr("tools.disable.done", "0.0"), None)]
+    finally:
+        _close(app, page)
+
+
+def test_cancelling_the_locked_question_keeps_the_component_and_reports_nothing(
+    app, monkeypatch, ws_tmp
+) -> None:
+    """The second cancel is a no: no process is ended, no error is shown, the files survive."""
+    data_dir = ws_tmp / "disable_locked_cancel"
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(data_dir))
+    terracotta, easytier = _component_tree(data_dir)
+
+    class _LockedSession(FakeLinkSession):
+        def __init__(self) -> None:
+            super().__init__(state=LinkState.IDLE)
+            self.calls: list[str] = []
+
+        def remove_core(self) -> int:
+            self.calls.append("remove_core")
+            raise ComponentError(
+                "tools.disable.locked",
+                "terracotta-0.4.2-windows-x86_64.exe: 另一个程序正在使用此文件",
+            )
+
+        def force_remove_core(self) -> int:
+            self.calls.append("force_remove_core")
+            raise AssertionError("a cancelled question must not end a process")
+
+    session = _LockedSession()
+    dialogs = _answers(
+        monkeypatch,
+        [inwindow_dialog.Outcome.ACCEPTED, inwindow_dialog.Outcome.REJECTED],
+    )
+    seen = _statuses(monkeypatch)
+    page = _show(app, session)
+    try:
+        page.disable_link.click()
+        app.processEvents()
+        assert len(dialogs) == 2
+        assert session.calls == ["remove_core"]
+        assert seen == [], "a cancelled second question is not an error"
+        assert page.current_state() is LinkState.IDLE
+        assert (terracotta / "terracotta-0.4.2-windows-x86_64.exe").is_file()
+        assert easytier.exists()
+    finally:
+        _close(app, page)
+
+
+def test_a_non_lock_failure_is_reported_without_the_second_question(app, monkeypatch) -> None:
+    """Only a sharing violation offers to end a process; anything else is reported as it is."""
+    class _RefusingSession(FakeLinkSession):
+        def remove_core(self) -> int:
+            raise ComponentError("tools.disable.fail", "Access is denied")
+
+        def force_remove_core(self) -> int:
+            raise AssertionError("an ordinary denial must not offer to end a process")
+
+    dialogs = _answers(monkeypatch, [inwindow_dialog.Outcome.ACCEPTED])
+    seen = _statuses(monkeypatch)
+    page = _show(app, _RefusingSession(state=LinkState.IDLE))
+    try:
+        page.disable_link.click()
+        app.processEvents()
+        assert len(dialogs) == 1
+        assert seen == [(i18n.tr("tools.disable.fail", "Access is denied"), "error")]
+        assert page.current_state() is LinkState.IDLE
+    finally:
+        _close(app, page)
+
+
+def test_a_failed_forced_deletion_reports_the_reason_and_keeps_the_state(app, monkeypatch) -> None:
+    """If the process is gone or cannot be ended and the files still refuse, say so."""
+    class _StubbornSession(FakeLinkSession):
+        def remove_core(self) -> int:
+            raise ComponentError("tools.disable.locked", "terracotta.exe: file in use")
+
+        def force_remove_core(self) -> int:
+            raise ComponentError("tools.disable.fail", "terracotta.exe: still in use")
+
+    dialogs = _answers(
+        monkeypatch,
+        [inwindow_dialog.Outcome.ACCEPTED, inwindow_dialog.Outcome.ACCEPTED],
+    )
+    seen = _statuses(monkeypatch)
+    page = _show(app, _StubbornSession(state=LinkState.IDLE))
+    try:
+        page.disable_link.click()
+        app.processEvents()
+        assert len(dialogs) == 2
+        assert seen == [
+            (i18n.tr("tools.disable.fail", "terracotta.exe: still in use"), "error")
+        ]
+        assert page.current_state() is LinkState.IDLE, "nothing was deleted, so nothing may move"
+    finally:
+        _close(app, page)
+
+
+def test_fake_force_remove_core_never_touches_the_real_component_tree(
+    monkeypatch, ws_tmp
+) -> None:
+    """The fake changes its own state only; a page test must leave the real payload alone."""
+    data_dir = ws_tmp / "fake_force_remove"
+    monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(data_dir))
+    terracotta, easytier = _component_tree(data_dir)
+    session = FakeLinkSession(state=LinkState.IDLE)
+    assert session.force_remove_core() == FakeLinkSession.DEMO_REMOVED_BYTES
+    assert session.state() is LinkState.NOT_DOWNLOADED
+    assert (terracotta / "terracotta-0.4.2-windows-x86_64.exe").is_file()
+    assert (easytier / "easytier-core.exe").is_file()
 
 
 def test_disable_link_on_the_onboarding_page_deletes_nothing(app, monkeypatch) -> None:

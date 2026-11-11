@@ -77,6 +77,7 @@ from launcher.link import (
     default_link_session,
     skins,
 )
+from launcher.link.components import ComponentError
 from launcher.link.mirrors import MIRRORS, read_report
 
 tr = i18n.tr
@@ -1514,13 +1515,73 @@ class ToolsPage(QWidget):
             default=inwindow_dialog.Outcome.REJECTED,
         )
 
+    def _disable_link_locked_dialog(self) -> inwindow_dialog.InWindowMessage:
+        """The second confirmation, shown only when a running core holds its executable open.
+
+        Built here for the same reason as the first card: the render tool and the shipped question
+        are the same object. The safe answer is again the default - Enter cancels - and only the
+        explicit button ends a process. The body has to name both consequences: another program
+        using the shared core loses its room too, and the component has to be downloaded again.
+        """
+        return inwindow_dialog.InWindowMessage(
+            self,
+            tr("tools.disable.locked.title"),
+            tr("tools.disable.locked.message"),
+            severity="warning",
+            buttons=[
+                (tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED),
+                (tr("tools.disable.locked.confirm"), inwindow_dialog.Outcome.ACCEPTED),
+            ],
+            default=inwindow_dialog.Outcome.REJECTED,
+        )
+
+    def _confirm_force_remove(self) -> bool:
+        """Ask whether ending the core is acceptable; a dismissal counts as a no."""
+        dialog = self._disable_link_locked_dialog()
+        if dialog.parentWidget() is None:
+            log.warning("停用联机功能: 没有可以绘制二次确认框的窗口，已取消")
+            return False
+        return dialog.ask() is inwindow_dialog.Outcome.ACCEPTED
+
+    def _remove_core_with_confirmation(self) -> int | None:
+        """Delete the payload; on a sharing violation ask once, then end the core and retry.
+
+        ``None`` means the user declined or the failure has already been reported. Only
+        ``tools.disable.locked`` earns the second question: it is the one removal failure the user
+        can solve from here. Every other error is reported immediately and never offers to end a
+        process, because killing one could not fix it.
+        """
+        try:
+            return int(self._session.remove_core() or 0)
+        except ComponentError as exc:
+            if exc.key != "tools.disable.locked":
+                self._report_disable_failure(exc)
+                return None
+        except Exception as exc:  # noqa: BLE001 - any removal failure has to reach the user
+            self._report_disable_failure(exc)
+            return None
+        if not self._confirm_force_remove():
+            return None
+        try:
+            return int(self._session.force_remove_core() or 0)
+        except Exception as exc:  # noqa: BLE001 - the retry can be refused as well
+            self._report_disable_failure(exc)
+            return None
+
+    def _report_disable_failure(self, exc: BaseException) -> None:
+        """Put the concrete reason on the window's status line; never swallow it."""
+        detail = str(getattr(exc, "detail", "") or exc or type(exc).__name__)
+        log.warning("删除联机组件失败: %s", detail)
+        set_app_status(self, tr("tools.disable.fail", detail), "error")
+
     def _disable_link(self) -> None:
         """停用联机功能: delete the downloaded payload, then show the onboarding page again.
 
         The order is the documented one: the room goes first, then the files. Removing the files is
         the session's job (it is the only owner of the component state), so the page can go back to
         ``NOT_DOWNLOADED`` without guessing. A running core keeps its executable open on Windows;
-        that failure is reported with the OS reason instead of being swallowed.
+        that particular failure gets a second, explicit question before the page ends the process -
+        every other reason is reported immediately with the OS text.
         """
         if self._disabling:
             return
@@ -1535,13 +1596,14 @@ class ToolsPage(QWidget):
             return
         self._disabling = True
         try:
-            self._session.close_room()
-            removed = int(self._session.remove_core() or 0)
-        except Exception as exc:  # noqa: BLE001 - any removal failure has to reach the user
-            detail = str(getattr(exc, "detail", "") or exc or type(exc).__name__)
-            log.warning("删除联机组件失败: %s", detail)
-            set_app_status(self, tr("tools.disable.fail", detail), "error")
-            return
+            try:
+                self._session.close_room()
+            except Exception as exc:  # noqa: BLE001 - the room close is part of this operation
+                self._report_disable_failure(exc)
+                return
+            removed = self._remove_core_with_confirmation()
+            if removed is None:
+                return
         finally:
             self._disabling = False
         if removed <= 0:

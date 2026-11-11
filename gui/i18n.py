@@ -315,6 +315,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "如果大厅正开着，会先关闭。网络自检使用的组件不受影响。"
         ),
         "tools.disable.confirm": "删除组件",
+        "tools.disable.locked.title": "陶瓦核心正在运行",
+        "tools.disable.locked.message": (
+            "陶瓦核心正在运行，它占用的文件无法删除。\n\n"
+            "需要先结束陶瓦核心进程。如果其它程序（另一个启动器、HMCL 等）正在用它联机，"
+            "那个大厅也会断开。\n\n"
+            "结束后会删除联机组件，下次使用需要重新下载。"
+        ),
+        "tools.disable.locked.confirm": "结束进程并删除",
         "tools.disable.done": "已删除联机组件（{} MB），下次使用需要重新下载。",
         "tools.disable.fail": "删除联机组件失败：{}",
         "tools.disable.none": "没有已下载的联机组件，无需删除。",
@@ -1615,6 +1623,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "alone."
         ),
         "tools.disable.confirm": "Delete component",
+        "tools.disable.locked.title": "The Terracotta core is running",
+        "tools.disable.locked.message": (
+            "The Terracotta multiplayer core is running, so its files cannot be deleted.\n\n"
+            "The core process has to be ended first. If another program (another launcher, HMCL, "
+            "etc.) is using it for multiplayer, that room will disconnect too.\n\n"
+            "Afterwards the multiplayer component is deleted, and the next use will download it "
+            "again."
+        ),
+        "tools.disable.locked.confirm": "End process and delete",
         "tools.disable.done": (
             "Deleted the multiplayer component ({} MB); it will be downloaded again when you use "
             "multiplayer."
