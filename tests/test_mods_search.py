@@ -278,13 +278,13 @@ def test_all_source_page_two_asks_each_source_for_its_own_offset(app, monkeypatc
     page = ResourcesPage()
     try:
         tab = page.mods_tab
-        combo = page.source_combos[0]
-        combo.setCurrentIndex(combo.findData("all"))  # reloads page 1 synchronously
+        assert page.current_source() == "all"  # the default is the merged feed
+        tab.load_initial()  # page 1, then page 2 below
         calls.clear()
         tab._go_to_page(2)
         assert calls == [
-            ("modrinth", ALL_PAGE_SIZE, ALL_PAGE_SIZE, "relevance"),
-            ("curseforge", ALL_PAGE_SIZE, ALL_PAGE_SIZE, "relevance"),
+            ("modrinth", ALL_PAGE_SIZE, ALL_PAGE_SIZE, "downloads"),
+            ("curseforge", ALL_PAGE_SIZE, ALL_PAGE_SIZE, "downloads"),
         ]
         from gui import i18n
 
@@ -315,8 +315,8 @@ def test_all_source_keeps_modrinth_rows_when_curseforge_fails(app, monkeypatch) 
     page = ResourcesPage()
     try:
         tab = page.mods_tab
-        combo = page.source_combos[0]
-        combo.setCurrentIndex(combo.findData("all"))
+        assert page.current_source() == "all"
+        tab.load_initial()
         assert [hit.slug for hit in tab._entries] == ["m1", "m2"]
         assert [row._meta[-1][1] for row in tab._rows] == ["Modrinth", "Modrinth"]
     finally:
@@ -333,11 +333,11 @@ def test_source_combo_offers_all_and_is_not_height_pinned(app) -> None:
         combo = page.source_combos[0]
         labels = [combo.itemText(index) for index in range(combo.count())]
         assert labels == [
-            i18n.tr("mods.source.modrinth"),
-            i18n.tr("mods.source.curseforge"),
             i18n.tr("mods.source.all"),
+            i18n.tr("mods.source.curseforge"),
+            i18n.tr("mods.source.modrinth"),
         ]
-        assert page.current_source() == "modrinth"  # default stays Modrinth
+        assert page.current_source() == "all"  # PCL order, PCL default
         # The popup-scrollbar fix: a minimum lets the popup size itself; a fixed height did not.
         # The sheet is applied first so the number does not depend on whether an earlier test left one
         # in place - measured at 26px under the shipped sheet, 36px with no sheet at all.
@@ -380,10 +380,11 @@ def test_without_a_key_curseforge_is_absent_and_no_request_is_made(app, monkeypa
     page = ResourcesPage()
     try:
         labels = [page.source_combos[0].itemText(i) for i in range(page.source_combos[0].count())]
-        assert labels == [i18n.tr("mods.source.modrinth")]
+        assert labels == [i18n.tr("mods.source.all"), i18n.tr("mods.source.modrinth")]
+        assert page.current_source() == "all"  # still the default; it is the Modrinth feed here
         for combo in page.source_combos:
             assert combo.findData("curseforge") == -1
-            assert combo.findData("all") == -1
+            assert combo.findData("all") != -1
         page.mods_tab.load_initial()
         assert page.mods_tab.list.count() == 0
         assert requests == []
@@ -416,8 +417,10 @@ def test_403_removes_the_source_and_stops_further_requests(app, monkeypatch) -> 
         assert calls == [1]
         for other in page.source_combos:
             assert other.findData("curseforge") == -1
-            assert other.findData("all") == -1
-            assert other.currentData() == "modrinth"
+            assert other.findData("all") != -1
+            # CurseForge disappeared, so the selection falls back to the default "All", which is
+            # now the Modrinth-only feed.
+            assert other.currentData() == "all"
         page.mods_tab.load_initial()
         assert calls == [1]
     finally:
@@ -435,7 +438,7 @@ def test_sort_change_resets_to_page_one(app) -> None:
         tab._page = 3
         loaded: list[int] = []
         tab._load_page = lambda: loaded.append(tab._page)
-        tab.sort_combo.setCurrentIndex(tab.sort_combo.findData("downloads"))
+        tab.sort_combo.setCurrentIndex(tab.sort_combo.findData("updated"))
         assert tab._page == 1
         assert loaded == [1]
     finally:
@@ -483,9 +486,9 @@ def test_source_change_resets_paging_and_query(app) -> None:
         ):
             other.load_initial = lambda: None
         combo = page.source_combos[0]
-        combo.setCurrentIndex(combo.findData("all"))
+        combo.setCurrentIndex(combo.findData("curseforge"))
         app.processEvents()
-        assert page.current_source() == "all"
+        assert page.current_source() == "curseforge"
         assert tab._page == 1
         assert tab._has_next is False
         assert tab._query == ""
@@ -495,3 +498,268 @@ def test_source_change_resets_paging_and_query(app) -> None:
     finally:
         page.deleteLater()
         app.processEvents()
+
+
+# ---------- source / sort / slug / meta (the PCL alignment) ----------
+
+
+def _sync_run(monkeypatch):
+    from gui.pages import mods_page
+
+    monkeypatch.setattr(mods_page, "run_in_background", _sync_runner)
+
+
+def test_sort_offers_relevance_only_while_searching(app, monkeypatch) -> None:
+    from gui import i18n
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+
+    monkeypatch.setattr(mods_page, "search_projects", lambda *a, **k: SearchHits([], total=0))
+    _sync_run(monkeypatch)
+    page = ResourcesPage()
+    try:
+        tab = page.mods_tab
+        assert [(tab.sort_combo.itemData(i), tab.sort_combo.itemText(i)) for i in range(tab.sort_combo.count())] == [
+            ("downloads", i18n.tr("mods.popular")),
+            ("updated", i18n.tr("mods.sort.updated")),
+        ]
+        assert tab.sort_combo.currentData() == "downloads"
+
+        tab.search_edit.setText("sodium")
+        tab._search()
+        assert [
+            (tab.sort_combo.itemData(i), tab.sort_combo.itemText(i))
+            for i in range(tab.sort_combo.count())
+        ] == [
+            ("relevance", i18n.tr("mods.sort.relevance")),
+            ("downloads", i18n.tr("mods.popular")),
+            ("updated", i18n.tr("mods.sort.updated")),
+            ("newest", i18n.tr("mods.sort.newest")),
+        ]
+        assert tab.sort_combo.currentData() == "relevance"
+
+        # Clearing the keyword falls back to the browse default; the old "Relevance" choice no
+        # longer exists and must not linger as a blank/unselectable entry.
+        tab.search_edit.setText("")
+        tab._search()
+        assert [tab.sort_combo.itemData(i) for i in range(tab.sort_combo.count())] == [
+            "downloads",
+            "updated",
+        ]
+        assert tab.sort_combo.currentData() == "downloads"
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_a_manual_sort_survives_entering_search_mode(app, monkeypatch) -> None:
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+
+    monkeypatch.setattr(mods_page, "search_projects", lambda *a, **k: SearchHits([], total=0))
+    _sync_run(monkeypatch)
+    page = ResourcesPage()
+    try:
+        tab = page.mods_tab
+        tab.sort_combo.setCurrentIndex(tab.sort_combo.findData("downloads"))
+        tab._on_sort_activated(tab.sort_combo.currentIndex())  # what a real click emits
+        tab.search_edit.setText("sodium")
+        tab._search()
+        assert tab.sort_combo.currentData() == "downloads"  # the user's choice is kept
+        # It is a valid search-mode choice, so the field did not have to change.
+        assert tab.sort_combo.findData("downloads") != -1
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_browse_and_search_requests_carry_the_right_sort(app, monkeypatch) -> None:
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+    from launcher.mods import curseforge as cf
+
+    seen: list[tuple[str, str]] = []
+
+    def fake_modrinth(query, *, limit, offset=0, sort="relevance", project_type="mod"):
+        seen.append(("modrinth", sort))
+        return SearchHits([], total=0)
+
+    def fake_curseforge(query, *, limit, offset=0, sort="relevance", kind="mod", game_version="", loader=""):
+        seen.append(("curseforge", sort))
+        return SearchHits([], total=0)
+
+    monkeypatch.setattr(mods_page, "search_projects", fake_modrinth)
+    monkeypatch.setattr(cf, "search_projects", fake_curseforge)
+    _sync_run(monkeypatch)
+    page = ResourcesPage()
+    try:
+        tab = page.mods_tab
+        combo = page.source_combos[0]
+        combo.setCurrentIndex(combo.findData("modrinth"))
+        seen.clear()
+        tab.load_initial()
+        assert seen == [("modrinth", "downloads")]  # browse -> Popular
+
+        seen.clear()
+        tab.search_edit.setText("sodium")
+        tab._search()
+        assert seen == [("modrinth", "relevance")]  # search -> real relevance
+
+        combo.setCurrentIndex(combo.findData("curseforge"))
+        tab.load_initial()
+        seen.clear()
+        tab.search_edit.setText("sodium")
+        tab._search()
+        assert seen == [("curseforge", "relevance")]  # CF has no relevance; Popularity is the proxy
+
+        tab.search_edit.setText("")
+        seen.clear()
+        tab._search()  # clearing the keyword returns to browse, Popular
+        assert seen == [("curseforge", "downloads")]
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_slug_query_is_only_offered_for_modrinth(app, monkeypatch) -> None:
+    from PySide6.QtCore import QPoint
+
+    from gui.pages import mods_page
+    from gui.pages.mods_page import ResourcesPage
+
+    called: list[str] = []
+    monkeypatch.setattr(mods_page, "fetch_project", lambda slug: called.append(slug))
+    _sync_run(monkeypatch)
+    monkeypatch.setattr(mods_page, "search_projects", lambda *a, **k: SearchHits([], total=0))
+    page = ResourcesPage()
+    try:
+        tab = page.mods_tab
+        combo = page.source_combos[0]
+        assert tab.slug_edit.isHidden() and tab.query_button.isHidden()  # All
+        before = tab.game_version_edit.mapTo(page, QPoint(0, 0))
+        combo.setCurrentIndex(combo.findData("curseforge"))
+        app.processEvents()
+        assert tab.slug_edit.isHidden() and tab.query_button.isHidden()
+        assert tab.game_version_edit.mapTo(page, QPoint(0, 0)) == before  # no layout jump
+        combo.setCurrentIndex(combo.findData("modrinth"))
+        app.processEvents()
+        assert not tab.slug_edit.isHidden() and not tab.query_button.isHidden()
+        assert tab.game_version_edit.mapTo(page, QPoint(0, 0)) == before
+        # Hidden means it cannot start a Modrinth lookup either.
+        combo.setCurrentIndex(combo.findData("all"))
+        app.processEvents()
+        tab.slug_edit.setText("sodium")
+        tab.query()
+        assert called == []
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def _meta_row(loaders, *, width=600):
+    from gui.pages.mods_page import _ResourceRow
+
+    hit = ModSearchHit(
+        slug="meta",
+        title="Meta Project",
+        description="d",
+        downloads=137_000_000,
+        updated="2026-07-01T00:00:00Z",
+        loaders=loaders,
+        source="modrinth",
+    )
+    row = _ResourceRow(hit, "模组", "Modrinth", on_select=lambda: None, on_install=lambda: None)
+    row.resize(width, row.SLOT_HEIGHT)
+    return row
+
+
+def _plan_total(row, plan):
+    return sum(width for _kind, _text, width in plan) + row.META_GAP * (len(plan) - 1)
+
+
+def test_loader_names_degrade_to_the_hash_only_when_they_do_not_fit(app) -> None:
+    row = _meta_row(["fabric", "forge", "neoforge", "quilt"])
+    try:
+        wide = row._plan_meta(1000)
+        names = next(text for kind, text, _width in wide if kind == "loaders")
+        assert "Fabric" in names and "Quilt" in names
+        assert "source" in [kind for kind, _text, _width in wide]
+
+        # One pixel less than the names need: the same segments fall back to the 12px marker,
+        # keeping downloads, time and source.
+        tight = row._plan_meta(_plan_total(row, wide) - 1)
+        marker = next(seg for seg in tight if seg[0] == "loaders")
+        assert marker[1] == "", "the loader segment must paint the # marker, not names"
+        assert marker[2] == row.META_GLYPH
+        assert [kind for kind, _text, _width in tight] == [
+            "loaders",
+            "downloads",
+            "updated",
+            "source",
+        ]
+        assert "Modrinth" in next(text for kind, text, _width in tight if kind == "source")
+
+        tooltip = row._tooltip_text()
+        for name in ("Fabric", "Forge", "NeoForge", "Quilt"):
+            assert name in tooltip
+        assert "Modrinth" in tooltip
+    finally:
+        row.deleteLater()
+
+
+def test_a_single_loader_keeps_its_name(app) -> None:
+    row = _meta_row(["fabric"])
+    try:
+        plan = row._plan_meta(600)
+        loader = next(seg for seg in plan if seg[0] == "loaders")
+        assert "Fabric" in loader[1], "a one-loader project must still say Fabric"
+        assert "source" in [kind for kind, _text, _width in plan]
+    finally:
+        row.deleteLater()
+
+
+def test_three_loaders_keep_their_names_when_they_fit(app) -> None:
+    row = _meta_row(["fabric", "neoforge", "quilt"])
+    try:
+        plan = row._plan_meta(600)
+        loader = next(seg for seg in plan if seg[0] == "loaders")
+        assert "Fabric" in loader[1] and "NeoForge" in loader[1] and "Quilt" in loader[1]
+        assert "source" in [kind for kind, _text, _width in plan]
+    finally:
+        row.deleteLater()
+
+
+def test_no_loaders_paints_no_marker(app) -> None:
+    row = _meta_row([])
+    try:
+        assert "loaders" not in [kind for kind, _text, _width in row._plan_meta(600)]
+    finally:
+        row.deleteLater()
+
+
+def test_meta_degradation_drops_time_then_the_marker_never_the_source(app) -> None:
+    row = _meta_row(["fabric", "forge", "neoforge", "quilt"])
+    try:
+        # Start from the marker shape (the names do not fit at this width).
+        named = row._plan_meta(1000)
+        marker = row._plan_meta(_plan_total(row, named) - 1)
+        assert [kind for kind, _t, _w in marker] == ["loaders", "downloads", "updated", "source"]
+        # One pixel less than the marker set: only the lowest-priority time segment may go.
+        no_time = row._plan_meta(_plan_total(row, marker) - 1)
+        assert [kind for kind, _t, _w in no_time] == ["loaders", "downloads", "source"]
+        no_marker = row._plan_meta(_plan_total(row, no_time) - 1)
+        assert [kind for kind, _t, _w in no_marker] == ["downloads", "source"]
+        source_only = row._plan_meta(_plan_total(row, no_marker) - 1)
+        assert [kind for kind, _t, _w in source_only] == ["source"]
+        assert "Modrinth" in source_only[0][1]
+    finally:
+        row.deleteLater()
+
+
+def test_meta_does_not_truncate_when_the_row_is_wide(app) -> None:
+    row = _meta_row(["fabric", "forge", "neoforge", "quilt"])
+    try:
+        plan = row._plan_meta(1000)
+        assert [kind for kind, _t, _w in plan] == ["loaders", "downloads", "updated", "source"]
+    finally:
+        row.deleteLater()

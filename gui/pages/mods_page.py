@@ -116,6 +116,27 @@ def _curseforge_available() -> bool:
     return curseforge.available()
 
 
+#: The source dropdown starts on "All", like PCL's: browsing is a merged feed, and the row itself
+#: still names the source each hit came from. Without a key "All" is simply the Modrinth feed.
+DEFAULT_SOURCE = "all"
+
+#: Sort choices. "Relevance" only exists while a keyword is being searched: browsing has nothing to
+#: be relevant to, so the browse list offers Popular and Last updated only. Popular is Modrinth's
+#: ``index=downloads`` and CurseForge's ``Popularity``; both mean "what people actually use".
+SORT_OPTIONS_BROWSE: tuple[tuple[str, str], ...] = (
+    ("downloads", "mods.popular"),
+    ("updated", "mods.sort.updated"),
+)
+SORT_OPTIONS_SEARCH: tuple[tuple[str, str], ...] = (
+    ("relevance", "mods.sort.relevance"),
+    ("downloads", "mods.popular"),
+    ("updated", "mods.sort.updated"),
+    ("newest", "mods.sort.newest"),
+)
+DEFAULT_SORT_BROWSE = "downloads"
+DEFAULT_SORT_SEARCH = "relevance"
+
+
 # ---------- human-readable numbers for the result rows ----------
 
 #: Chinese counts read in 万 / 亿, the rest of the interface uses the SI K / M / B suffixes. The unit
@@ -426,6 +447,10 @@ class _ResourceRow(QWidget):
     GAP = 12
     RADIUS = 8
     TAG_HEIGHT = 18
+    #: The loader marker glyph is 12px; a segment is glyph + 4px + text, and segments are 14px
+    #: apart. Kept as class constants so the plan and the painter cannot drift apart.
+    META_GLYPH = 12
+    META_GAP = 14
 
     def __init__(
         self,
@@ -619,25 +644,87 @@ class _ResourceRow(QWidget):
 
         meta_font = QFont(self.font())
         meta_font.setPixelSize(11)
-        meta_metrics = QFontMetrics(meta_font)
         cursor = text_left
-        for glyph, text in self._meta:
-            text_width = meta_metrics.horizontalAdvance(text)
-            segment = 12 + 4 + text_width
-            if cursor + segment > text_right:
-                break
+        for glyph, text, segment in self._plan_meta(max(0, int(text_right - text_left))):
             self._paint_glyph(
-                painter, glyph, QRectF(cursor, 47, 12, 12), hint_color
+                painter, glyph, QRectF(cursor, 47, self.META_GLYPH, 12), hint_color
             )
-            painter.setFont(meta_font)
-            painter.setPen(hint_color)
-            painter.drawText(
-                QRectF(cursor + 16, 45, text_width + 2, 16),
-                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-                text,
-            )
-            cursor += segment + 14
+            if text:
+                painter.setFont(meta_font)
+                painter.setPen(hint_color)
+                painter.drawText(
+                    QRectF(cursor + 16, 45, max(0, segment - 16), 16),
+                    int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                    text,
+                )
+            cursor += segment + self.META_GAP
         painter.end()
+
+    def _plan_meta(self, available: int) -> list[tuple[str, str, int]]:
+        """Decide which meta segments the row can draw, and how wide each one is.
+
+        Priority, highest first: the source (the whole reason the row shows it), downloads, the
+        loader information, and finally the update time. The loader segment prefers the loader
+        names - "Fabric" is the only useful thing a single-loader project can say - and only
+        degrades to the bare ``#`` marker when the names do not fit next to the other segments.
+        A project supporting all four loaders therefore usually shows ``#`` while a one- or
+        two-loader project keeps its names. Widths are measured before drawing, so a segment is
+        never half-painted or allowed to run under the install button; the names are always in the
+        tooltip, and the source is never dropped (it is elided only when even it alone is too wide).
+        """
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(11)
+        metrics = QFontMetrics(meta_font)
+        segments: list[tuple[str, str, int, str]] = []
+        for glyph, text in self._meta:
+            if glyph == "loaders":
+                # Two shapes of the same segment: full names, and the marker-only fallback.
+                named_width = 16 + metrics.horizontalAdvance(text) + 2
+                segments.append((glyph, text, named_width, text))
+            else:
+                segments.append((glyph, text, 16 + metrics.horizontalAdvance(text) + 2, text))
+
+        def with_marker(items: list[tuple[str, str, int, str]]) -> list[tuple[str, str, int, str]]:
+            """The same segments with the loader text replaced by the 12px ``#`` marker."""
+            return [
+                (glyph, "", self.META_GLYPH, full) if glyph == "loaders" else (glyph, text, width, full)
+                for glyph, text, width, full in items
+            ]
+
+        def fit(items: list[tuple[str, str, int, str]]) -> int:
+            return sum(width for _g, _t, width, _full in items) + (
+                self.META_GAP * (len(items) - 1) if items else 0
+            )
+
+        def plain(items: list[tuple[str, str, int, str]]) -> list[tuple[str, str, int]]:
+            return [(glyph, text, width) for glyph, text, width, _full in items]
+
+        # 1. The ideal: names and every other segment.
+        if fit(segments) <= available:
+            return plain(segments)
+        # 2. Names do not fit: the marker costs 12px instead of a sentence, time is kept.
+        marker = with_marker(segments)
+        if fit(marker) <= available:
+            return plain(marker)
+        # 3. Still too narrow: the relative time goes (the first sacrifice at every width).
+        marker_no_time = [item for item in marker if item[0] != "updated"]
+        if len(marker_no_time) < len(marker) and fit(marker_no_time) <= available:
+            return plain(marker_no_time)
+        # 4. Then the marker itself; downloads and source stay.
+        no_marker = [item for item in marker_no_time if item[0] != "loaders"]
+        if len(no_marker) < len(marker_no_time) and fit(no_marker) <= available:
+            return plain(no_marker)
+        # 5. Only the source is left, and only when even downloads no longer fit.
+        source_only = [item for item in no_marker if item[0] != "downloads"]
+        if source_only and fit(source_only) <= available:
+            return plain(source_only)
+
+        source = next((item for item in segments if item[0] == "source"), None)
+        if source is None:
+            return []
+        text_width = max(0, available - 16 - 2)
+        text = metrics.elidedText(source[3], Qt.TextElideMode.ElideRight, text_width)
+        return [("source", text, 16 + metrics.horizontalAdvance(text) + 2)]
 
     @staticmethod
     def _paint_glyph(painter: QPainter, kind: str, rect: QRectF, color: QColor) -> None:
@@ -1268,13 +1355,10 @@ class _ContentTab(QWidget):
         self.search_edit.setPlaceholderText(tr(placeholder_key))
         self.search_button = QPushButton(tr("mods.search.button"))
         self.sort_combo = _PopupFitCombo()
-        for key, label_key in (
-            ("relevance", "mods.sort.relevance"),
-            ("downloads", "mods.sort.downloads"),
-            ("updated", "mods.sort.updated"),
-            ("newest", "mods.sort.newest"),
-        ):
-            self.sort_combo.addItem(tr(label_key), key)
+        #: True once the user picked a sort themselves; a later search then keeps their choice
+        #: instead of snapping back to the search default. Programmatic rebuilds never set it.
+        self._sort_user_chosen = False
+        self._populate_sort_combo()
         # WCAG 4.1.2: one sort combo per tab, so the name says which tab it belongs to.
         self.sort_combo.setAccessibleName(
             tr("mods.sort") + " · " + tr(self.KIND_TITLE_KEY[kind])
@@ -1283,10 +1367,12 @@ class _ContentTab(QWidget):
         # ensurePolished() first: the sheet's own min-height would otherwise win over this one.
         self.sort_combo.ensurePolished()
         self.sort_combo.setMinimumHeight(36)
+        # Size for the longest label of *every* mode, not the current one: switching between browse
+        # (2 items) and search (4 items) must not make the field jump.
         self.sort_combo.setMinimumWidth(
             max(
-                self.sort_combo.fontMetrics().horizontalAdvance(self.sort_combo.itemText(index))
-                for index in range(self.sort_combo.count())
+                self.sort_combo.fontMetrics().horizontalAdvance(tr(label_key))
+                for _key, label_key in (*SORT_OPTIONS_BROWSE, *SORT_OPTIONS_SEARCH)
             )
             + 60
         )
@@ -1406,6 +1492,9 @@ class _ContentTab(QWidget):
         self.search_button.clicked.connect(self._search)
         self.search_edit.returnPressed.connect(self._search)
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        # `activated` fires only for a real user choice, never for the programmatic rebuild that
+        # follows a mode change; that is what makes "keep the user's sort" possible.
+        self.sort_combo.activated.connect(self._on_sort_activated)
         self.prev_page_button.clicked.connect(lambda: self._go_to_page(self._page - 1))
         self.next_page_button.clicked.connect(lambda: self._go_to_page(self._page + 1))
         self.install_button.clicked.connect(self._on_install_clicked)
@@ -1413,6 +1502,60 @@ class _ContentTab(QWidget):
             self.open_folder_button.clicked.connect(self._open_content_folder)
 
         self._update_install_button()
+        self._update_slug_visibility()
+
+    # ---------- sort options ----------
+
+    def _sort_options(self) -> tuple[tuple[str, str], ...]:
+        """The choices the current mode offers: relevance only while a keyword is searched."""
+        return SORT_OPTIONS_SEARCH if self._query else SORT_OPTIONS_BROWSE
+
+    def _default_sort_key(self) -> str:
+        return DEFAULT_SORT_SEARCH if self._query else DEFAULT_SORT_BROWSE
+
+    def _populate_sort_combo(self) -> None:
+        """Rebuild the sort dropdown for the current mode, keeping a choice the user made.
+
+        A user selection survives a mode change while it exists in the new mode ("Popular" stays
+        Popular when a search starts). A choice that no longer exists - "Relevance" after the
+        keyword was cleared - falls back to the mode's default instead of leaving a blank field or
+        a stale index. Signals are blocked: rebuilding is not a user action and must not reload.
+        """
+        options = self._sort_options()
+        allowed = {key for key, _label in options}
+        current = self.sort_combo.currentData()
+        if not self._sort_user_chosen or current not in allowed:
+            current = self._default_sort_key()
+        self.sort_combo.blockSignals(True)
+        try:
+            wanted_labels = [(key, tr(label_key)) for key, label_key in options]
+            present = [
+                (self.sort_combo.itemData(index), self.sort_combo.itemText(index))
+                for index in range(self.sort_combo.count())
+            ]
+            if present != wanted_labels:
+                self.sort_combo.clear()
+                for key, label in wanted_labels:
+                    self.sort_combo.addItem(label, key)
+            self.sort_combo.setCurrentIndex(max(self.sort_combo.findData(current), 0))
+        finally:
+            self.sort_combo.blockSignals(False)
+
+    def _on_sort_activated(self, _index: int) -> None:
+        """A real user choice: remember it so a later mode change does not override it."""
+        self._sort_user_chosen = True
+
+    def _update_slug_visibility(self) -> None:
+        """Show the Modrinth slug query only where it means something.
+
+        The slug lookup always goes through Modrinth's project API, so offering it under
+        CurseForge or "All" promised a different source than the one selected. Hidden, not
+        disabled: a disabled field still reads as "this could work". The row keeps its height
+        through the loader / game-version controls, so nothing above or below moves.
+        """
+        visible = self._source_mode() == "modrinth"
+        self.slug_edit.setVisible(visible)
+        self.query_button.setVisible(visible)
 
     # ---------- Rows ----------
 
@@ -1640,7 +1783,7 @@ class _ContentTab(QWidget):
         return page.current_source() if page is not None else "modrinth"
 
     def _sort_key(self) -> str:
-        return self.sort_combo.currentData() or "relevance"
+        return self.sort_combo.currentData() or self._default_sort_key()
 
     def _on_sort_changed(self, _index: int) -> None:
         # The sort is part of the query: page 1 of the new order, not page 2 of the old one.
@@ -1658,10 +1801,13 @@ class _ContentTab(QWidget):
 
     def _search(self) -> None:
         query = self.search_edit.text().strip()
-        if not query:
+        if not query and not self._query:
             return
+        # Clearing the keyword returns to browsing: the request becomes the popular feed again and
+        # a "Relevance" that no longer exists in the browse list falls back to Popular.
         self._query = query
         self._page = 1
+        self._populate_sort_combo()
         self._load_page()
 
     def load_initial(self) -> None:
@@ -1669,6 +1815,7 @@ class _ContentTab(QWidget):
         self._initial_loaded = True
         self._query = ""
         self._page = 1
+        self._populate_sort_combo()
         self._load_page()
 
     def _load_page(self) -> None:
@@ -1677,6 +1824,7 @@ class _ContentTab(QWidget):
         page = getattr(self, "page", None)
         if page is not None:
             page._sync_source_combos()
+        self._populate_sort_combo()
         source = self._source_mode()
         query = self._query
         sort = self._sort_key()
@@ -1878,6 +2026,12 @@ class _ContentTab(QWidget):
     # ---------- slug query (kept) ----------
 
     def query(self) -> None:
+        # The field is hidden outside the Modrinth source; a hidden widget cannot be clicked, but a
+        # programmatic caller or a stale signal must not start a Modrinth lookup from CurseForge.
+        # isHidden() is the page's own decision; isVisible() would also be false merely because an
+        # ancestor is not shown yet.
+        if self.slug_edit.isHidden():
+            return
         slug = self.slug_edit.text().strip()
         if not slug:
             set_app_status(self, tr("mods.status.default"))
@@ -2465,6 +2619,8 @@ class ResourcesPage(QWidget):
             tab._search_row.insertWidget(0, combo)
             self.source_combos.append(combo)
         self.source_combo = self.source_combos[0]  # canonical reference
+        for tab in (self.mods_tab, self.modpacks_tab, self.resourcepacks_tab, self.shaderpacks_tab):
+            tab._update_slug_visibility()
 
         layout = QVBoxLayout(self)
         style_page_layout(layout)
@@ -2488,18 +2644,19 @@ class ResourcesPage(QWidget):
     def _populate_source_combo(self, combo: QComboBox) -> None:
         """Rebuild one source dropdown from the sources that are usable right now.
 
-        Without a key - or after the service rejected one - CurseForge is not a disabled entry: it
-        is absent, and so is "All", which would only promise a merge that cannot happen. A selection
-        whose data disappeared falls back to Modrinth instead of leaving the combo blank.
+        PCL's order, and PCL's default: All first and selected. Without a key - or after the
+        service rejected one - CurseForge is not a disabled entry: it is absent, and "All" remains
+        as the Modrinth feed (the merge code already asks only the sources that are available).
+        A selection whose data disappeared falls back to All, not to a blank field.
         """
-        current = combo.currentData() or "modrinth"
+        current = combo.currentData() or DEFAULT_SOURCE
         combo.blockSignals(True)
         try:
             combo.clear()
-            combo.addItem(tr("mods.source.modrinth"), "modrinth")
+            combo.addItem(tr("mods.source.all"), "all")
             if self._cf_available:
                 combo.addItem(tr("mods.source.curseforge"), "curseforge")
-                combo.addItem(tr("mods.source.all"), "all")
+            combo.addItem(tr("mods.source.modrinth"), "modrinth")
             index = combo.findData(current)
             combo.setCurrentIndex(max(index, 0))
         finally:
@@ -2530,9 +2687,11 @@ class ResourcesPage(QWidget):
         for combo in self.source_combos:
             self._populate_source_combo(combo)
             self._fit_source_combo_width(combo)
+        for tab in (self.mods_tab, self.modpacks_tab, self.resourcepacks_tab, self.shaderpacks_tab):
+            tab._update_slug_visibility()
 
     def current_source(self) -> str:
-        return self.source_combo.currentData() or "modrinth"
+        return self.source_combo.currentData() or DEFAULT_SOURCE
 
     def current_source_label(self) -> str:
         """The display name of the active source ("Modrinth" / "CurseForge") for the result rows."""
@@ -2593,6 +2752,7 @@ class ResourcesPage(QWidget):
         ):
             tab._clear_entries()
             tab._initial_loaded = False
+            tab._update_slug_visibility()
         self._on_tab_changed(self.tabs.currentIndex())
 
     def _on_tab_changed(self, index: int) -> None:
