@@ -450,7 +450,9 @@ QListView#comboPopupList {
        field's own line the seam, so the two read as one control instead of a 2px double rule. */
     border-top: none;
     border-radius: 0;
-    padding: 4px;
+    /* No panel padding: the first row and its highlight start at the field's border, like PCL's
+       menu. The 8px 12px item padding still insets the text. */
+    padding: 0;
     selection-background-color: __ACCENT_SEL_ROW__;
     selection-color: __FG_TEXT__;
     outline: none;

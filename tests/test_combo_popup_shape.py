@@ -434,7 +434,7 @@ def test_combo_popup_stylesheet_is_an_outlined_panel():
         assert "border: 1px solid __BORDER_LIST__;" in block, sheet.name
         assert "border-top: none;" in block, sheet.name
         assert "border-radius: 0;" in block, sheet.name
-        assert "padding: 4px;" in block, sheet.name
+        assert "padding: 0;" in block, sheet.name
         assert "__ACCENT_SEL__" not in block, sheet.name
         # The selected pseudo-state must live in the same sheet; otherwise the delegate paints
         # every row in the panel fill and the current entry is invisible.
