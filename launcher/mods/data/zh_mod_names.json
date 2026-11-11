@@ -189,6 +189,7 @@
   "Bamboo Sign Editor"
  ],
  "bare-bones": [
+  "裸骨",
   "裸骨 Bare Bones",
   "Bare Bones"
  ],
@@ -204,7 +205,7 @@
   "BaublesReforked"
  ],
  "beautify-refoxed": [
-  "美化！（NeoForge）",
+  "美化",
   "Beautify: ReFoxed"
  ],
  "bed-spawn-backport": [
@@ -240,15 +241,16 @@
   "Better End Sky Retro"
  ],
  "better-leaves": [
-  "更好的树叶 Better Leaves",
-  "Motschen's Better Leaves"
+  "更好的树叶",
+  "Motschen's Better Leaves",
+  "Better Leaves"
  ],
  "better-mc-fabric-bmc2": [
-  "更好的MC（Fabric）",
+  "更好的MC",
   "Better MC [FABRIC] - BMC2"
  ],
  "better-mc-forge-bmc4": [
-  "更好的MC（Forge）",
+  "更好的MC",
   "Better MC [FORGE] - BMC4"
  ],
  "better-melon": [
@@ -284,8 +286,9 @@
   "BetterSpeedHUD"
  ],
  "beyondheights": [
-  "高度极限 [-2032~2031]（可自定义）",
-  "beyondheights"
+  "高度极限",
+  "beyondheights",
+  "Beyond Heights"
  ],
  "bing-agriculture-extend": [
   "冰·农业工具扩展",
@@ -478,6 +481,7 @@
   "Cobblemon Official Modpack [Fabric]"
  ],
  "cobblemon-interface": [
+  "宝可梦界面",
   "宝可梦界面 Cobblemon Interface",
   "Cobblemon Interface"
  ],
@@ -792,10 +796,12 @@
   "Deeper and Darker"
  ],
  "default-dark-mode": [
+  "默认暗色模式",
   "默认暗色模式 Default Dark Mode",
   "Default Dark Mode"
  ],
  "default-hd-128x": [
+  "原生高清",
   "原生高清 Default HD 128x",
   "Default HD 128x"
  ],
@@ -872,6 +878,7 @@
   "Dragon Movement Fix"
  ],
  "dramatic-skys": [
+  "极致拟真天空",
   "极致拟真天空 Dramatic Skys",
   "Dramatic Skys"
  ],
@@ -956,7 +963,7 @@
   "Emotecraft"
  ],
  "enchant-icons-countxd": [
-  "附魔图标 Enchant Icons",
+  "附魔标签",
   "Enchant Icons"
  ],
  "enchanting-infuser": [
@@ -1124,8 +1131,9 @@
   "fakeplayer"
  ],
  "fancy-crops": [
-  "精美作物 Fancy Crops",
-  "(Bee's) Fancy Crops"
+  "精美作物",
+  "(Bee's) Fancy Crops",
+  "Fancy Crops"
  ],
  "fancy-enchantments": [
   "奇异附魔",
@@ -1136,6 +1144,7 @@
   "Farmer's Delight"
  ],
  "fast-better-grass": [
+  "更好的草地",
   "更好的草地 Fast Better Grass",
   "Fast Better Grass"
  ],
@@ -1215,6 +1224,7 @@
   "FPS Modpack"
  ],
  "fresh-animations": [
+  "新鲜动画",
   "新鲜动画 Fresh Animations",
   "Fresh Animations"
  ],
@@ -1230,6 +1240,7 @@
   "Freshness"
  ],
  "fullbright-ub": [
+  "完全明亮",
   "完全明亮 Fullbright UB",
   "Fullbright UB"
  ],
@@ -1424,6 +1435,7 @@
   "Iam Music Player Renewed"
  ],
  "icon-xaeros": [
+  "Xaero 图标",
   "Xaero 图标 Icon Xaero's",
   "Icon Xaero's"
  ],
@@ -1734,10 +1746,12 @@
   "Local Capes"
  ],
  "low-fire-pack": [
+  "低火材质包  Pack",
   "低火材质包 Low Fire Pack",
   "Low Fire"
  ],
  "low-on-fire": [
+  "低火",
   "低火 Low on Fire",
   "Low On Fire"
  ],
@@ -1970,6 +1984,7 @@
   "New Better Combat"
  ],
  "new-glowing-ores": [
+  "新发光矿石",
   "新发光矿石 New Glowing Ores",
   "New Glowing Ores"
  ],
@@ -2044,10 +2059,6 @@
  "only-tp": [
   "只能TP",
   "Only TP"
- ],
- "optifabric-modpack": [
-  "OptiFabric Modpack",
-  "OptiFabric"
  ],
  "options-rewriter": [
   "Options重覆写",
@@ -2181,6 +2192,7 @@
   "Prehistoric Nature"
  ],
  "programmer-art-fix": [
+  "程序员艺术修复",
   "程序员艺术修复 Programmer Art Fix",
   "Programmer Art Fix"
  ],
@@ -2605,8 +2617,9 @@
   "Starcatcher Auto"
  ],
  "stardewvalley": [
-  "Stardewvalley星露谷",
-  "Stardewvalley"
+  "星露谷物语",
+  "Stardewvalley",
+  "Stardew Valley"
  ],
  "starter-kit": [
   "初始套件",
