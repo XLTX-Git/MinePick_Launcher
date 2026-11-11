@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""The combo popup is an outlined panel below the field, with one softly marked row.
+"""The combo popup is an opaque outlined panel below the field, with one softly marked row.
 
 The user reported this repeatedly: the dropdown opened upwards over the category chips, its
 selected row was a saturated ACCENT_SEL block sitting on top of the input, and there was no visible
@@ -25,7 +25,9 @@ pin the parts a stylesheet grep cannot see:
 * the style override answers 0, so Qt uses the ordinary listbox popup;
 * the window really carries the attributes, and they are applied automatically when the combo is
   shown (the install hook, not a per-page call);
-* the four corners of the rendered window are transparent;
+* the window is opaque: every pixel of the grabbed panel has alpha 255, and the container itself
+  paints BG_LIST plus a 1px BORDER_LIST outline (the old transparent window let the page behind a
+  native dropdown show through);
 * the panel opens below the field (sharing one border line), paints the BG_LIST fill and never
   paints the whole surface in ACCENT_SEL;
 * the current row is the only highlighted row (BG_HOVER), and arrow keys move it;
@@ -44,6 +46,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
+    QPushButton,
     QStyle,
     QStyleOptionComboBox,
     QVBoxLayout,
@@ -127,9 +130,21 @@ def test_combo_popup_is_shaped_automatically_when_the_combo_is_shown(app, shaper
     assert flags & Qt.WindowType.Popup, "Qt::Popup is what closes the dropdown on an outside click"
     assert flags & Qt.WindowType.FramelessWindowHint
     assert flags & Qt.WindowType.NoDropShadowWindowHint
-    assert popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground), (
+        "the dropdown window must stay opaque: a translucent window let the page show through the "
+        "panel on the native platform"
+    )
+    assert popup.autoFillBackground()
     assert popup.frameShape() == QFrame.Shape.NoFrame
     assert popup.objectName() == shaper.POPUP_OBJECT_NAME
+    from gui.theme import current_tokens
+
+    tokens = current_tokens()
+    sheet = popup.styleSheet()
+    assert f"background: {tokens['BG_LIST']}" in sheet
+    assert f"border: 1px solid {tokens['BORDER_LIST']}" in sheet
+    assert "border-radius: 0" in sheet
+    assert "transparent" not in sheet
 
     popup = _open(combo, app)
     assert popup.isVisible()
@@ -144,7 +159,8 @@ def test_combo_popup_window_is_the_outlined_panel(app, shaper):
 
     The panel is square and flush under the field by design now. What must not come back is the old
     translucent-window artefact: a window larger than the list, filled with the platform's window
-    colour around a smaller surface (the "black edge").
+    colour around a smaller surface (the "black edge"), or a window with holes the page showed
+    through.
     """
     from gui.theme import current_tokens
 
@@ -152,6 +168,7 @@ def test_combo_popup_window_is_the_outlined_panel(app, shaper):
     window, combo = _combo_window(app, items=3)
     popup = _open(combo, app)
     assert popup.isVisible()
+    assert not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
     image = _render(popup)
     border_hex = tokens["BORDER_LIST"].lstrip("#")
@@ -166,6 +183,44 @@ def test_combo_popup_window_is_the_outlined_panel(app, shaper):
         image.pixelColor(x, 0).alpha() == 255 for x in (0, image.width() // 2, image.width() - 1)
     )
     assert image.pixelColor(image.width() // 2, image.height() // 2).alpha() == 255
+    combo.hidePopup()
+    window.close()
+
+
+def test_combo_popup_has_no_translucent_pixels(app, shaper):
+    """Regression: the native dropdown showed the page through it.
+
+    The window used to carry WA_TranslucentBackground and the container painted ``transparent``, so
+    on the real platform the list's text floated with no panel under it. Offscreen cannot reproduce
+    the compositing failure, but it can prove the two things that caused it are gone: the window is
+    not translucent, and every pixel - border, container margin and list - is fully opaque.
+    """
+    from gui.theme import current_tokens
+
+    tokens = current_tokens()
+    window, combo = _combo_window(app, items=4)
+    popup = _open(combo, app)
+    image = _render(popup)
+    assert not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    min_alpha = 255
+    translucent = []
+    for y in range(image.height()):
+        for x in range(image.width()):
+            alpha = image.pixelColor(x, y).alpha()
+            min_alpha = min(min_alpha, alpha)
+            if alpha < 255:
+                translucent.append((x, y, alpha))
+    assert min_alpha == 255, (
+        f"the popup has {len(translucent)} translucent pixels (min alpha {min_alpha}); the first "
+        f"ones are {translucent[:8]}"
+    )
+    # The container is the fill, not just the list: the 1px inset behind the list is BG_LIST too.
+    # Use the bottom row (the fixture selects row 0, whose highlight covers the top row).
+    bg = tokens["BG_LIST"].lstrip("#")
+    expected = (int(bg[0:2], 16), int(bg[2:4], 16), int(bg[4:6], 16), 255)
+    inset = image.pixelColor(1, image.height() - 2)
+    assert (inset.red(), inset.green(), inset.blue(), inset.alpha()) == expected
     combo.hidePopup()
     window.close()
 
@@ -423,16 +478,87 @@ def test_resources_page_source_popup_opens_below_the_field(app, shaper, monkeypa
         app.processEvents()
 
 
+def test_resources_page_sort_popup_is_opaque_and_leaves_the_chips_alone(
+    app, shaper, monkeypatch
+):
+    """The reported screenshot: opening "sort" made 资源包/光影 disappear behind a see-through panel.
+
+    Offscreen cannot reproduce the native compositing failure, but it can pin the facts the fix
+    depends on: the panel is fully opaque, it opens *below* its field (so it cannot cover the chip
+    row), and the four category chips keep their visibility and geometry while it is open.
+    """
+    from gui import i18n
+    from gui.pages import mods_page
+
+    monkeypatch.setattr(mods_page, "_curseforge_available", lambda: True)
+    monkeypatch.setattr(mods_page, "search_projects", lambda *a, **k: [])
+    monkeypatch.setattr(mods_page, "run_in_background", lambda *a, **k: None)
+
+    page = mods_page.ResourcesPage()
+    window = QWidget()
+    window.resize(1000, 610)
+    layout = QVBoxLayout(window)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(page)
+    window.show()
+    app.processEvents()
+    try:
+        assert len(page.chips) == 4
+        assert [chip.text() for chip in page.chips] == [
+            i18n.tr("mods.tab.mods"),
+            i18n.tr("mods.tab.modpacks"),
+            i18n.tr("mods.tab.resourcepacks"),
+            i18n.tr("mods.tab.shaderpacks"),
+        ]
+        before = {chip.text(): chip.geometry() for chip in page.chips}
+
+        combo = page.mods_tab.sort_combo
+        popup = _open(combo, app)
+        assert popup.isVisible()
+        assert not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        # The chip row must survive the dropdown: still four buttons, all visible, all in place.
+        chips = page.findChildren(QPushButton, "resourceChip")
+        assert len(chips) == 4
+        for chip in chips:
+            assert chip.isVisible(), f"category chip {chip.text()!r} disappeared"
+            assert chip.geometry() == before[chip.text()], (
+                f"category chip {chip.text()!r} moved while the sort dropdown was open"
+            )
+
+        # And the panel itself is below the field, not over it or over the chips.
+        combo_rect = QRect(combo.mapToGlobal(QPoint(0, 0)), combo.size())
+        popup_rect = QRect(popup.mapToGlobal(QPoint(0, 0)), popup.size())
+        assert not combo_rect.intersects(popup_rect)
+        assert popup_rect.top() >= combo_rect.bottom() + 1 - 2
+        assert popup_rect.width() >= combo_rect.width()
+
+        image = _render(popup)
+        min_alpha = min(
+            image.pixelColor(x, y).alpha()
+            for y in range(image.height())
+            for x in range(image.width())
+        )
+        assert min_alpha == 255, f"the sort popup is not opaque: min alpha {min_alpha}"
+        combo.hidePopup()
+    finally:
+        page.deleteLater()
+        window.close()
+        app.processEvents()
+
+
 def test_combo_popup_stylesheet_is_an_outlined_panel():
-    """Both sheets: BG_LIST fill, BORDER_LIST outline, square corners, soft selected row."""
+    """Both sheets: the list paints BG_LIST inside the container's outline, square corners."""
     for sheet in SHEETS:
         text = sheet.read_text(encoding="utf-8")
         start = text.index("QComboBox QAbstractItemView,")
         block = text[start : text.index("}", start)]
         assert "QListView#comboPopupList" in block, sheet.name
         assert "background: __BG_LIST__;" in block, sheet.name
-        assert "border: 1px solid __BORDER_LIST__;" in block, sheet.name
-        assert "border-top: none;" in block, sheet.name
+        # The container (gui/popup_shape.py) owns the 1px BORDER_LIST outline now. A second border
+        # on the list would paint a 2px edge, so the list rule must not carry one.
+        assert "border: none;" in block, sheet.name
+        assert "__BORDER_LIST__" not in block, sheet.name
         assert "border-radius: 0;" in block, sheet.name
         assert "padding: 0;" in block, sheet.name
         assert "__ACCENT_SEL__" not in block, sheet.name

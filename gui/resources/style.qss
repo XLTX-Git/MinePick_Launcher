@@ -427,26 +427,21 @@ QComboBox[comboDisabled="true"]::down-arrow {
     image: url(__CHEVRON_DOWN_DISABLED__);
 }
 /* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup). gui/popup_shape.py
-   makes that window translucent and frameless (keeping Qt::Popup, which is what closes it on an
-   outside click), clears the container's own frame, names the list comboPopupList and leaves Qt's
-   placement (flush under the field, the popup's top border sharing the field's bottom border). The
-   list below is then the only surface, so the pixels outside its 1px BORDER_LIST outline show the
-   page behind instead of a square window patch. The selector names the list explicitly as well as
-   through the combo descendant chain: the class form is what Qt's listbox popup uses, and the id
-   form survives any future wrapper between the combo and its view. The 4px list padding keeps the
-   viewport's square corners inside that outline. */
+   keeps it frameless (Qt::Popup is what closes it on an outside click) and makes the container an
+   opaque panel: BG_LIST fill, 1px BORDER_LIST outline, square corners, no top border so the field's
+   own bottom border is the seam. The list below paints the same BG_LIST inside that outline and
+   carries no border of its own, so the panel has exactly one 1px edge instead of two. The selector
+   names the list explicitly as well as through the combo descendant chain: the class form is what
+   Qt's listbox popup uses, and the id form survives any future wrapper between the combo and its
+   view. */
 QComboBox QAbstractItemView,
 QListView#comboPopupList {
-    /* The field's own outlined language, not a floating card: same BG_LIST fill, same 1px
-       BORDER_LIST, square corners, and the window sits flush under the field so the two outlines
-       read as one control extending downwards. Fill and radius/border live in this single rule:
-       Qt only rounds a fill painted by the rule that also declares the radius. */
+    /* The field's own outlined language, not a floating card: same BG_LIST fill, square corners, and
+       the window sits flush under the field so the two read as one control extending downwards. The
+       container in gui/popup_shape.py draws the outline; repeating it here would double the edge. */
     background: __BG_LIST__;
     color: __FG_TEXT__;
-    border: 1px solid __BORDER_LIST__;
-    /* The popup's top edge sits on the field's bottom border: leaving the top border off makes the
-       field's own line the seam, so the two read as one control instead of a 2px double rule. */
-    border-top: none;
+    border: none;
     border-radius: 0;
     /* No panel padding: the first row and its highlight start at the field's border, like PCL's
        menu. The 8px 12px item padding still insets the text. */

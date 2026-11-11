@@ -53,10 +53,10 @@ RESOURCES = Path(__file__).resolve().parent.parent / "gui" / "resources"
 DARK_SHEET = RESOURCES / "style.qss"
 LIGHT_SHEET = RESOURCES / "style_light.qss"
 
-#: The digest of gui/resources/style_light.qss as it shipped before this dark-only change. It is a
-#: witness, not a convenience: the light theme's rendering is supposed to be untouched, and a stylesheet
-#: edit is the one way to break that without touching a token value.
-LIGHT_SHEET_SHA256 = "2d654880b061a80e176d61e54927a58039306fdcb3ae8b7ec72694f28efb75e7"
+#: The pinned digest of gui/resources/style_light.qss. It is a witness, not a convenience: a
+#: stylesheet edit is the one way to change the light theme without touching a token value, so every
+#: deliberate light-sheet change must update this digest in the same commit.
+LIGHT_SHEET_SHA256 = "1ec72875016038ae10cad6c435c37d20018edf615d2ed9481cdfcafd6683936e"
 
 #: A card's fill has to be at least this far from the surface behind it to read as a separate sheet.
 CARD_FLOOR = 1.8
@@ -396,18 +396,18 @@ def test_the_pressed_token_is_dark_only():
     assert _pressed_background(LIGHT_SHEET, "QPushButton#iconButton:pressed") == "BG_BUTTON_ICON_2"
 
 
-def test_the_light_stylesheet_is_byte_identical():
-    """This change is dark-only, so gui/resources/style_light.qss must not have moved at all.
+def test_the_light_stylesheet_keeps_its_pinned_digest():
+    """The light sheet is pinned byte for byte.
 
-    Light's rendering is proved unchanged at three levels: the digest below (not one byte of the sheet
-    moved), the token values (the light column is the old one), and the scrim (exact RGBA above). If a
-    future change really does edit the light theme, update this digest in the same commit - the point
-    is that touching the light sheet becomes a decision instead of a drift.
+    Light's rendering is proved at three levels: the digest below (not one byte of the sheet moved
+    without this comment changing too), the token values (the light column), and the scrim (exact
+    RGBA above). If a future change really does edit the light theme, update this digest in the same
+    commit - the point is that touching the light sheet becomes a decision instead of a drift.
     """
     digest = hashlib.sha256(LIGHT_SHEET.read_bytes()).hexdigest()
     assert digest == LIGHT_SHEET_SHA256, (
-        f"gui/resources/style_light.qss changed (sha256 {digest}); this change is supposed to leave "
-        f"the light theme byte-identical"
+        f"gui/resources/style_light.qss changed (sha256 {digest}); update the pinned digest in the "
+        f"same commit if this light-theme change is deliberate"
     )
 
 

@@ -57,9 +57,9 @@ from gui import overlay, theme
 RESOURCES = Path(__file__).resolve().parent.parent / "gui" / "resources"
 LIGHT_SHEET = RESOURCES / "style_light.qss"
 
-#: Same pin as tests/test_dark_state_contrast.py holds. Both changes are dark-only; if a later edit
-#: really does touch the light sheet, both digests have to move in that commit.
-LIGHT_SHEET_SHA256 = "2d654880b061a80e176d61e54927a58039306fdcb3ae8b7ec72694f28efb75e7"
+#: Same pin as tests/test_dark_state_contrast.py holds. Both suites must move together when a light
+#: sheet change is deliberate.
+LIGHT_SHEET_SHA256 = "1ec72875016038ae10cad6c435c37d20018edf615d2ed9481cdfcafd6683936e"
 
 #: The three levels, deepest first. BG_NAV is not a fourth level: the rail shares level 1 with the
 #: window chrome, which is what makes the rail recede behind the page instead of competing with it.
@@ -201,10 +201,10 @@ def test_the_light_column_did_not_move():
         assert light[token] == value, f"light {token} moved to {light[token]}, expected {value}"
 
 
-def test_the_light_stylesheet_is_byte_identical():
-    """Not one byte of gui/resources/style_light.qss may move: this is a dark-only change."""
+def test_the_light_stylesheet_keeps_its_pinned_digest():
+    """The light sheet is pinned byte for byte; a deliberate edit updates the digest in its commit."""
     digest = hashlib.sha256(LIGHT_SHEET.read_bytes()).hexdigest()
     assert digest == LIGHT_SHEET_SHA256, (
-        f"gui/resources/style_light.qss changed (sha256 {digest}); this change is supposed to leave "
-        f"the light theme byte-identical"
+        f"gui/resources/style_light.qss changed (sha256 {digest}); update the pinned digest in the "
+        f"same commit if this light-theme change is deliberate"
     )

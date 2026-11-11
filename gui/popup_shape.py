@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""The combo popup: one outlined panel, flush under the field, with a softly marked current row.
+"""The combo popup: one opaque outlined panel, flush under the field, with a softly marked row.
 
 A QComboBox popup is a top-level ``QComboBoxPrivateContainer`` (a QFrame carrying ``Qt::Popup``),
 not a child of the combo. Fusion asks Qt for the *menu* flavour of that popup (``SH_ComboBox_Popup``
@@ -26,9 +26,17 @@ for every combo when it first appears:
 
 * :class:`_ComboPopupStyle` answers ``SH_ComboBox_Popup`` with 0, so Qt uses the ordinary listbox
   popup: flush below the field, rows from ``QComboBox QAbstractItemView``, no menu semantics;
-* the window is made frameless and translucent so the list's own outline is the whole panel, its
-  current entry is selected so exactly one row carries the soft highlight, and the list is named
-  ``comboPopupList`` for the explicit stylesheet rule.
+* the window is made frameless and **opaque**. The container itself paints the BG_LIST fill and the
+  1px BORDER_LIST outline (square corners, sharing the field's bottom border as its top edge), and
+  the list paints its own BG_LIST surface inside it. The current entry is selected so exactly one
+  row carries the soft highlight, and the list is named ``comboPopupList`` for the explicit
+  stylesheet rule.
+
+The container used to be a transparent window so a rounded list could be the whole panel. On the
+native Windows platform that left the panel's fill entirely to the list: wherever the platform's
+list painting did not cover the window, the page behind showed through, so the rows read as text
+floating with no surface under it. An opaque container is the conservative shape: even if a
+platform's list painting differs, the container behind it is already solid BG_LIST.
 
 ``Qt::Popup`` stays on the window, because that flag is what closes the dropdown when the user
 clicks somewhere else or presses Escape. This is a global, automatic hook: ``install()`` is called
@@ -39,6 +47,7 @@ combo that already exists when it is installed. No page has to touch its own com
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPoint, Qt
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -49,8 +58,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-#: Object name of the popup window. The stylesheet rule below uses it to clear the container's own
-#: frame fill without touching the list (also a QFrame subclass) inside it.
+#: Object name of the popup window. The stylesheet rule below uses it to paint the container's own
+#: opaque fill and outline, without touching the list (also a QFrame subclass) inside it.
 POPUP_OBJECT_NAME = "comboPopup"
 
 #: Object name of the popup's list. The sheet targets it explicitly as well as through the combo
@@ -66,9 +75,47 @@ POPUP_BORDER_OVERLAP = 1
 #: Marks a popup that this module already shaped, so repeated Show events cannot reset its flags.
 _SHAPED_PROPERTY = "comboPopupShaped"
 
+#: The token values the container was last painted with. A theme swap changes them, so the sheet is
+#: refreshed on the next show instead of keeping the colours of the theme it was first shaped under.
+_SURFACE_PROPERTY = "comboPopupSurface"
+
+
+def _apply_popup_surface(popup: QWidget) -> None:
+    """Paint the container itself: opaque BG_LIST, a 1px BORDER_LIST outline, square corners.
+
+    This is the part that makes the dropdown readable on the native platform. The old shape cleared
+    the container's fill and made the window translucent, trusting the list inside to be the whole
+    panel; when that trust was wrong the page showed through the dropdown. Now the container owns
+    an opaque fill of its own, and its top border stays off so the field's bottom border is the seam
+    between field and panel (the 1px nudge in :func:`place_combo_popup` keeps the two adjacent).
+    """
+    from gui.theme import current_tokens
+
+    tokens = current_tokens()
+    background = tokens.get("BG_LIST", "#ffffff")
+    border = tokens.get("BORDER_LIST", "#c9d2dc")
+    if popup.property(_SURFACE_PROPERTY) == (background, border):
+        return
+    popup.setStyleSheet(
+        f"QFrame#{POPUP_OBJECT_NAME} {{"
+        f" background: {background};"
+        f" border: 1px solid {border};"
+        f" border-top: none;"
+        f" border-radius: 0;"
+        f" }}"
+    )
+    # The window itself is not translucent, but a platform can still paint its own window colour in
+    # the frame's margin before the sheet runs. Filling from the palette too means those pixels are
+    # BG_LIST rather than the desktop's default window colour.
+    popup.setAutoFillBackground(True)
+    palette = popup.palette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(background))
+    popup.setPalette(palette)
+    popup.setProperty(_SURFACE_PROPERTY, (background, border))
+
 
 def shape_combo_popup(combo: QComboBox) -> QWidget | None:
-    """Give ``combo``'s popup a transparent, frameless window; return the popup (or None).
+    """Give ``combo``'s popup an opaque, frameless panel; return the popup (or None).
 
     Safe to call more than once and safe before the combo has ever been shown. The popup is created
     by ``view()`` on first use, so asking for it here does not show anything.
@@ -84,18 +131,18 @@ def shape_combo_popup(combo: QComboBox) -> QWidget | None:
     if popup.parentWidget() is not combo or not (popup.windowFlags() & Qt.WindowType.Popup):
         return None
     if popup.property(_SHAPED_PROPERTY):
+        # A theme swap may have changed BG_LIST/BORDER_LIST since the popup was first shaped.
+        _apply_popup_surface(popup)
         return popup
 
-    # The window's own fill is the square patch around the rounded list. Clearing the frame and
-    # asking for per-pixel alpha removes it; the QSS rule for the name is the belt to that braces
-    # (a QFrame subclass could otherwise paint a panel edge inside the window).
+    # The container paints its own opaque panel; the list inside paints its BG_LIST surface. Never
+    # ask for a translucent window here: on the native Windows platform it let the page behind a
+    # dropdown show through the panel (the text floated with no surface under it).
     popup.setObjectName(POPUP_OBJECT_NAME)
     if isinstance(popup, QFrame):
         popup.setFrameShape(QFrame.Shape.NoFrame)
-    popup.setAutoFillBackground(False)
-    popup.setStyleSheet(
-        f"QFrame#{POPUP_OBJECT_NAME} {{ background: transparent; border: none; }}"
-    )
+    popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+    popup.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
     # Keep Qt::Popup: it is the flag that closes the dropdown on an outside click or Escape. Only
     # the decorations are added. setWindowFlags() is called before the popup is first shown.
     popup.setWindowFlags(
@@ -103,7 +150,7 @@ def shape_combo_popup(combo: QComboBox) -> QWidget | None:
         | Qt.WindowType.FramelessWindowHint
         | Qt.WindowType.NoDropShadowWindowHint
     )
-    popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    _apply_popup_surface(popup)
     # Name the list explicitly for the sheet, and repolish so a selector on the new name applies
     # immediately (the combo descendant selector keeps working as the fallback in the same rule).
     view = combo.view()
@@ -116,7 +163,7 @@ def shape_combo_popup(combo: QComboBox) -> QWidget | None:
 
 
 def place_combo_popup(popup: QWidget) -> None:
-    """Prepare a shaped popup once Qt has shown it: select the current row.
+    """Prepare a shaped popup once Qt has shown it: repaint for the current theme, select the row.
 
     The panel deliberately keeps Qt's placement - flush under the field, its top border sharing
     the field's bottom border - so no geometry is changed here. What the listbox popup does not do
@@ -133,6 +180,9 @@ def place_combo_popup(popup: QWidget) -> None:
         return
     if view.window() is not popup:
         return
+    # The theme may have changed since the combo was first shown; refresh the container's colours
+    # before the panel becomes visible.
+    _apply_popup_surface(popup)
     # A listbox popup opens without a selected row (only the menu-style one marked the current
     # entry). Selecting it makes the open panel say which item the field already holds, and only
     # that row carries the highlight - never the whole panel.
