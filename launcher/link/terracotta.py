@@ -60,6 +60,7 @@ from launcher.link.components import (
     component_status,
     executable_path,
     install,
+    terminate_core_processes,
 )
 from launcher.link.components import remove as remove_component
 from launcher.link.easytier import probe_nat_types
@@ -829,10 +830,28 @@ class TerracottaLinkSession:
         raises :class:`~launcher.link.components.ComponentError` with the OS detail and leaves the
         state as it was - the page reports the reason and nothing pretends the core is gone.
         """
+        return self._remove_core(terminate=False)
+
+    def force_remove_core(self) -> int:
+        """End the running core, then delete it and return its size in bytes.
+
+        The explicit second attempt the page offers only after the user confirmed the warning:
+        a shared Terracotta process holds its executable open on Windows (``tools.disable.locked``),
+        so the files cannot be deleted until that process ends. If ending it fails, or the removal
+        is still refused afterwards, the error propagates and the state is left as it was - the page
+        reports the concrete reason instead of showing the onboarding page over a payload that is
+        still installed.
+        """
+        return self._remove_core(terminate=True)
+
+    def _remove_core(self, *, terminate: bool) -> int:
+        """Shared removal path; ``terminate`` is the one difference between the two promises."""
         with self._lock:
             if self._disposed:
                 return 0
         try:
+            if terminate:
+                terminate_core_processes()
             removed = remove_component()
         except ComponentError:
             with self._lock:

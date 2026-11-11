@@ -41,6 +41,7 @@ from launcher.link.components import (
     component_status,
     install,
     remove,
+    terminate_core_processes,
     verify_archive,
 )
 from tests.link_fakes import FakeMirror
@@ -339,8 +340,8 @@ def test_remove_of_a_missing_component_reports_zero(data_dir) -> None:
     assert remove() == 0, "a second call is still a no-op, not an error"
 
 
-def test_a_locked_payload_raises_with_the_os_reason(data_dir, monkeypatch) -> None:
-    """Windows refuses to delete a running executable: the page needs that reason verbatim."""
+def test_a_locked_payload_raises_the_locked_key_with_the_os_reason(data_dir, monkeypatch) -> None:
+    """Windows refuses to delete a running executable: a separate, solvable key is needed."""
     import shutil
 
     terracotta, _easytier = _installed_tree(data_dir)
@@ -349,13 +350,137 @@ def test_a_locked_payload_raises_with_the_os_reason(data_dir, monkeypatch) -> No
 
     def refuse(target, *args, **kwargs):
         if Path(target) == terracotta:
-            raise PermissionError(13, "The process cannot access the file", str(locked))
+            # The shape a real sharing violation has on Windows: errno 13 plus winerror 32.
+            raise PermissionError(13, "The process cannot access the file", str(locked), 32)
+        return real_rmtree(target, *args, **kwargs)
+
+    monkeypatch.setattr("launcher.link.components.shutil.rmtree", refuse)
+    with pytest.raises(ComponentError) as info:
+        remove()
+    assert info.value.key == "tools.disable.locked"
+    assert "terracotta-0.4.2-windows-x86_64.exe" in info.value.detail
+    assert "cannot access" in info.value.detail
+
+
+def test_another_removal_error_keeps_the_generic_key(data_dir, monkeypatch) -> None:
+    """A permission problem that ending a process cannot fix must not offer to end one."""
+    import shutil
+
+    terracotta, _easytier = _installed_tree(data_dir)
+    locked = terracotta / "terracotta-0.4.2-windows-x86_64.exe"
+    real_rmtree = shutil.rmtree
+
+    def refuse(target, *args, **kwargs):
+        if Path(target) == terracotta:
+            # No winerror: an ordinary denial, not ERROR_SHARING_VIOLATION.
+            raise PermissionError(13, "Access is denied", str(locked))
         return real_rmtree(target, *args, **kwargs)
 
     monkeypatch.setattr("launcher.link.components.shutil.rmtree", refuse)
     with pytest.raises(ComponentError) as info:
         remove()
     assert info.value.key == "tools.disable.fail"
-    assert "terracotta-0.4.2-windows-x86_64.exe" in info.value.detail
-    assert "cannot access" in info.value.detail
-    assert not (component_dir() / "terracotta-test.exe").exists()
+
+
+class _TaskkillResult:
+    """The tiny part of ``subprocess.CompletedProcess`` the implementation reads."""
+
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_terminate_core_processes_ends_the_installed_executable(data_dir, monkeypatch) -> None:
+    """The image name comes from the component directory, and taskkill gets it verbatim."""
+    from launcher.link import components as components_module
+
+    terracotta, _easytier = _installed_tree(data_dir)
+    executable = "terracotta-0.4.2-windows-x86_64.exe"
+    calls: list[list[str]] = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return _TaskkillResult(
+            stdout=(
+                f'SUCCESS: The process "{executable}" with PID 101 has been terminated.\n'
+                f'SUCCESS: The process "{executable}" with PID 202 has been terminated.\n'
+            )
+        )
+
+    monkeypatch.setattr(components_module.sys, "platform", "win32")
+    monkeypatch.setattr(components_module.subprocess, "run", run)
+    assert terminate_core_processes() == 2
+    assert calls == [["taskkill", "/F", "/IM", executable]]
+    assert terracotta.is_dir(), "ending the process must not touch the files"
+
+
+def test_terminate_core_processes_without_an_executable_calls_taskkill_never(
+    data_dir, monkeypatch
+) -> None:
+    from launcher.link import components as components_module
+
+    component = data_dir / "components" / "terracotta"
+    component.mkdir(parents=True)
+    (component / "installed.json").write_text('{"version": "0.4.2"}', encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(components_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        components_module.subprocess,
+        "run",
+        lambda command, **_kwargs: calls.append(command),
+    )
+    assert terminate_core_processes() == 0
+    assert calls == [], "there is no image name to end, so no process command may run"
+
+
+def test_terminate_core_processes_is_a_noop_off_windows(data_dir, monkeypatch) -> None:
+    from launcher.link import components as components_module
+
+    _installed_tree(data_dir)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(components_module.sys, "platform", "linux")
+    monkeypatch.setattr(
+        components_module.subprocess,
+        "run",
+        lambda command, **_kwargs: calls.append(command),
+    )
+    assert terminate_core_processes() == 0
+    assert calls == []
+
+
+def test_taskkill_reporting_no_process_is_zero_not_an_error(data_dir, monkeypatch) -> None:
+    """A service that already exited also leaves the file free: nothing to end is not a failure."""
+    from launcher.link import components as components_module
+
+    _installed_tree(data_dir)
+    monkeypatch.setattr(components_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        components_module.subprocess,
+        "run",
+        lambda _command, **_kwargs: _TaskkillResult(
+            returncode=128,
+            stdout='ERROR: The process "terracotta-0.4.2-windows-x86_64.exe" not found.\n',
+        ),
+    )
+    assert terminate_core_processes() == 0
+
+
+def test_a_failed_taskkill_is_reported_with_its_reason(data_dir, monkeypatch) -> None:
+    """If the process cannot be ended, the page has to say so instead of silently retrying."""
+    from launcher.link import components as components_module
+
+    _installed_tree(data_dir)
+    monkeypatch.setattr(components_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        components_module.subprocess,
+        "run",
+        lambda _command, **_kwargs: _TaskkillResult(
+            returncode=1, stderr="ERROR: Access is denied.\n"
+        ),
+    )
+    with pytest.raises(ComponentError) as info:
+        terminate_core_processes()
+    assert info.value.key == "tools.disable.fail"
+    assert "Access is denied" in info.value.detail
+

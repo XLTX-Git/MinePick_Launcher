@@ -42,6 +42,7 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import tarfile
 import threading
@@ -69,6 +70,10 @@ STAGING_PREFIX = ".staging-"
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
 MAX_EXTRACT_BYTES = 64 * 1024 * 1024
 CHUNK = 64 * 1024
+#: Windows ``ERROR_SHARING_VIOLATION``: another process holds the file open without delete sharing.
+WINDOWS_SHARING_VIOLATION = 32
+#: ``taskkill``'s "no process with that image name" exit code. Nothing to end is not a failure.
+TASKKILL_NOT_FOUND = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +179,11 @@ def remove() -> int:
     be removed - on Windows a running Terracotta keeps its own executable open, and that reason has
     to reach the user instead of being swallowed. A missing directory is not an error: it simply
     means there was nothing left to delete, and the byte count is 0.
+
+    A sharing violation gets its own key (``tools.disable.locked``) because it is the one removal
+    failure the user can solve from the page: end the process and try again. Every other OS error
+    keeps ``tools.disable.fail``; offering the stronger action for a permission problem that killing
+    a process cannot fix would only invite a second failure.
     """
     target = component_dir()
     if not target.is_dir():
@@ -182,8 +192,110 @@ def remove() -> int:
     try:
         shutil.rmtree(target)
     except OSError as exc:
-        raise ComponentError("tools.disable.fail", _describe_os_error(target, exc)) from exc
+        key = "tools.disable.locked" if _is_sharing_violation(exc) else "tools.disable.fail"
+        raise ComponentError(key, _describe_os_error(target, exc)) from exc
     return size
+
+
+def terminate_core_processes() -> int:
+    """End every process running the component's executable(s); return how many were ended.
+
+    This is the second, explicitly confirmed half of 停用联机功能. It is deliberately narrow:
+
+    * only ``*.exe`` files that actually sit directly in :func:`component_dir` are considered, so
+      the image name is whatever this installation contains rather than a version constant;
+    * the name is passed to ``taskkill`` as one exact ``/IM`` argument (never a wildcard, never a
+      path), because ``taskkill`` treats ``*`` in that argument as "every process";
+    * no ``/T``: a process's children are not this launcher's to kill.
+
+    A process started from another copy of the same Terracotta build shares the image name and is
+    ended too - the confirmation dialog says so, because that is also the case where another
+    launcher's room disconnects.
+
+    ``taskkill`` reporting "no process found" is success with 0 ended, not an error: the file may
+    already be free. A real failure (``taskkill`` missing, access denied, another exit code) raises
+    :class:`ComponentError` with ``tools.disable.fail`` so the page can report it. A subsequent
+    removal that is still locked raises ``tools.disable.locked`` again; nothing is swallowed.
+
+    Non-Windows returns 0: the verified payload is Windows-only, and there is no equivalent
+    portable way to end "the process for this exact executable" without adding a dependency.
+    """
+    if sys.platform != "win32":
+        return 0
+    names = _core_executable_names()
+    if not names:
+        return 0
+    terminated = 0
+    failures: list[str] = []
+    for name in names:
+        try:
+            result = _taskkill(name)
+        except OSError as exc:
+            failures.append(f"{name}: {exc.strerror or exc}")
+            continue
+        terminated += _terminated_count(result.stdout)
+        if result.returncode not in (0, TASKKILL_NOT_FOUND):
+            output = (result.stderr or result.stdout or "").strip().splitlines()
+            reason = output[-1] if output else f"taskkill exited {result.returncode}"
+            failures.append(f"{name}: {reason}")
+    if failures:
+        raise ComponentError("tools.disable.fail", "; ".join(failures))
+    return terminated
+
+
+def _is_sharing_violation(exc: OSError) -> bool:
+    """Whether ``exc`` is Windows' "file is in use" error rather than an ordinary denial.
+
+    ``shutil.rmtree`` propagates the error from ``DeleteFile`` unchanged: on Windows that is a
+    :class:`PermissionError` whose ``winerror`` is 32 (``ERROR_SHARING_VIOLATION``), while a plain
+    read-only/permission failure has no ``winerror`` or a different one.
+    """
+    return getattr(exc, "winerror", None) == WINDOWS_SHARING_VIOLATION
+
+
+def _core_executable_names() -> tuple[str, ...]:
+    """The executable basenames present directly in the component directory, sorted."""
+    directory = component_dir()
+    try:
+        entries = list(directory.glob("*.exe"))
+    except OSError:
+        return ()
+    names: list[str] = []
+    for entry in entries:
+        try:
+            if entry.is_symlink() or not entry.is_file():
+                continue
+        except OSError:
+            continue
+        name = entry.name
+        # The value goes into a taskkill argument: an image name is a basename, never a pattern.
+        if name != os.path.basename(name) or "*" in name or "?" in name:
+            continue
+        names.append(name)
+    return tuple(sorted(names))
+
+
+def _taskkill(name: str) -> subprocess.CompletedProcess[str]:
+    """Run ``taskkill /F /IM <name>`` without opening a console window on a GUI process."""
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.run(
+        ["taskkill", "/F", "/IM", name],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+        creationflags=creationflags,
+    )
+
+
+def _terminated_count(stdout: str | None) -> int:
+    """Count the process lines ``taskkill`` printed.
+
+    The message is localized, but every locale keeps the ``PID`` field, so counting lines that
+    carry it is what works on a Chinese, Japanese or English Windows alike. A "not found" answer
+    has no PID line and therefore counts as 0.
+    """
+    return sum(1 for line in (stdout or "").splitlines() if "PID" in line.upper())
 
 
 def _tree_size(root: Path) -> int:

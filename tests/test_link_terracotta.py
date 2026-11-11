@@ -581,3 +581,84 @@ def test_a_failed_removal_keeps_the_state_and_raises_the_reason(fake, session_fa
     # Still installed and still idle: a failed cleanup may not fake the onboarding state.
     assert session.state() is LinkState.IDLE
     assert session.component_status().downloaded
+
+
+def test_force_remove_core_ends_the_core_before_deleting_it(fake, session_factory, monkeypatch):
+    """The confirmed second attempt: terminate first, then delete, then onboarding."""
+    fake.set_state("waiting")
+    session = session_factory(fake)
+    assert wait_until(lambda: session.state() is LinkState.IDLE)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "launcher.link.terracotta.terminate_core_processes",
+        lambda: calls.append("terminate") or 1,
+    )
+
+    def remove() -> int:
+        calls.append("remove")
+        return 4096
+
+    monkeypatch.setattr("launcher.link.terracotta.remove_component", remove)
+    assert session.force_remove_core() == 4096
+    assert calls == ["terminate", "remove"], "the executable is only free after the process ends"
+    assert session.state() is LinkState.NOT_DOWNLOADED
+
+
+def test_remove_core_never_ends_a_process(fake, session_factory, monkeypatch):
+    """The plain path stays a file operation: no process is touched without the confirmation."""
+    fake.set_state("waiting")
+    session = session_factory(fake)
+    assert wait_until(lambda: session.state() is LinkState.IDLE)
+
+    def unexpected() -> int:
+        raise AssertionError("remove_core must not end processes")
+
+    monkeypatch.setattr("launcher.link.terracotta.terminate_core_processes", unexpected)
+    monkeypatch.setattr("launcher.link.terracotta.remove_component", lambda: 2048)
+    assert session.remove_core() == 2048
+    assert session.state() is LinkState.NOT_DOWNLOADED
+
+
+def test_force_remove_core_keeps_the_state_when_the_delete_still_fails(
+    fake, session_factory, monkeypatch
+):
+    fake.set_state("waiting")
+    session = session_factory(fake)
+    assert wait_until(lambda: session.state() is LinkState.IDLE)
+    monkeypatch.setattr(
+        "launcher.link.terracotta.terminate_core_processes", lambda: 1
+    )
+
+    def refuse() -> int:
+        raise ComponentError("tools.disable.locked", "terracotta.exe: still in use")
+
+    monkeypatch.setattr("launcher.link.terracotta.remove_component", refuse)
+    with pytest.raises(ComponentError) as info:
+        session.force_remove_core()
+    assert info.value.key == "tools.disable.locked"
+    assert session.state() is LinkState.IDLE
+    assert session.component_status().downloaded, "the payload is still there, so the state stays"
+
+
+def test_force_remove_core_reports_a_failed_terminate_and_does_not_delete(
+    fake, session_factory, monkeypatch
+):
+    fake.set_state("waiting")
+    session = session_factory(fake)
+    assert wait_until(lambda: session.state() is LinkState.IDLE)
+
+    def fail() -> int:
+        raise ComponentError("tools.disable.fail", "taskkill: access denied")
+
+    monkeypatch.setattr("launcher.link.terracotta.terminate_core_processes", fail)
+    monkeypatch.setattr(
+        "launcher.link.terracotta.remove_component",
+        lambda: (_ for _ in ()).throw(AssertionError("must not delete after a failed terminate")),
+    )
+    with pytest.raises(ComponentError) as info:
+        session.force_remove_core()
+    assert info.value.key == "tools.disable.fail"
+    assert info.value.detail == "taskkill: access denied"
+    assert session.state() is LinkState.IDLE
+

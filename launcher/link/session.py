@@ -163,6 +163,14 @@ class LinkSession(Protocol):
         instead of pretending the component disappeared.
         """
 
+    def force_remove_core(self) -> int:
+        """End the running core, then delete it, and return the bytes removed.
+
+        This is the explicitly confirmed second attempt after :meth:`remove_core` raised the
+        "component is running" key. It is a separate method instead of a flag so the page cannot
+        end a process without that confirmation. A failure leaves the state as it was.
+        """
+
     def add_listener(self, listener: Listener) -> Callable[[], None]:
         """Subscribe to state changes; the return value unsubscribes."""
 
@@ -303,6 +311,17 @@ class FakeLinkSession:
         Deliberately no disk I/O: a page test that clicks 停用联机功能 must never delete the machine's
         real ``components/terracotta``. The end-to-end deletion is proved by the real backend and by
         tests that point ``MCLAUNCHER_DATA_DIR`` at a temporary tree.
+        """
+        removed = self._removed_bytes
+        self._reset(LinkState.NOT_DOWNLOADED)
+        return removed
+
+    def force_remove_core(self) -> int:
+        """The confirmed "end the core and delete it" path, still memory-only.
+
+        Like :meth:`remove_core`, this fake ends no process and deletes no file: it only moves its
+        own state to ``NOT_DOWNLOADED``. A page test therefore drives the exact product flow without
+        risking the developer's running Terracotta or the real component directory.
         """
         removed = self._removed_bytes
         self._reset(LinkState.NOT_DOWNLOADED)
