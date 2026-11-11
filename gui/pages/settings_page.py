@@ -45,7 +45,13 @@ from PySide6.QtWidgets import (
 )
 
 from gui import i18n, inwindow_dialog
-from gui.theme import DEFAULT_ACCENTS, accent_focus_ring, normalize_hex, resolve_theme
+from gui.theme import (
+    DEFAULT_ACCENTS,
+    accent_focus_ring,
+    normalize_hex,
+    resolve_theme,
+    theme_palette,
+)
 from gui.view_state import STATE_FILENAME
 from gui.widgets import (
     AccessibilityPreferenceGroup,
@@ -466,6 +472,34 @@ class SettingsPage(QWidget):
         ]
         self.accent_edit.textChanged.connect(self._update_accent_swatch)
 
+        # Title bar color: the accent row's shape - a 22px preview, a hex field whose placeholder is
+        # the theme's own title-bar colour, a reset and the system picker.
+        self.title_bar_swatch = QLabel()
+        self.title_bar_swatch.setFixedSize(22, 22)
+        # The two 22px previews share the existing QSS swatch rule (same border/radius) without
+        # touching either stylesheet: the rule is addressed by this object name.
+        self.title_bar_swatch.setObjectName("accentSwatch")
+        self.title_bar_swatch.setToolTip(tr("settings.title_bar.hint"))
+        self.title_bar_edit = QLineEdit()
+        self.title_bar_edit.setPlaceholderText(
+            theme_palette(resolve_theme(self.theme_combo.currentData() or "dark"))["BG_TOPBAR"]
+        )
+        self.title_bar_edit.setMaxLength(7)
+        self.title_bar_edit.setToolTip(tr("settings.title_bar.hint"))
+        self.title_bar_default_button = QPushButton(tr("settings.title_bar.default"))
+        self.title_bar_default_button.setObjectName("secondaryButton")
+        self.title_bar_default_button.setAccessibleName(
+            tr("settings.title_bar") + " · " + tr("settings.title_bar.default")
+        )
+        self.title_bar_default_button.clicked.connect(lambda: self.title_bar_edit.setText(""))
+        self.title_bar_pick_button = QPushButton(tr("settings.title_bar.pick"))
+        self.title_bar_pick_button.setObjectName("secondaryButton")
+        self.title_bar_pick_button.setAccessibleName(
+            tr("settings.title_bar") + " · " + tr("settings.title_bar.pick")
+        )
+        self.title_bar_pick_button.clicked.connect(self._pick_title_bar_color)
+        self.title_bar_edit.textChanged.connect(self._update_title_bar_swatch)
+
         # UI font: common families first, then every installed family; typing filters the list.
         # The combo is usable from the first frame - the default plus the configured family - and the
         # full installed list arrives from a worker (see _start_font_fill). Building the page must
@@ -487,6 +521,8 @@ class SettingsPage(QWidget):
         # so they reach UIA on every platform and survive a row being restructured later. The folder
         # rows are a container of buttons now; each button carries its folder's name explicitly.
         self.accent_edit.setAccessibleName(tr("settings.accent"))  # WCAG 4.1.2
+        self.title_bar_edit.setAccessibleName(tr("settings.title_bar"))  # WCAG 4.1.2
+        self.title_bar_edit.setAccessibleDescription(tr("settings.title_bar.hint"))
         java_row = QHBoxLayout()
         java_row.addWidget(self.java_path_edit, 1)
         java_row.addWidget(self.browse_java)
@@ -518,6 +554,12 @@ class SettingsPage(QWidget):
             preset_row.addWidget(button)
         preset_row.addStretch(1)
         form.addRow("", preset_row)
+        title_bar_row = QHBoxLayout()
+        title_bar_row.addWidget(self.title_bar_swatch)
+        title_bar_row.addWidget(self.title_bar_edit, 1)
+        title_bar_row.addWidget(self.title_bar_default_button)
+        title_bar_row.addWidget(self.title_bar_pick_button)
+        form.addRow(tr("settings.title_bar"), title_bar_row)
         form.addRow(tr("settings.radius"), self.radius_combo)
         form.addRow(tr("settings.font"), self.font_combo)
         form.addRow(tr("settings.game_language"), self.language_combo)
@@ -568,6 +610,7 @@ class SettingsPage(QWidget):
         self.encrypt_button.clicked.connect(self._change_password)
         self.open_data_dir_button.clicked.connect(self._open_data_dir)
         self.theme_combo.currentIndexChanged.connect(self._update_accent_swatch)
+        self.theme_combo.currentIndexChanged.connect(self._update_title_bar_swatch)
         self._reserve_memory_value_width()
         self.load()
         self._connect_autosave()
@@ -639,12 +682,14 @@ class SettingsPage(QWidget):
             self.proxy_edit,
             self.cf_key_edit,
             self.accent_edit,
+            self.title_bar_edit,
         ):
             on_change(edit.editingFinished)
         font_line = self.font_combo.lineEdit()
         if font_line is not None:
             on_change(font_line.editingFinished)
         self.accent_default_button.clicked.connect(lambda *_: self.save())
+        self.title_bar_default_button.clicked.connect(lambda *_: self.save())
         # Drag updates the read-out on every step but writes once, on release; a keyboard step
         # (not sliderDown) still saves immediately, like every other control on the page.
         self.memory_slider.valueChanged.connect(self._on_memory_slider_changed)
@@ -736,6 +781,7 @@ class SettingsPage(QWidget):
             self.proxy_edit,
             self.cf_key_edit,
             self.accent_edit,
+            self.title_bar_edit,
             self.concurrency_spin,
             self.download_segments_spin,
             self.speed_limit_spin,
@@ -816,6 +862,8 @@ class SettingsPage(QWidget):
         self.radius_combo.setCurrentIndex(max(index5, 0))
         self.accent_edit.setText(cfg.accent_color or "")
         self._update_accent_swatch()
+        self.title_bar_edit.setText(cfg.title_bar_color or "")
+        self._update_title_bar_swatch()
         font_index = self.font_combo.findData(cfg.ui_font or "")
         if font_index >= 0:
             self.font_combo.setCurrentIndex(font_index)
@@ -916,6 +964,33 @@ class SettingsPage(QWidget):
         # only the fill is set here: the outline comes from the theme's QSS
         self.accent_swatch.setStyleSheet(f"background: {color};")
 
+    def _set_title_bar_color(self, color: str) -> None:
+        self.title_bar_edit.setText(color)
+        self.save()
+
+    def _pick_title_bar_color(self) -> None:
+        """System colour picker for the title bar."""
+        from PySide6.QtGui import QColor
+
+        theme = resolve_theme(self.theme_combo.currentData() or "dark")
+        fallback = theme_palette(theme)["BG_TOPBAR"]
+        current = QColor(normalize_hex(self.title_bar_edit.text()) or fallback)
+        chosen = QColorDialog.getColor(current, self, tr("settings.title_bar"))
+        if chosen.isValid():
+            self._set_title_bar_color(chosen.name())
+
+    def _update_title_bar_swatch(self) -> None:
+        """Show the typed colour, or the theme's bar colour when the field follows the theme.
+
+        The placeholder is the current theme's own default, so "empty" reads as a concrete colour
+        rather than as a word that would have to name a colour it does not show.
+        """
+        theme = resolve_theme(self.theme_combo.currentData() or "dark")
+        fallback = theme_palette(theme)["BG_TOPBAR"]
+        color = normalize_hex(self.title_bar_edit.text())
+        self.title_bar_edit.setPlaceholderText(fallback)
+        self.title_bar_swatch.setStyleSheet(f"background: {color or fallback};")
+
     def _selected_font(self) -> str:
         """Chosen font family: the picked list entry, or whatever the user typed."""
         index = self.font_combo.currentIndex()
@@ -962,6 +1037,14 @@ class SettingsPage(QWidget):
         if accent_input and accent is None:
             self.accent_edit.setText("")  # invalid input: fall back to the theme default
         cfg.accent_color = accent or ""
+        title_bar_input = self.title_bar_edit.text().strip()
+        title_bar = normalize_hex(title_bar_input)
+        title_bar_invalid = bool(title_bar_input and title_bar is None)
+        if not title_bar_invalid:
+            cfg.title_bar_color = title_bar or ""
+        # An invalid title-bar value is deliberately *not* written: the field keeps the text the user
+        # typed and the previous stored colour stays in force, unlike the accent row which resets to
+        # its theme default. Nothing here can raise on that path.
         cfg.ui_font = self._selected_font()
         config.save(cfg, cfg_path)
         # The online-recognition switch takes effect immediately: the worker checks it before its
@@ -969,10 +1052,17 @@ class SettingsPage(QWidget):
         self._write_online_identity(self.online_identity_check.isChecked())
         identity.set_enabled(self.online_identity_check.isChecked())
         self._update_accent_swatch()
-        # Theme, accent color and UI font take effect immediately
+        self._update_title_bar_swatch()
+        # Theme, accent color, title bar color and UI font take effect immediately
         from gui.theme import apply_theme
 
-        apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+        apply_theme(
+            cfg.theme,
+            cfg.accent_color,
+            cfg.ui_font,
+            cfg.ui_radius,
+            cfg.title_bar_color,
+        )
         # Proxy / CurseForge key changes need a fresh HTTP connection pool
         from launcher.meta.manifest import reset_http_client
 
@@ -981,7 +1071,9 @@ class SettingsPage(QWidget):
         self._update_encrypt_button()
         set_app_status(
             self,
-            tr("settings.accent.invalid")
+            tr("settings.title_bar.invalid")
+            if title_bar_invalid
+            else tr("settings.accent.invalid")
             if (accent_input and accent is None)
             else tr("settings.autosave"),
         )
