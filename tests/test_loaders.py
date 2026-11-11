@@ -94,7 +94,7 @@ def test_forge_versions():
 @respx.mock
 def test_neoforge_versions():
     respx.get(
-        "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+        "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml"
     ).mock(return_value=httpx.Response(200, text=NEOFORGE_XML))
     v1202 = list_loader_versions("neoforge", "1.20.2")
     assert [v.version for v in v1202] == ["20.2.88", "20.2.86"]
@@ -104,9 +104,65 @@ def test_neoforge_versions():
 
 
 @respx.mock
-def test_neoforge_game_versions():
+@respx.mock
+def test_neoforge_falls_back_to_the_official_host():
+    """The mirror is asked first; when it is down the official maven still answers.
+
+    ``maven.neoforged.net`` is unreachable from mainland China, which is why the mirror leads - but a
+    mirror outage must not turn into a version page that cannot work at all.
+    """
+    respx.get(
+        "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml"
+    ).mock(side_effect=httpx.ConnectError("mirror down"))
     respx.get(
         "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+    ).mock(return_value=httpx.Response(200, text=NEOFORGE_XML))
+
+    versions = list_loader_versions("neoforge", "1.20.2")
+
+    assert versions
+    assert all(
+        item.installer_url.startswith(
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge/"
+        )
+        for item in versions
+    ), "the jar has to come from the host that answered"
+
+
+@respx.mock
+def test_neoforge_installer_url_follows_the_mirror():
+    """When the mirror answers, the installer comes from the mirror too - not from the dead host."""
+    respx.get(
+        "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml"
+    ).mock(return_value=httpx.Response(200, text=NEOFORGE_XML))
+
+    versions = list_loader_versions("neoforge", "1.20.2")
+
+    assert versions
+    assert all(
+        item.installer_url.startswith(
+            "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/"
+        )
+        for item in versions
+    )
+
+
+@respx.mock
+def test_neoforge_reports_when_both_hosts_fail():
+    """Both down is an error the page can show, not an empty list."""
+    for url in (
+        "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml",
+        "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml",
+    ):
+        respx.get(url).mock(side_effect=httpx.ConnectError("down"))
+
+    with pytest.raises(ModsError):
+        list_loader_versions("neoforge", "1.20.2")
+
+
+def test_neoforge_game_versions():
+    respx.get(
+        "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml"
     ).mock(return_value=httpx.Response(200, text=NEOFORGE_XML))
     games = list_game_versions("neoforge")
     assert "1.20.2" in games

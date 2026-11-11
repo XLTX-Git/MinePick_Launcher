@@ -35,7 +35,14 @@ FORGE_MAVEN_BASE = "https://maven.minecraftforge.net/net/minecraftforge/forge/"
 NEOFORGE_METADATA_URL = (
     "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
 )
+#: BMCLAPI mirrors the NeoForge maven. ``maven.neoforged.net`` answers in 0.4s or not at all: from
+#: mainland China the TCP connect simply times out (measured: 42s, twice), which is what made the
+#: version page report 查询失败 while Forge and Fabric were fine.
+NEOFORGE_MIRROR_METADATA_URL = (
+    "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml"
+)
 NEOFORGE_MAVEN_BASE = "https://maven.neoforged.net/releases/net/neoforged/neoforge/"
+NEOFORGE_MIRROR_MAVEN_BASE = "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/"
 
 LOADERS = ("fabric", "forge", "neoforge")
 
@@ -73,12 +80,31 @@ def _get_json(url: str, client: httpx.Client | None) -> list | dict:
             client.close()
 
 
-def _get_text(url: str, client: httpx.Client | None) -> str:
+def _get_text_from_any(sources: list[tuple[str, str]], client: httpx.Client | None) -> tuple[str, str]:
+    """First source that answers, as ``(text, base)``; :class:`ModsError` when every one fails.
+
+    ``sources`` are ``(metadata_url, maven_base)`` pairs so the caller learns which host answered:
+    the installer jar has to come from the same place as the metadata that named it.
+    """
+    last: Exception | None = None
+    for url, base in sources:
+        try:
+            # A dead host shows up as a connect timeout, and httpx's default is generous. Six seconds
+            # is long enough for a slow but alive host and short enough that the mirror is reached
+            # before the user concludes the page is broken.
+            return _get_text(url, client, timeout=6.0), base
+        except ModsError as exc:
+            last = exc
+    assert last is not None
+    raise last
+
+
+def _get_text(url: str, client: httpx.Client | None, *, timeout: float | None = None) -> str:
     own = client is None
     if own:
         client = _new_client()
     try:
-        resp = client.get(url)
+        resp = client.get(url, timeout=timeout) if timeout is not None else client.get(url)
         resp.raise_for_status()
         return resp.text
     except httpx.HTTPError as exc:
@@ -160,7 +186,14 @@ def _neoforge_base(game_version: str) -> str:
 def _neoforge_versions(
     game_version: str, client: httpx.Client | None
 ) -> list[LoaderVersion]:
-    xml_text = _get_text(NEOFORGE_METADATA_URL, client)
+    xml_text, maven_base = _get_text_from_any(
+        [
+            # Mirror first, for the reason spelled out in ``list_game_versions`` below.
+            (NEOFORGE_MIRROR_METADATA_URL, NEOFORGE_MIRROR_MAVEN_BASE),
+            (NEOFORGE_METADATA_URL, NEOFORGE_MAVEN_BASE),
+        ],
+        client,
+    )
     root = ET.fromstring(xml_text)
     base = _neoforge_base(game_version)
     versions = [
@@ -180,8 +213,7 @@ def _neoforge_versions(
                 game_version=game_version,
                 stable=True,
                 installer_url=(
-                    NEOFORGE_MAVEN_BASE + version + "/neoforge-" + version
-                    + "-installer.jar"
+                    maven_base + version + "/neoforge-" + version + "-installer.jar"
                 ),
             )
         )
@@ -212,7 +244,16 @@ def list_game_versions(loader: str, *, client: httpx.Client | None = None) -> li
         versions = sorted({key.rsplit("-", 1)[0] for key in promos})
         return list(reversed(versions))
     if loader == "neoforge":
-        xml_text = _get_text(NEOFORGE_METADATA_URL, client)
+        xml_text, _maven_base = _get_text_from_any(
+            [
+                # Mirror first: maven.neoforged.net is unreachable from mainland China (TCP connect
+                # times out), and paying that timeout before every version list is 6s the user spends
+                # staring at 查询中. The official host stays as the fallback for everywhere else.
+                (NEOFORGE_MIRROR_METADATA_URL, NEOFORGE_MIRROR_MAVEN_BASE),
+                (NEOFORGE_METADATA_URL, NEOFORGE_MAVEN_BASE),
+            ],
+            client,
+        )
         root = ET.fromstring(xml_text)
         bases: set[str] = set()
         for node in root.findall(".//version"):
