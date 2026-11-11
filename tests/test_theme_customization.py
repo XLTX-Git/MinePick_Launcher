@@ -138,17 +138,43 @@ def test_system_theme_resolves_to_a_concrete_theme() -> None:
     assert theme.resolve_theme("system") in ("dark", "light")
 
 
-def test_accent_preset_buttons_apply_colour(app, monkeypatch, ws_tmp) -> None:
-    """Clicking a preset swatch writes that colour into the config."""
+def test_the_preset_swatch_grid_is_gone(app, monkeypatch, ws_tmp) -> None:
+    """The colour dialog already has preset grids; the page must not draw a second one."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_presets"))
+    from PySide6.QtCore import QPoint
+
     from gui.main_window import MainWindow
-    from gui.pages import settings_page as settings_module
-    from launcher import config as config_mod
 
     window = MainWindow()
     page = window.pages["settings"]
-    assert len(page.accent_preset_buttons) == len(settings_module.ACCENT_PRESETS)
-    page.accent_preset_buttons[1].click()
-    cfg, _ = config_mod.load()
-    assert cfg.accent_color == settings_module.ACCENT_PRESETS[1].lower()
+    assert not hasattr(page, "accent_preset_buttons")
+    assert not hasattr(page, "title_bar_preset_buttons")
+    # Both colour rows keep the same shape and order: field, preview swatch, reset, picker.
+    accent = [
+        page.accent_edit,
+        page.accent_swatch,
+        page.accent_default_button,
+        page.accent_pick_button,
+    ]
+    title = [
+        page.title_bar_edit,
+        page.title_bar_swatch,
+        page.title_bar_default_button,
+        page.title_bar_pick_button,
+    ]
+    for good, bad in zip(accent, title):
+        assert type(good) is type(bad)
+    assert page.accent_default_button.text() == page.title_bar_default_button.text()
+    assert page.accent_pick_button.text() == page.title_bar_pick_button.text()
+
+    # Same grid: every corresponding control has the same x and width once the page is laid out.
+    window.resize(1000, 610)
+    window.show()
+    for _ in range(6):
+        app.processEvents()
+    for left, right in zip(accent, title):
+        left_x = left.mapTo(page, QPoint(0, 0)).x()
+        right_x = right.mapTo(page, QPoint(0, 0)).x()
+        assert left_x == right_x, f"{type(left).__name__} is not on the shared grid"
+        assert left.width() == right.width()
     window.close()

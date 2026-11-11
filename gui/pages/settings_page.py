@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
@@ -47,7 +47,6 @@ from PySide6.QtWidgets import (
 from gui import i18n, inwindow_dialog
 from gui.theme import (
     DEFAULT_ACCENTS,
-    accent_focus_ring,
     normalize_hex,
     resolve_theme,
     theme_palette,
@@ -68,7 +67,10 @@ from launcher.mods import identity
 
 tr = i18n.tr
 
-# One-click accent colours offered next to the hex field
+#: Accent shades the contrast/readability tests sweep. The settings page no longer draws a preset
+#: grid: the system colour dialog already carries one, and the duplicated row both repeated it and
+#: collided with the next form row. The tuple stays as the representative shade list for the colour
+#: math tests, which have nothing to do with a widget.
 ACCENT_PRESETS = ("#35a06a", "#3b82f6", "#a855f7", "#e0703a", "#e05a5a", "#14b8a6", "#ec4899", "#f59e0b")
 
 # PCL's settings metrics scaled to this window, tightened one more step: this window is 1000px
@@ -79,6 +81,43 @@ ACCENT_PRESETS = ("#35a06a", "#3b82f6", "#a855f7", "#e0703a", "#e05a5a", "#14b8a
 FIELD_HEIGHT = 32
 FIELD_LABEL_WIDTH = 216
 ROW_SPACING = 6
+
+
+def split_label_hint(text: str) -> tuple[str, str]:
+    """Split a field label from the explanation some languages put in brackets.
+
+    A form label names the field; the explanation belongs under it (same 12px hint row as the
+    download-segments / resource-source fields). Returning the two halves at runtime keeps every
+    language table's key and value untouched: ``"Java 路径（留空自动探测）"`` becomes the label
+    ``"Java 路径"`` and the hint ``"留空自动探测"``, with the brackets gone. Both the full-width
+    CJK forms and ASCII parentheses are recognised; a label without any is returned unchanged.
+    """
+    for opening, closing in (("（", "）"), ("(", ")")):
+        if opening in text and closing in text:
+            label, rest = text.split(opening, 1)
+            hint = rest.split(closing, 1)[0]
+            return label.strip(), hint.strip()
+    return text.strip(), ""
+
+
+def _hint_label(text: str) -> QLabel:
+    """The one hint-row style every settings field uses (same object name, same wrapping)."""
+    label = QLabel(text)
+    label.setObjectName("hint")
+    label.setWordWrap(True)
+    return label
+
+
+def _field_with_hint(field: QWidget, hint: str) -> QWidget:
+    """A field plus its hint line, in the 4px stack the other settings rows use."""
+    box = QWidget()
+    stack = QVBoxLayout(box)
+    stack.setContentsMargins(0, 0, 0, 0)
+    stack.setSpacing(4)
+    stack.addWidget(field)
+    if hint:
+        stack.addWidget(_hint_label(hint))
+    return box
 
 
 def _wrap_checkbox_text(checkbox: QCheckBox, text: str, width: int) -> str:
@@ -131,58 +170,6 @@ def _installed_font_families() -> list[str]:
     constructor, so merely opening 设置 paid that cost before the page could paint.
     """
     return list(QFontDatabase.families())
-
-
-class AccentPresetButton(QPushButton):
-    """One-click accent swatch, with a keyboard focus cue.
-
-    A widget-level stylesheet wins over the application sheet for every property it declares, and this
-    button declares both the fill and the border - so the sheet's
-    ``QPushButton[keyboardFocus="true"]:focus`` rule never applied to it. Measured: focusing one of these
-    changed 0 pixels, while the same rule on a plain button changed 28345. The ring therefore lives in
-    this button's own sheet: the same 1px border, recoloured when focus is held. Nothing else differs, so
-    the unfocused rendering is byte-for-byte what it was.
-    """
-
-    REST_BORDER = "#3a4757"
-    SWATCH_SIZE = 22
-
-    def __init__(self, color: str, focus_ring: str) -> None:
-        super().__init__()
-        self._color = color
-        self._focus_ring = focus_ring
-        self.setFixedSize(self.SWATCH_SIZE, self.SWATCH_SIZE)
-        self.setToolTip(color)
-        # WCAG 4.1.2: the button has no text at all - the colour is painted, not written - so the
-        # tooltip was its only name and a hex value is not a name. It carries no visible label by
-        # design (22x22 swatch), which is exactly why the accessible name has to say what it is.
-        self.setAccessibleName(tr("a11y.accent_preset", color))
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._paint(self.REST_BORDER)
-
-    def minimumSizeHint(self) -> QSize:
-        """The swatch's real minimum: its fixed 22x22 square.
-
-        QPushButton's style hint assumes a text label and adds the button margin and padding on top
-        (measured 58x27), which would claim the swatch cannot exist at the size it is designed at.
-        This control paints a colour disc and a 1px focus border inside its own rect and has no text,
-        so the square is the whole requirement - returning it keeps a geometry audit from reporting a
-        deliberate square as clipped.
-        """
-        return QSize(self.SWATCH_SIZE, self.SWATCH_SIZE)
-
-    def _paint(self, border: str) -> None:
-        self.setStyleSheet(
-            f"background: {self._color}; border: 1px solid {border}; border-radius: 5px;"
-        )
-
-    def focusInEvent(self, event) -> None:
-        super().focusInEvent(event)
-        self._paint(self._focus_ring)
-
-    def focusOutEvent(self, event) -> None:
-        super().focusOutEvent(event)
-        self._paint(self.REST_BORDER)
 
 
 class SettingsPage(QWidget):
@@ -277,7 +264,9 @@ class SettingsPage(QWidget):
         memory_box_layout.addWidget(memory_row)
         memory_box_layout.addWidget(self.memory_recommend_label)
         memory_box_layout.addWidget(self.memory_warning_label)
-        self.memory_auto_check = QCheckBox(tr("settings.memory_auto"))
+        memory_auto_label, memory_auto_hint = split_label_hint(tr("settings.memory_auto"))
+        self.memory_auto_check = QCheckBox(memory_auto_label)
+        self.memory_auto_check.setAccessibleDescription(memory_auto_hint)
         self.memory_auto_check.toggled.connect(self._on_memory_auto_toggled)
         self.concurrency_spin = NoWheelSpinBox()
         self.concurrency_spin.setRange(1, 32)
@@ -359,9 +348,9 @@ class SettingsPage(QWidget):
         self.encrypt_check = QCheckBox()
         # This row also holds the password button: wrap the label at 500px so text + button
         # together stay below the card width in German, where the sentence is the longest.
-        self.encrypt_check.setText(
-            _wrap_checkbox_text(self.encrypt_check, tr("settings.encrypt_tokens"), 500)
-        )
+        encrypt_label, encrypt_hint = split_label_hint(tr("settings.encrypt_tokens"))
+        self.encrypt_check.setText(encrypt_label)
+        self.encrypt_check.setAccessibleDescription(encrypt_hint)
         self.encrypt_button = QPushButton(tr("settings.encrypt_set"))
         self.encrypt_button.setObjectName("secondaryButton")
         self.language_combo = QComboBox()
@@ -452,7 +441,8 @@ class SettingsPage(QWidget):
         self.clear_icon_cache_button.setObjectName("secondaryButton")
         self.clear_icon_cache_button.clicked.connect(self._clear_icon_cache)
 
-        # Accent color: free hex input with a live swatch and a reset-to-default button
+        # Accent color: free hex input with a live swatch and a reset-to-default button. The colour
+        # picker already has the preset grid; this page does not repeat it.
         self.accent_edit = QLineEdit()
         self.accent_edit.setPlaceholderText(DEFAULT_ACCENTS["dark"])
         self.accent_edit.setMaxLength(7)
@@ -461,15 +451,12 @@ class SettingsPage(QWidget):
         self.accent_swatch.setFixedSize(22, 22)
         self.accent_swatch.setObjectName("accentSwatch")
         self.accent_swatch.setToolTip(tr("settings.accent.hint"))
-        self.accent_default_button = QPushButton(tr("settings.accent.default"))
+        self.accent_default_button = QPushButton(tr("settings.title_bar.default"))
         self.accent_default_button.setObjectName("secondaryButton")
         self.accent_default_button.clicked.connect(lambda: self.accent_edit.setText(""))
         self.accent_pick_button = QPushButton(tr("settings.accent.pick"))
         self.accent_pick_button.setObjectName("secondaryButton")
         self.accent_pick_button.clicked.connect(self._pick_accent_color)
-        self.accent_preset_buttons = [
-            self._make_preset_button(color) for color in ACCENT_PRESETS
-        ]
         self.accent_edit.textChanged.connect(self._update_accent_swatch)
 
         # Title bar color: the accent row's shape - a 22px preview, a hex field whose placeholder is
@@ -524,39 +511,52 @@ class SettingsPage(QWidget):
         self.title_bar_edit.setAccessibleName(tr("settings.title_bar"))  # WCAG 4.1.2
         self.title_bar_edit.setAccessibleDescription(tr("settings.title_bar.hint"))
         java_row = QHBoxLayout()
+        java_row.setContentsMargins(0, 0, 0, 0)
+        java_row.setSpacing(ROW_SPACING)
         java_row.addWidget(self.java_path_edit, 1)
         java_row.addWidget(self.browse_java)
+        java_label, java_hint = split_label_hint(tr("settings.java"))
+        java_box = QWidget()
+        java_stack = QVBoxLayout(java_box)
+        java_stack.setContentsMargins(0, 0, 0, 0)
+        java_stack.setSpacing(4)
+        java_stack.addLayout(java_row)
+        java_stack.addWidget(_hint_label(java_hint))
         form.addRow(tr("settings.game_dir"), self.folder_box)
-        form.addRow(tr("settings.java"), java_row)
+        form.addRow(java_label, java_box)
         form.addRow(tr("settings.memory") + tr("unit.gb.label"), self.memory_box)
-        form.addRow("", self.memory_auto_check)
+        form.addRow("", _field_with_hint(self.memory_auto_check, memory_auto_hint))
         form.addRow(tr("settings.concurrency"), self.concurrency_spin)
         form.addRow(tr("settings.download_segments"), self.download_segments_box)
-        form.addRow(tr("settings.speed_limit"), self.speed_limit_spin)
+        speed_label, speed_hint = split_label_hint(tr("settings.speed_limit"))
+        form.addRow(speed_label, _field_with_hint(self.speed_limit_spin, speed_hint))
         form.addRow(tr("settings.source.meta"), self.source_meta_combo)
         form.addRow(tr("settings.source.assets"), self.source_assets_combo)
         form.addRow("", self.source_hint)
-        form.addRow(tr("settings.proxy"), self.proxy_edit)
+        proxy_label, proxy_hint = split_label_hint(tr("settings.proxy"))
+        form.addRow(proxy_label, _field_with_hint(self.proxy_edit, proxy_hint))
         form.addRow(tr("settings.cf_key"), self.cf_key_edit)
         form.addRow("", self.cf_key_status)
         form.addRow("", self.online_identity_box)
         form.addRow(tr("settings.window_mode"), self.window_mode_combo)
         form.addRow(tr("settings.theme"), self.theme_combo)
+        # One row per colour, both the same shape: field, current-colour swatch, picker, reset.
+        # The system colour dialog owns the presets; adding a second grid here duplicated it and
+        # made the two rows different lengths.
+        # One grid for both colour rows: field, current-colour swatch, reset, system picker.
+        # Equal stretches (the field takes 1) and the same fixed sizes put every control on the
+        # same x; the two rows are read as one block instead of two different layouts.
         accent_row = QHBoxLayout()
+        accent_row.setSpacing(ROW_SPACING)
         accent_row.addWidget(self.accent_edit, 1)
         accent_row.addWidget(self.accent_swatch)
-        accent_row.addWidget(self.accent_pick_button)
         accent_row.addWidget(self.accent_default_button)
+        accent_row.addWidget(self.accent_pick_button)
         form.addRow(tr("settings.accent"), accent_row)
-        preset_row = QHBoxLayout()
-        preset_row.setSpacing(6)
-        for button in self.accent_preset_buttons:
-            preset_row.addWidget(button)
-        preset_row.addStretch(1)
-        form.addRow("", preset_row)
         title_bar_row = QHBoxLayout()
-        title_bar_row.addWidget(self.title_bar_swatch)
+        title_bar_row.setSpacing(ROW_SPACING)
         title_bar_row.addWidget(self.title_bar_edit, 1)
+        title_bar_row.addWidget(self.title_bar_swatch)
         title_bar_row.addWidget(self.title_bar_default_button)
         title_bar_row.addWidget(self.title_bar_pick_button)
         form.addRow(tr("settings.title_bar"), title_bar_row)
@@ -568,8 +568,16 @@ class SettingsPage(QWidget):
         self._apply_form_metrics(form)
 
         encrypt_row = QHBoxLayout()
+        encrypt_row.setContentsMargins(0, 0, 0, 0)
+        encrypt_row.setSpacing(ROW_SPACING)
         encrypt_row.addWidget(self.encrypt_check, 1)
         encrypt_row.addWidget(self.encrypt_button)
+        encrypt_box = QWidget()
+        encrypt_stack = QVBoxLayout(encrypt_box)
+        encrypt_stack.setContentsMargins(0, 0, 0, 0)
+        encrypt_stack.setSpacing(4)
+        encrypt_stack.addLayout(encrypt_row)
+        encrypt_stack.addWidget(_hint_label(encrypt_hint))
 
         buttons_row = QHBoxLayout()
         buttons_row.addWidget(self.open_data_dir_button)
@@ -588,7 +596,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self.demo_check)
         layout.addWidget(self.trim_memory_check)
         layout.addWidget(self.analysis_check)
-        layout.addLayout(encrypt_row)
+        layout.addWidget(encrypt_box)
         layout.addLayout(buttons_row)
         layout.addStretch(1)
 
@@ -938,11 +946,6 @@ class SettingsPage(QWidget):
             return f"{size / (1 << 10):.0f} " + tr("unit.kb")
         return f"{size} " + tr("unit.bytes")
 
-    def _make_preset_button(self, color: str) -> QPushButton:
-        """One-click accent swatch."""
-        button = AccentPresetButton(color, accent_focus_ring())
-        button.clicked.connect(lambda *_, value=color: self._set_accent(value))
-        return button
     def _set_accent(self, color: str) -> None:
         self.accent_edit.setText(color)
         self.save()

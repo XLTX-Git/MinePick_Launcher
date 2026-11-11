@@ -133,11 +133,13 @@ def test_settings_numeric_fields_show_numbers_not_words(app, monkeypatch, ws_tmp
     page.speed_limit_spin.setValue(0)
     assert page.concurrency_spin.text() == "4"
     assert page.download_segments_spin.text() == "1"
-    # The speed limit's unit is in the row label ("KB/s, 0=unlimited"), not in the control.
+    # The speed limit's unit lives in the hint under the field, not in the control or its label.
     assert page.speed_limit_spin.text() == "0"
     assert page.speed_limit_spin.suffix() == ""
     labels = [label.text() for label in page.findChildren(QLabel, "settingsFieldLabel")]
-    assert any("KB/s" in text for text in labels)
+    hints = [label.text() for label in page.findChildren(QLabel, "hint")]
+    assert any("KB/s" in text for text in hints)
+    assert not any("KB/s" in text for text in labels)
     # The memory row's label carries the unit the read-out no longer repeats.
     from gui import i18n
 
@@ -486,7 +488,6 @@ def test_batch1_widgets_exist(app, monkeypatch, ws_tmp):
 def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data7"))
     from gui.main_window import MainWindow
-    from gui.pages import settings_page as settings_module
 
     window = MainWindow()
     launch = window.pages["launch"]
@@ -505,7 +506,8 @@ def test_batch3_widgets_exist(app, monkeypatch, ws_tmp):
     assert settings.window_mode_combo.count() == 4
     assert settings.theme_combo.count() == 3  # system / dark / light
     assert settings.radius_combo.count() == 3  # compact / default / round
-    assert len(settings.accent_preset_buttons) == len(settings_module.ACCENT_PRESETS)
+    # The colour dialog owns the presets; the page must not grow a second swatch grid.
+    assert not hasattr(settings, "accent_preset_buttons")
     assert settings.accent_pick_button is not None
     assert settings.demo_check is not None
     assert settings.after_launch_combo is not None
