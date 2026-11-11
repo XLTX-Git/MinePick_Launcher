@@ -20,6 +20,16 @@
 - CurseForge: `MCLAUNCHER_CF_KEY` overrides the configured key, the source is hidden entirely when no key is set, and requests are bounded to 16 concurrent with three retries on transient errors.
 - The game process runs on its own thread; the font list and the instance scan left the GUI thread; exit no longer builds the About page.
 
+- The title bar's colour can be set from 设置 › 外观, with the same picker as the accent colour. Left
+  empty it keeps following the theme; once set, both themes use it and the text, window buttons and the
+  room capsule pick their own colour from the background so any choice stays readable.
+- Installing a mod now asks which file version you want and where to put it, instead of which instance
+  to install into. The default folder is the last one used for that kind of file, then the selected
+  instance's folder, then the busiest compatible instance, then the game root.
+- The loader step lists every build available for the chosen Minecraft version instead of always
+  taking the newest, and the same version can be installed as many times as you like — repeated
+  names get a numeric suffix.
+
 ## 🐛 Fixes
 
 - Extracting the natives archive rejects entries that would escape the target folder.
@@ -27,6 +37,12 @@
 - Switching to the instances page no longer flashes two empty half-transparent windows.
 - Account avatars show the account's skin face; the letter is only a fallback.
 - Timers no longer call into widgets that were already deleted, which used to happen when a language switch rebuilt the pages.
+- NeoForge version lists came back empty on networks that cannot reach `maven.neoforged.net` (the TCP
+  connect simply times out). The launcher now asks the official host and a mirror at the same time and
+  uses whichever answers, with the installer downloaded from that same host.
+- Downloading a single file used to report nothing until it finished, so the task list sat at `0 B / 0 B`
+  for the whole transfer. Progress is now reported while it runs, and an unknown total says so instead
+  of showing a second zero.
 
 ---
 
@@ -52,7 +68,19 @@
 - CurseForge：`MCLAUNCHER_CF_KEY` 可覆盖配置里的 key；没有 key 时该来源整个不显示；请求限制 16 并发并对暂时性错误重试三次。
 - 游戏进程改为独立线程；字体列表与实例扫描移出 GUI 线程；退出不再构建关于页。
 
+- 标题栏颜色可以在「设置 › 外观」里自定义，取色交互与强调色一致。留空则跟随主题；设置之后两种主题
+  都用它，文字、窗口按钮和房间胶囊会按背景自行选色，任何颜色都保证可读。
+- 安装模组改成先选文件版本、再选保存位置，而不是先挑一个实例。默认目录按「上次用过 → 当前实例 →
+  最活跃的兼容实例 → 游戏根目录」决定，并按资源类型分别记住。
+- 加载器那一步会列出该 Minecraft 版本下的全部可选版本，不再固定用最新一个；同一个版本也可以装任意
+  多次，重名自动加数字后缀。
+
 ## 🐛 修复
+
+- 在连不上 `maven.neoforged.net` 的网络下，NeoForge 版本列表一直是空的（TCP 连接直接超时）。
+  现在同时向官方与镜像发请求、谁先返回用谁，安装包也从同一个主机下载。
+- 单文件下载以前要等下完才报一次进度，整段传输期间任务列表停在 `0 B / 0 B`。现在实时上报；
+  总量确实未知时显示「未知大小」，而不是第二个 0。
 
 - 解压 natives 时拒绝会跑到目标目录之外的条目。
 - 更新包改为核对随发布一起提供的摘要，签名检查只在没有摘要时作为兜底。
