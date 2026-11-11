@@ -15,21 +15,21 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""The combo popup is a real rounded card: window attributes, pixels, keyboard and outside click.
+"""The combo popup is an outlined panel below the field, with one softly marked row.
 
-The user reported this repeatedly: ``QComboBox QAbstractItemView`` had ``border-radius: 0`` because
-the popup is its own top-level window and QSS cannot round one. gui/popup_shape.py now makes the
-window translucent and frameless (keeping ``Qt::Popup``) so the list's QSS radius is visible. These
-tests pin the parts that a stylesheet grep cannot see:
+The user reported this repeatedly: the dropdown opened upwards over the category chips, its
+selected row was a saturated ACCENT_SEL block sitting on top of the input, and there was no visible
+panel. The cause was Fusion's ``SH_ComboBox_Popup=1``: Qt treated the popup as a menu. These tests
+pin the parts a stylesheet grep cannot see:
 
+* the style override answers 0, so Qt uses the ordinary listbox popup;
 * the window really carries the attributes, and they are applied automatically when the combo is
   shown (the install hook, not a per-page call);
-* the four corners of the rendered window are transparent, so it is not a square window with a
-  rounded card inside it (the "black edge" the user warned about);
-* clicking outside the popup still closes it, and the arrow keys still move the highlighted row and
-  commit on Enter;
-* while the popup is open, keyboard focus stays on a visible control inside the popup (it never
-  wanders to a widget the user cannot see).
+* the four corners of the rendered window are transparent;
+* the panel opens below the field (sharing one border line), paints the BG_LIST fill and never
+  paints the whole surface in ACCENT_SEL;
+* the current row is the only highlighted row (BG_HOVER), and arrow keys move it;
+* clicking outside still closes it.
 """
 
 from __future__ import annotations
@@ -37,10 +37,18 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFrame,
+    QStyle,
+    QStyleOptionComboBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SHEETS = (ROOT / "gui/resources/style.qss", ROOT / "gui/resources/style_light.qss")
@@ -48,8 +56,11 @@ SHEETS = (ROOT / "gui/resources/style.qss", ROOT / "gui/resources/style_light.qs
 
 @pytest.fixture()
 def app():
-    """The suite's QApplication, with the dark sheet in force so the QSS radius is the shipped one."""
+    """The suite's QApplication, with the popup style override and the dark sheet in force."""
     application = QApplication.instance() or QApplication([])
+    from gui import popup_shape
+
+    popup_shape.install_combo_popup_style(application)
     from gui.theme import apply_theme
 
     apply_theme("dark", None, None, "default")
@@ -128,29 +139,33 @@ def test_combo_popup_is_shaped_automatically_when_the_combo_is_shown(app, shaper
     window.close()
 
 
-def test_combo_popup_window_has_transparent_rounded_corners(app, shaper):
-    """Rendered alpha: the four corners are page-behind, not the square window fill."""
-    window, combo = _combo_window(app)
+def test_combo_popup_window_is_the_outlined_panel(app, shaper):
+    """The window is the panel: its corners are the BORDER_LIST outline, not a square window fill.
+
+    The panel is square and flush under the field by design now. What must not come back is the old
+    translucent-window artefact: a window larger than the list, filled with the platform's window
+    colour around a smaller surface (the "black edge").
+    """
+    from gui.theme import current_tokens
+
+    tokens = current_tokens()
+    window, combo = _combo_window(app, items=3)
     popup = _open(combo, app)
     assert popup.isVisible()
 
-    image = QImage(popup.size(), QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(Qt.GlobalColor.transparent)
-    popup.render(image)
-
-    corners = ((0, 0), (image.width() - 1, 0), (0, image.height() - 1), (image.width() - 1, image.height() - 1))
-    for point in corners:
-        assert image.pixelColor(*point).alpha() == 0, (
-            f"popup corner {point} is opaque: the square window fill is still painted outside the "
-            "rounded list, which is the black edge the user reported"
+    image = _render(popup)
+    border_hex = tokens["BORDER_LIST"].lstrip("#")
+    border = (int(border_hex[0:2], 16), int(border_hex[2:4], 16), int(border_hex[4:6], 16), 255)
+    for point in ((0, 0), (image.width() - 1, 0), (0, image.height() - 1), (image.width() - 1, image.height() - 1)):
+        colour = image.pixelColor(*point)
+        assert (colour.red(), colour.green(), colour.blue(), colour.alpha()) == border, (
+            f"popup corner {point} is not the panel outline: the window paints outside the list"
         )
-    # Qt reserves 4px above and below the list inside the popup window; with the translucent window
-    # those two bands are transparent as well, not a dark strip around the card.
-    for x in (0, image.width() // 2, image.width() - 1):
-        assert image.pixelColor(x, 0).alpha() == 0
-    assert image.pixelColor(image.width() // 2, 5).alpha() > 0, "the list itself never painted"
+    # The panel really covers the window: no unpainted margin around the list.
+    assert all(
+        image.pixelColor(x, 0).alpha() == 255 for x in (0, image.width() // 2, image.width() - 1)
+    )
     assert image.pixelColor(image.width() // 2, image.height() // 2).alpha() == 255
-
     combo.hidePopup()
     window.close()
 
@@ -238,19 +253,199 @@ def test_combo_popup_keeps_keyboard_navigation_and_focus_visible(app, shaper):
     window.close()
 
 
-def test_combo_popup_stylesheet_rounds_the_list_and_keeps_one_border():
+def _pixel_counts(image: QImage) -> dict[tuple[int, int, int, int], int]:
+    counts: dict[tuple[int, int, int, int], int] = {}
+    for y in range(image.height()):
+        for x in range(image.width()):
+            colour = image.pixelColor(x, y)
+            key = (colour.red(), colour.green(), colour.blue(), colour.alpha())
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _render(popup: QWidget) -> QImage:
+    image = QImage(popup.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    popup.render(image)
+    return image
+
+
+def test_combo_popup_style_overrides_fusion_menu_behaviour(app):
+    """SH_ComboBox_Popup must answer 0: that is what keeps the panel below the field and out of
+    QMenu's painting path. Read through a real style option - the hint depends on ``option``."""
+    from gui.theme import current_tokens
+
+    combo = QComboBox()
+    combo.addItems(["a", "b"])
+    option = QStyleOptionComboBox()
+    combo.initStyleOption(option)
+    assert (
+        combo.style().styleHint(QStyle.StyleHint.SH_ComboBox_Popup, option, combo) == 0
+    ), "Fusion's menu-style popup is back: it aligns a row over the input and opens upwards"
+    assert current_tokens()["BG_LIST"]  # the sheet is really in force for this app fixture
+    combo.deleteLater()
+
+
+def test_combo_popup_opens_below_the_field_for_every_current_row(app, shaper):
+    """The panel must stay below the field no matter which row the field currently holds.
+
+    The menu-style popup aligned the selected row with the field: with the last row selected it
+    opened 50px *above* the combo and covered the category chips. A listbox popup is always below
+    while the screen has room; its 1px top border shares the field's bottom border.
+    """
+    window, combo = _combo_window(app, items=3)
+    for row in (0, 1, 2):
+        combo.setCurrentIndex(row)
+        popup = _open(combo, app)
+        combo_bottom = combo.mapToGlobal(QPoint(0, combo.height())).y()
+        popup_top = popup.mapToGlobal(QPoint(0, 0)).y()
+        assert popup_top >= combo_bottom, (
+            f"row {row}: popup top {popup_top} is above the field bottom {combo_bottom}: the "
+            "dropdown covers the field"
+        )
+        assert popup_top <= combo_bottom + 4, (
+            f"row {row}: popup top {popup_top} is {popup_top - combo_bottom}px below the field "
+            f"bottom {combo_bottom}; the panel must sit flush under it"
+        )
+        combo.hidePopup()
+        app.processEvents()
+    window.close()
+
+
+def test_combo_popup_paints_the_panel_fill_and_only_a_soft_selected_row(app, shaper):
+    """Pixels: BG_LIST panel, the derived ACCENT_SEL_ROW on the current row only, legible text."""
+    from gui.theme import contrast_ratio, current_tokens
+
+    tokens = current_tokens()
+    window, combo = _combo_window(app, items=3)
+    combo.setCurrentIndex(1)
+    popup = _open(combo, app)
+    image = _render(popup)
+    counts = _pixel_counts(image)
+    opaque = {colour: count for colour, count in counts.items() if colour[3] == 255}
+    dominant = max(opaque, key=opaque.get)
+    bgl = tokens["BG_LIST"].lstrip("#")
+    expected = (int(bgl[0:2], 16), int(bgl[2:4], 16), int(bgl[4:6], 16), 255)
+    assert dominant == expected, (
+        f"popup background is #{dominant[0]:02x}{dominant[1]:02x}{dominant[2]:02x}; the panel "
+        f"must be BG_LIST #{tokens['BG_LIST']}"
+    )
+
+    row_hex = tokens["ACCENT_SEL_ROW"].lstrip("#")
+    row_rgb = (int(row_hex[0:2], 16), int(row_hex[2:4], 16), int(row_hex[4:6], 16), 255)
+    assert row_rgb in counts, "the current row is not painted with ACCENT_SEL_ROW"
+    highlight_pixels = counts[row_rgb]
+    assert highlight_pixels < image.width() * image.height() * 0.5, (
+        "more than half the popup is highlighted: this is the old solid-block look again"
+    )
+
+    # Dark derives the row colour from ACCENT_SEL; the raw accent must not appear anywhere.
+    if tokens["ACCENT_SEL"] != tokens["ACCENT_SEL_ROW"]:
+        accent = tokens["ACCENT_SEL"].lstrip("#")
+        accent_rgb = (int(accent[0:2], 16), int(accent[2:4], 16), int(accent[4:6], 16))
+        assert not any(colour[:3] == accent_rgb for colour in counts), (
+            "the saturated ACCENT_SEL is painted in the popup: the dark row must use the blend"
+        )
+    # The row must be legible and visibly (but quietly) distinct from the panel.
+    assert contrast_ratio(tokens["FG_TEXT"], tokens["ACCENT_SEL_ROW"]) >= 4.5
+    assert contrast_ratio(tokens["ACCENT_SEL_ROW"], tokens["BG_LIST"]) > 1.2
+    assert combo.view().objectName() == shaper.POPUP_LIST_OBJECT_NAME
+    combo.hidePopup()
+    window.close()
+
+
+def test_arrow_keys_move_the_soft_highlight(app, shaper):
+    """Keyboard feedback survives the switch from a solid accent row to a subtle one."""
+    window, combo = _combo_window(app, items=3)
+    _open(combo, app)
+    view = combo.view()
+    assert [index.row() for index in view.selectionModel().selectedIndexes()] == [0]
+    QTest.keyClick(view, Qt.Key.Key_Down)
+    app.processEvents()
+    assert [index.row() for index in view.selectionModel().selectedIndexes()] == [1]
+    QTest.keyClick(view, Qt.Key.Key_Up)
+    app.processEvents()
+    assert [index.row() for index in view.selectionModel().selectedIndexes()] == [0]
+    combo.hidePopup()
+    window.close()
+
+
+def test_resources_page_source_popup_opens_below_the_field(app, shaper, monkeypatch):
+    """The real page, not a synthetic combo: the source dropdown must not cover its own field.
+
+    This is the user's report: after choosing CurseForge the field disappeared and the list started
+    at the top of the page. The regression test measures the two global rectangles and the distance
+    from the field's bottom to the popup's top on the page that showed it.
+    """
+    from gui import i18n
+    from gui.pages import mods_page
+
+    monkeypatch.setattr(mods_page, "_curseforge_available", lambda: True)
+    monkeypatch.setattr(mods_page, "search_projects", lambda *a, **k: [])
+    monkeypatch.setattr(mods_page, "run_in_background", lambda *a, **k: None)
+
+    page = mods_page.ResourcesPage()
+    window = QWidget()
+    window.resize(1000, 610)
+    layout = QVBoxLayout(window)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(page)
+    window.show()
+    app.processEvents()
+    try:
+        combo = page.source_combo
+        assert [combo.itemText(i) for i in range(combo.count())] == [
+            i18n.tr("mods.source.all"),
+            i18n.tr("mods.source.curseforge"),
+            i18n.tr("mods.source.modrinth"),
+        ]
+        assert combo.currentData() == "all"
+        combo.setCurrentIndex(combo.findData("curseforge"))
+        popup = _open(combo, app)
+        combo_rect = QRect(combo.mapToGlobal(QPoint(0, 0)), combo.size())
+        popup_rect = QRect(popup.mapToGlobal(QPoint(0, 0)), popup.size())
+        assert not combo_rect.intersects(popup_rect), (
+            "the popup overlaps the field: the value the user selected is covered"
+        )
+        assert popup_rect.top() >= combo_rect.bottom() + 1 - 2, (
+            f"popup top {popup_rect.top()} vs field bottom {combo_rect.bottom()}"
+        )
+        assert abs(popup_rect.left() - combo_rect.left()) <= 2, "popup left edge is not aligned"
+        assert abs(popup_rect.width() - combo_rect.width()) <= 2, "popup width does not match"
+        window_bottom = window.mapToGlobal(QPoint(0, window.height())).y()
+        assert popup_rect.height() <= window_bottom - combo_rect.bottom(), (
+            "the popup is taller than the space below the field in this window"
+        )
+        combo.hidePopup()
+    finally:
+        page.deleteLater()
+        window.close()
+        app.processEvents()
+
+
+def test_combo_popup_stylesheet_is_an_outlined_panel():
+    """Both sheets: BG_LIST fill, BORDER_LIST outline, square corners, soft selected row."""
     for sheet in SHEETS:
         text = sheet.read_text(encoding="utf-8")
-        start = text.index("QComboBox QAbstractItemView {")
+        start = text.index("QComboBox QAbstractItemView,")
         block = text[start : text.index("}", start)]
-        assert "border-radius: __RADIUS_LG__;" in block, sheet.name
-        assert "border-radius: 0" not in block, sheet.name
+        assert "QListView#comboPopupList" in block, sheet.name
+        assert "background: __BG_LIST__;" in block, sheet.name
         assert "border: 1px solid __BORDER_LIST__;" in block, sheet.name
+        assert "border-top: none;" in block, sheet.name
+        assert "border-radius: 0;" in block, sheet.name
         assert "padding: 4px;" in block, sheet.name
+        assert "__ACCENT_SEL__" not in block, sheet.name
+        # The selected pseudo-state must live in the same sheet; otherwise the delegate paints
+        # every row in the panel fill and the current entry is invisible.
+        selected = text[text.index("QListView#comboPopupList::item:selected") :]
+        selected_block = selected[: selected.index("}", 0)]
+        assert "background: __ACCENT_SEL_ROW__;" in selected_block, sheet.name
 
 
-def test_create_app_installs_the_popup_shape_hook():
-    """The automatic hook must live in the application bootstrap, not in one page's combo."""
+def test_create_app_installs_the_popup_hooks():
+    """Both hooks must live in the application bootstrap, not in one page's combo."""
     source = (ROOT / "gui/main.py").read_text(encoding="utf-8")
     assert "from gui import popup_shape" in source
     assert "popup_shape.install(app)" in source
+    assert "popup_shape.install_combo_popup_style(app)" in source

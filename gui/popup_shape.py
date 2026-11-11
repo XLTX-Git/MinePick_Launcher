@@ -15,36 +15,53 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Rounded corners for every combo box dropdown.
+"""The combo popup: one outlined panel, flush under the field, with a softly marked current row.
 
 A QComboBox popup is a top-level ``QComboBoxPrivateContainer`` (a QFrame carrying ``Qt::Popup``),
-not a child of the combo. A stylesheet can only paint *inside* that window: a ``border-radius`` on
-``QComboBox QAbstractItemView`` rounds the list, while the window itself stays a square filled with
-the palette's window colour - the square patch the user saw outside a rounded edge. No style sheet
-can make a window translucent; only a window attribute can. This module sets that attribute, once,
+not a child of the combo. Fusion asks Qt for the *menu* flavour of that popup (``SH_ComboBox_Popup``
+is 1): the panel is positioned so the selected row lines up with the field - opening upwards when a
+lower row is selected - its rows are painted through QMenu's rules (a saturated ACCENT_SEL block on
+the field), and the list's own QSS surface is not used at all. This module does two things, once,
 for every combo when it first appears:
 
-* ``Qt::Popup`` stays on the window, because that flag is what closes the dropdown when the user
-  clicks somewhere else or presses Escape;
-* ``FramelessWindowHint`` and ``NoDropShadowWindowHint`` remove the platform frame and its shadow,
-  so nothing square is painted around the list;
-* ``WA_TranslucentBackground`` makes the pixels outside the list's rounded border the page behind,
-  instead of the window fill.
+* :class:`_ComboPopupStyle` answers ``SH_ComboBox_Popup`` with 0, so Qt uses the ordinary listbox
+  popup: flush below the field, rows from ``QComboBox QAbstractItemView``, no menu semantics;
+* the window is made frameless and translucent so the list's own outline is the whole panel, its
+  current entry is selected so exactly one row carries the soft highlight, and the list is named
+  ``comboPopupList`` for the explicit stylesheet rule.
 
-The list keeps drawing its own background, border and radius from the stylesheet; the window is
-only made able to show them. This is a global, automatic hook: ``install()`` is called once from
-``gui.main.create_app``, and the filter shapes every combo shown afterwards, plus every combo that
-already exists when it is installed. No page has to touch its own combo boxes.
+``Qt::Popup`` stays on the window, because that flag is what closes the dropdown when the user
+clicks somewhere else or presses Escape. This is a global, automatic hook: ``install()`` is called
+once from ``gui.main.create_app``, and the filter shapes every combo shown afterwards, plus every
+combo that already exists when it is installed. No page has to touch its own combo boxes.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QWidget
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPoint, Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFrame,
+    QProxyStyle,
+    QStyle,
+    QStyleFactory,
+    QWidget,
+)
 
 #: Object name of the popup window. The stylesheet rule below uses it to clear the container's own
 #: frame fill without touching the list (also a QFrame subclass) inside it.
 POPUP_OBJECT_NAME = "comboPopup"
+
+#: Object name of the popup's list. The sheet targets it explicitly as well as through the combo
+#: descendant selector, so the panel cannot lose its fill when Qt wraps the view differently.
+POPUP_LIST_OBJECT_NAME = "comboPopupList"
+
+#: Pixels of overlap Qt's listbox placement leaves between the popup's top border and the field's
+#: bottom border. The panel may never cover the field - the user must be able to read the value they
+#: just opened - so the popup is nudged down by exactly this amount when Qt places it below. The
+#: sheet then leaves the panel's top border off, and the field's own bottom border is the seam.
+POPUP_BORDER_OVERLAP = 1
 
 #: Marks a popup that this module already shaped, so repeated Show events cannot reset its flags.
 _SHAPED_PROPERTY = "comboPopupShaped"
@@ -87,17 +104,112 @@ def shape_combo_popup(combo: QComboBox) -> QWidget | None:
         | Qt.WindowType.NoDropShadowWindowHint
     )
     popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    # Name the list explicitly for the sheet, and repolish so a selector on the new name applies
+    # immediately (the combo descendant selector keeps working as the fallback in the same rule).
+    view = combo.view()
+    if view.objectName() != POPUP_LIST_OBJECT_NAME:
+        view.setObjectName(POPUP_LIST_OBJECT_NAME)
+        view.style().unpolish(view)
+        view.style().polish(view)
     popup.setProperty(_SHAPED_PROPERTY, True)
     return popup
+
+
+def place_combo_popup(popup: QWidget) -> None:
+    """Prepare a shaped popup once Qt has shown it: select the current row.
+
+    The panel deliberately keeps Qt's placement - flush under the field, its top border sharing
+    the field's bottom border - so no geometry is changed here. What the listbox popup does not do
+    is mark the entry the field currently holds (the menu-style popup did, which is why the old
+    screenshot had a filled row sitting on top of the input). Selecting it here makes that one row
+    carry the soft highlight, and no other row is filled.
+    """
+    combo = popup.parentWidget()
+    if not isinstance(combo, QComboBox):
+        return
+    try:
+        view = combo.view()
+    except RuntimeError:  # the combo's C++ side is already gone
+        return
+    if view.window() is not popup:
+        return
+    # A listbox popup opens without a selected row (only the menu-style one marked the current
+    # entry). Selecting it makes the open panel say which item the field already holds, and only
+    # that row carries the highlight - never the whole panel.
+    model = view.model()
+    if model is not None:
+        index = model.index(combo.currentIndex(), combo.modelColumn())
+        selection = view.selectionModel()
+        if index.isValid() and selection is not None:
+            selection.setCurrentIndex(
+                index,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QItemSelectionModel.SelectionFlag.Rows,
+            )
+    # Qt's listbox placement puts the popup's top border one pixel on top of the field's bottom
+    # border. That is invisible when both are the same colour, but it also means the panel's window
+    # starts inside the field. Nudge it down so the field's value is never covered; the sheet's
+    # borderless top edge then shares the field's bottom border as the seam.
+    #
+    # ``popup.pos()`` is the top-level window's screen position; ``mapToGlobal`` on a Qt::Popup can
+    # disagree with it by the platform frame margin while the window is being shown, which made the
+    # nudge depend on which row was selected. The combo has no frame, so its mapToGlobal is stable.
+    combo_bottom = combo.mapToGlobal(QPoint(0, combo.height())).y()
+    popup_top = popup.pos().y()
+    if 0 < combo_bottom - popup_top <= POPUP_BORDER_OVERLAP:
+        popup.move(popup.pos().x(), combo_bottom)
+
+
+class _ComboPopupStyle(QProxyStyle):
+    """Fusion, except that a combo popup is a list panel instead of a menu.
+
+    QFusionStyle answers ``SH_ComboBox_Popup`` with 1, which tells QComboBox to treat the popup as a
+    menu: Qt then aligns the *currently selected row* with the field (opening above it when a lower
+    row is selected), draws the rows through ``QComboMenuDelegate`` (so ``QMenu::item:selected`` and
+    its saturated ACCENT_SEL fill paint a field-sized block on top of the input), and paints the
+    container with ``PE_PanelMenu`` instead of letting ``QComboBox QAbstractItemView`` draw its own
+    surface. The result was a green row sitting where the input was, no panel border, and a dropdown
+    that opened upwards over the category chips. Answering 0 selects the ordinary listbox popup: a
+    panel flush under the field, one softly highlighted row, and the list's own QSS surface.
+    """
+
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.StyleHint.SH_ComboBox_Popup:
+            return 0
+        return super().styleHint(hint, option, widget, returnData)
+
+
+def install_combo_popup_style(app: QApplication | None = None) -> bool:
+    """Install :class:`_ComboPopupStyle` as the application style.
+
+    Must run after the base style is chosen (``setStyle("Fusion")``) and before the theme's
+    stylesheet is installed, so QStyleSheetStyle wraps this style. Idempotent.
+    """
+    application = app if app is not None else QApplication.instance()
+    if application is None:
+        return False
+    if getattr(application, "_combo_popup_style", None) is not None:
+        return False
+    base = QStyleFactory.create("Fusion") or application.style()
+    style = _ComboPopupStyle(base)
+    application.setStyle(style)
+    application._combo_popup_style = style
+    # A stylesheet installed before this call has to be re-applied so it wraps the new base style.
+    if application.styleSheet():
+        application.setStyleSheet(application.styleSheet())
+    return True
 
 
 class _ComboPopupShaper(QObject):
     """Application event filter: shape a combo's popup when the combo itself is first shown."""
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        if event.type() == QEvent.Type.Show and isinstance(obj, QComboBox):
+        if event.type() == QEvent.Type.Show:
             try:
-                shape_combo_popup(obj)
+                if isinstance(obj, QComboBox):
+                    shape_combo_popup(obj)
+                elif isinstance(obj, QWidget) and obj.property(_SHAPED_PROPERTY):
+                    place_combo_popup(obj)
             except Exception:  # noqa: BLE001 - a filter may never raise into Qt's dispatch
                 return False
         return False

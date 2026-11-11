@@ -59,7 +59,7 @@ LIGHT_SHEET = RESOURCES / "style_light.qss"
 
 #: Same pin as tests/test_dark_state_contrast.py holds. Both changes are dark-only; if a later edit
 #: really does touch the light sheet, both digests have to move in that commit.
-LIGHT_SHEET_SHA256 = "2a533c8d4d33af1e295e44f1a5c28ddf9b7334295c345efad044cce88f0bd9e1"
+LIGHT_SHEET_SHA256 = "f815a77df59380a0b0c55ed119bc156eac380502bc2df9ddc622168a0d6512df"
 
 #: The three levels, deepest first. BG_NAV is not a fourth level: the rail shares level 1 with the
 #: window chrome, which is what makes the rail recede behind the page instead of competing with it.

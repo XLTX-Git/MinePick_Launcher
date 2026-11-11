@@ -139,6 +139,13 @@ def create_app(argv: list[str] | None = None) -> QApplication:
     # Use Fusion as the base style: the native Windows style (windows11) draws its own
     # white rounded boxes for tabs/menus/dropdowns that override QSS; Fusion follows QSS fully.
     app.setStyle("Fusion")
+    # Fusion's SH_ComboBox_Popup=1 turns every dropdown into a menu: it aligns the selected row
+    # with the field (opening upwards when a lower row is selected) and paints the rows through
+    # QMenu's ACCENT_SEL selection rule. The proxy answers 0 so a dropdown is an ordinary list
+    # panel below the field. It must be installed before the theme's stylesheet, which wraps it.
+    from gui import popup_shape
+
+    popup_shape.install_combo_popup_style(app)
     from gui import i18n
     from launcher import config
 

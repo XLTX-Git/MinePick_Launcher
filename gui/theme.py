@@ -397,6 +397,17 @@ def theme_palette(theme: str, accent: str | None = None, title_bar: str = "") ->
     palette = {name: values.get(theme, values["dark"]) for name, values in NEUTRAL_TOKENS.items()}
     palette.update(accent_palette(theme, accent))
     palette.update(title_bar_palette(theme, title_bar))
+    # Combo popup row highlight. The field and the panel share BG_LIST; painting a selected row in
+    # full ACCENT_SEL put the loudest colour in the interface on the least important surface (the
+    # closed field already repeats the current value). Light's ACCENT_SEL is already a pale tint and
+    # is used as is; dark keeps 35% of it on the panel (measured #1a423d, 1.48:1 from BG_LIST and
+    # 9.35:1 for FG_TEXT), one visible step that does not read as a solid green block. Derived here,
+    # from the same two tokens the sheet paints, so a custom accent cannot leave a hardcoded value.
+    palette["ACCENT_SEL_ROW"] = (
+        palette["ACCENT_SEL"]
+        if theme == "light"
+        else _mix(palette["ACCENT_SEL"], palette["BG_LIST"], 0.65)
+    )
     return palette
 
 

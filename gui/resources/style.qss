@@ -428,24 +428,49 @@ QComboBox[comboDisabled="true"]::down-arrow {
 }
 /* The popup is its own top-level window (QComboBoxPrivateContainer, a Qt::Popup). gui/popup_shape.py
    makes that window translucent and frameless (keeping Qt::Popup, which is what closes it on an
-   outside click) and clears the container's own frame; the list below is then the only surface, so
-   its radius really is the popup's corner and the pixels outside the 1px BORDER_LIST arc show the
-   page behind instead of a square window patch. The radius comes from the same card token as
-   #pageCard; the 4px list padding keeps the viewport's square corners inside that arc. */
-QComboBox QAbstractItemView {
-    background: __BG_LIST_2__;
+   outside click), clears the container's own frame, names the list comboPopupList and leaves Qt's
+   placement (flush under the field, the popup's top border sharing the field's bottom border). The
+   list below is then the only surface, so the pixels outside its 1px BORDER_LIST outline show the
+   page behind instead of a square window patch. The selector names the list explicitly as well as
+   through the combo descendant chain: the class form is what Qt's listbox popup uses, and the id
+   form survives any future wrapper between the combo and its view. The 4px list padding keeps the
+   viewport's square corners inside that outline. */
+QComboBox QAbstractItemView,
+QListView#comboPopupList {
+    /* The field's own outlined language, not a floating card: same BG_LIST fill, same 1px
+       BORDER_LIST, square corners, and the window sits flush under the field so the two outlines
+       read as one control extending downwards. Fill and radius/border live in this single rule:
+       Qt only rounds a fill painted by the rule that also declares the radius. */
+    background: __BG_LIST__;
     color: __FG_TEXT__;
     border: 1px solid __BORDER_LIST__;
-    border-radius: __RADIUS_LG__;
+    /* The popup's top edge sits on the field's bottom border: leaving the top border off makes the
+       field's own line the seam, so the two read as one control instead of a 2px double rule. */
+    border-top: none;
+    border-radius: 0;
     padding: 4px;
-    selection-background-color: __ACCENT_SEL__;
-    selection-color: __FG_SELECTED__;
+    selection-background-color: __ACCENT_SEL_ROW__;
+    selection-color: __FG_TEXT__;
     outline: none;
 }
-QComboBox QAbstractItemView::item {
+QComboBox QAbstractItemView::item,
+QListView#comboPopupList::item {
     padding: 8px 12px;
     min-height: 26px;
-    border-radius: __RADIUS_SM__;
+    border-radius: 0;
+}
+/* The one highlighted row: ACCENT_SEL_ROW is a per-theme derivation of ACCENT_SEL (light uses it
+   as is; dark blends 60% of it toward BG_LIST), so the current entry is visibly marked without a
+   saturated block competing with the field. Hover uses the next surface token for pointer feedback;
+   the selected rule comes last so it wins when both states apply. */
+QComboBox QAbstractItemView::item:hover,
+QListView#comboPopupList::item:hover {
+    background: __BG_SECTION__;
+}
+QComboBox QAbstractItemView::item:selected,
+QListView#comboPopupList::item:selected {
+    background: __ACCENT_SEL_ROW__;
+    color: __FG_TEXT__;
 }
 
 /* Sliders: flat 4px track, accent on the filled side, 16px round handle. Every subcontrol is styled on
@@ -611,11 +636,12 @@ QPushButton#categoryTab {
     padding: 8px 16px;
     font-weight: 400;
 }
-QPushButton#categoryTab:hover { color: __FG_TEXT__; background: __BG_SIDEBAR__; }
+QPushButton#categoryTab:hover { color: __FG_TEXT__; background: __BG_SIDEBAR__; border-radius: 15px; }
 QPushButton#categoryTab:checked {
     background: __ACCENT_BUTTON__;
     color: __FG_SELECTED__;
     border-color: __ACCENT_BUTTON__;
+    border-radius: 15px;
     font-weight: 400;
 }
 
@@ -1313,15 +1339,20 @@ QPushButton#resourceChip {
     color: __ACCENT__;
     border: 1px solid transparent;
     border-radius: 16px;
+    /* 32px total including the 1px border: the 16px radius is then exactly half the height and Qt
+       paints the pill. At the bare font height (19px) the radius was larger than half the button,
+       and Qt silently fell back to a square fill - the square green block the user saw. */
+    min-height: 30px;
     padding: 0 16px;
     font-size: 13px;
     font-weight: 400;
 }
-QPushButton#resourceChip:hover { background: __ACCENT_TINT__; }
+QPushButton#resourceChip:hover { background: __ACCENT_TINT__; border-radius: 16px; }
 QPushButton#resourceChip:checked {
     background: __ACCENT_BUTTON__;
     color: __FG_SELECTED__;
     border-color: __ACCENT_BUTTON__;
+    border-radius: 16px;
 }
 QPushButton#resourceChip[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
 QPushButton#resourceChip:checked[keyboardFocus="true"]:focus { border-color: __FG_SELECTED__; }
