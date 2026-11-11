@@ -45,7 +45,7 @@ from gui.pages import downloads_page, mods_page
 from gui.pages.downloads_page import DownloadsPage
 from gui.pages.mods_page import InstanceChoice
 from gui.task_ui import TaskButton
-from gui.tasks import CANCELLED, DONE, FAILED, RUNNING
+from gui.tasks import CANCELLED, DONE, FAILED, RUNNING, format_size
 from launcher.meta.manifest import ManifestVersion, VersionManifest
 from launcher.net import downloader
 
@@ -622,6 +622,53 @@ def test_a_failed_row_stays_and_a_finished_row_leaves_after_its_hold(window, app
     assert page.row_for(failed).error_label.text() == "连接超时"
 
 
+def test_a_failed_install_marks_the_task_failed_with_the_reason(app) -> None:
+    """The install adapter must turn a worker exception into a visible failed row, not a silent 0%."""
+    from PySide6.QtWidgets import QWidget
+
+    from gui.pages.mods_page import _TaskedInstall
+    from gui.tasks import TaskCenter
+
+    host = QWidget()
+    host.tasks = TaskCenter(host)
+    seen: list[str] = []
+    install = _TaskedInstall(host, kind="mod", title="Fabric API")
+
+    def job(progress):
+        progress(downloader.DownloadProgress(done_bytes=1024, total_bytes=2048))
+        raise RuntimeError("network down")
+
+    try:
+        install.run(
+            job,
+            on_result=lambda _value: None,
+            on_error=seen.append,
+            on_finished=lambda: None,
+        )
+        assert _pump(app, lambda: install.task is None, timeout=4.0), "the worker never settled"
+        task = host.tasks.tasks()[0]
+        assert task.state == FAILED
+        assert task.error == "network down"
+        assert seen == ["network down"]
+    finally:
+        host.deleteLater()
+        app.processEvents()
+
+
+def test_unknown_size_prints_unknown_and_runs_a_busy_bar(window, app) -> None:
+    """A source with no announced length must not read as a stuck ``0 B / 0 B`` download."""
+    task = window.tasks.add_task("tasks.title.mod", "sodium", kind="mod")
+    task.set_progress(1024, 0)
+    page = _open_page(window, app)
+    row = page.row_for(task)
+    assert row.meta_label.text().startswith(f"{format_size(1024)} / ")
+    assert row.meta_label.text().endswith(i18n.tr("tasks.size.unknown"))
+    assert "0 B / 0 B" not in row.meta_label.text()
+    assert (row.bar.minimum(), row.bar.maximum()) == (0, 0), "an unknown total needs a busy bar"
+    assert row.bar_text.text() == "", "a busy bar has no percentage to print"
+    assert task.percent_text() == "—"
+
+
 def test_a_settled_row_prints_its_duration_and_a_running_one_prints_its_rate(window, app) -> None:
     running = window.tasks.add_task("tasks.title.install", "1.21.11")
     running.set_progress(3 * 1024 * 1024, 12 * 1024 * 1024, 1.2 * 1024 * 1024)
@@ -728,7 +775,9 @@ def test_a_row_is_a_focus_stop_with_a_name(window, app) -> None:
     assert row is not None
     assert row.action.focusPolicy() != Qt.FocusPolicy.NoFocus
     assert row.action.accessibleName() == f"{i18n.tr('tasks.cancel')} · {task.title()}"
-    assert row.accessibleName() == f"{task.title()} · {task.state_text()} · 0%"
+    assert row.accessibleName() == (
+        f"{task.title()} · {task.state_text()} · {task.percent_text()}"
+    )
     assert window.focusWidget() is not None
 
 

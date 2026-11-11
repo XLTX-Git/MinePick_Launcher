@@ -212,7 +212,14 @@ class DownloadRow(QWidget):
         self.title_label.setText(task.title())
         self.percent_label.setText(task.percent_text())
         self.percent_label.setVisible(not task.is_running())
-        self.bar.setValue(task.percent() * 10)  # the same 0-1000 scale every progress bar uses
+        if task.is_running() and not task.has_total():
+            # No announced length: a 0/0 bar would look like no progress ever. Qt's 0..0 range is
+            # the busy animation, and the label is blank because there is no percentage to print.
+            self.bar.setRange(0, 0)
+            self.bar_text.setText("")
+        else:
+            self.bar.setRange(0, 1000)
+            self.bar.setValue(task.percent() * 10)  # same 0-1000 scale every progress bar uses
         self.bar_row.setVisible(task.is_running())
         self.error_label.setVisible(state == FAILED and bool(task.error))
         self.error_label.setText(task.error)

@@ -163,6 +163,14 @@ class Task:
     def is_running(self) -> bool:
         return self._state == RUNNING
 
+    def has_total(self) -> bool:
+        """Whether the producer announced a full size.
+
+        A server that sends no ``Content-Length`` (and no task size) leaves it at 0. The row then
+        says "unknown size" and the bar runs as a busy indicator instead of claiming a 0% download.
+        """
+        return self._total_bytes > 0
+
     def is_finished(self) -> bool:
         """True for every ending, including a failure that is still on screen."""
         return self._state != RUNNING
@@ -181,11 +189,18 @@ class Task:
         return max(0, min(100, round(self._done_bytes * 100 / self._total_bytes)))
 
     def percent_text(self) -> str:
+        if not self.has_total():
+            return "—"
         return f"{self.percent()}%"
 
     def size_text(self) -> str:
-        """``downloaded / total`` - the pair the panel prints together."""
-        return f"{format_size(self._done_bytes)} / {format_size(self._total_bytes)}"
+        """``downloaded / total`` - the pair the panel prints together.
+
+        When the source never announced a length, the total half is the localized "unknown size"
+        instead of a second 0 B, which read as a stuck download rather than a missing number.
+        """
+        total = format_size(self._total_bytes) if self.has_total() else tr("tasks.size.unknown")
+        return f"{format_size(self._done_bytes)} / {total}"
 
     def speed_text(self) -> str:
         """The rate while it runs; an empty string once it stopped (a speed is not a fact then)."""

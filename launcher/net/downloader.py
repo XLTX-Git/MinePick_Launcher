@@ -147,25 +147,27 @@ def sha256_file(path: Path) -> str:
 def _verify(path: Path, sha1: str | None, size: int | None, sha256: str | None = None) -> bool:
     """Whether the file exists and passes verification (a single read computes the needed digests)."""
     try:
-        if size is not None and path.stat().st_size != size:
-            return False
-        if sha1 is None and sha256 is None:
-            return True
-        digest1 = hashlib.sha1() if sha1 is not None else None
-        digest256 = hashlib.sha256() if sha256 is not None else None
+        stat = path.stat()
+    except OSError:
+        return False
+    if size is not None and stat.st_size != size:
+        return False
+    if sha1 is None and sha256 is None:
+        return True
+    digest1 = hashlib.sha1() if sha1 is not None else None
+    digest256 = hashlib.sha256() if sha256 is not None else None
+    try:
         with path.open("rb") as f:
             for chunk in iter(lambda: f.read(CHUNK), b""):
                 if digest1 is not None:
                     digest1.update(chunk)
                 if digest256 is not None:
                     digest256.update(chunk)
-        if digest1 is not None and digest1.hexdigest() != sha1:
-            return False
-        if digest256 is not None and digest256.hexdigest() != sha256:
-            return False
     except OSError:
         return False
-    return True
+    if digest1 is not None and digest1.hexdigest() != sha1:
+        return False
+    return digest256 is None or digest256.hexdigest() == sha256
 
 
 def _content_length(headers: httpx.Headers) -> int | None:
@@ -480,12 +482,68 @@ class _Progress:
         progress: Callable[[DownloadProgress], None] | None,
         state: DownloadProgress,
         lock: threading.Lock,
+        known_totals: dict[Path, int] | None = None,
     ) -> None:
         self._progress = progress
         self._state = state
         self._lock = lock
         self._reported: dict[Path, int] = {}
         self._last_tick: dict[Path, float] = {}
+        # Per-target full length. Most callers know it from the task (`file.size` in the Modrinth
+        # payload); when they do not, :meth:`expect_total` learns it from Content-Length before the
+        # first body byte. Keeping the map here makes the batch total the sum of what is known.
+        self._totals: dict[Path, int] = dict(known_totals or {})
+
+    def _snapshot(self) -> DownloadProgress:
+        return DownloadProgress(
+            done_bytes=self._state.done_bytes,
+            total_bytes=self._state.total_bytes,
+            done_files=self._state.done_files,
+            total_files=self._state.total_files,
+            current=self._state.current,
+        )
+
+    def started(self) -> None:
+        """Emit the batch's initial state, before the first byte moves.
+
+        This is what puts the known total on the row immediately. Without it the row sat at
+        ``0 B / 0 B`` until the first chunk finished, because every progress tick below is only
+        emitted after bytes arrive.
+        """
+        if self._progress is None or _cancelled.is_set():
+            return
+        with self._lock:
+            snapshot = self._snapshot()
+        self._progress(snapshot)
+
+    def expect_total(self, dest: Path, total: int) -> None:
+        """Learn the full length of a target the task did not carry a size for."""
+        if self._progress is None or _cancelled.is_set() or total <= 0:
+            return
+        with self._lock:
+            if self._totals.get(dest, 0) >= total:
+                return
+            self._totals[dest] = total
+            self._state.total_bytes = sum(self._totals.values())
+            snapshot = self._snapshot()
+        self._progress(snapshot)
+
+    def reset(self, dest: Path) -> None:
+        """Forget bytes reported for ``dest`` after a server ignored Range and the file restarts.
+
+        A 200 answer to a resumed request truncates the ``.part``, so the bytes that were counted for
+        this target are no longer on disk. Without the reset the next report would look smaller than
+        the last one and be dropped, leaving the row frozen at the old number.
+        """
+        if self._progress is None or _cancelled.is_set():
+            return
+        with self._lock:
+            reported = self._reported.pop(dest, 0)
+            if not reported:
+                return
+            self._state.done_bytes = max(0, self._state.done_bytes - reported)
+            snapshot = self._snapshot()
+        self._progress(snapshot)
 
     def written(self, dest: Path, written: int, current: str) -> None:
         """Report `written` bytes for `dest` as done, adding only the part that is new."""
@@ -498,13 +556,7 @@ class _Progress:
             self._reported[dest] = written
             self._state.done_bytes += delta
             self._state.current = current
-            snapshot = DownloadProgress(
-                done_bytes=self._state.done_bytes,
-                total_bytes=self._state.total_bytes,
-                done_files=self._state.done_files,
-                total_files=self._state.total_files,
-                current=self._state.current,
-            )
+            snapshot = self._snapshot()
         self._progress(snapshot)
 
     def files_done(self, current: str, count: int = 1) -> None:
@@ -514,13 +566,7 @@ class _Progress:
         with self._lock:
             self._state.done_files += count
             self._state.current = current
-            snapshot = DownloadProgress(
-                done_bytes=self._state.done_bytes,
-                total_bytes=self._state.total_bytes,
-                done_files=self._state.done_files,
-                total_files=self._state.total_files,
-                current=self._state.current,
-            )
+            snapshot = self._snapshot()
         self._progress(snapshot)
 
     def tick(self, dest: Path, part: Path, segments: int) -> None:
@@ -623,18 +669,24 @@ class Downloader:
         self._log_source_plan()
 
         result = DownloadResult()
+        known_totals = {task.dest: int(task.size or 0) for task in tasks}
         state = DownloadProgress(
-            total_bytes=sum(t.size or 0 for t in tasks),
+            total_bytes=sum(known_totals.values()),
             total_files=len(tasks),
         )
         lock = threading.Lock()
-        reporter = _Progress(progress, state, lock)
+        reporter = _Progress(progress, state, lock, known_totals)
+        # Put the known total on screen before the first socket write. Without this the row showed
+        # 0 B / 0 B until the first chunk report - the first report used to arrive only after the
+        # whole single-stream file had finished.
+        reporter.started()
         failed: list[tuple[str, str]] = []
 
         def run_one(task: DownloadTask) -> None:
             if not self.force and _verify(task.dest, task.sha1, task.size, task.sha256):
                 with lock:
                     result.skipped += 1
+                reporter.written(task.dest, task.dest.stat().st_size, task.dest.name)
                 reporter.files_done(task.dest.name)
                 return
             task.dest.parent.mkdir(parents=True, exist_ok=True)
@@ -909,6 +961,7 @@ class Downloader:
             headers["Range"] = "bytes=" + str(offset) + "-"
         if _cancelled.is_set():
             raise DownloadCancelled(task.url)
+        done = 0
         with client.stream("GET", task.url, headers=headers, **_timeout_kwargs(timeout)) as resp:
             if resp.status_code == 416 and offset:
                 # server considers the range invalid (.part may already be complete/too large): re-download from scratch
@@ -916,7 +969,25 @@ class Downloader:
                 self._one_attempt(client, task, part, reporter, timeout)
                 return
             resp.raise_for_status()
-            mode = "ab" if resp.status_code == 206 else "wb"  # non-206 means the server ignored the Range header
+            resumed = resp.status_code == 206
+            if not resumed and offset and reporter is not None:
+                # The server ignored the Range and is sending the whole file again: the old bytes
+                # are about to be truncated, so they must not count as progress any more.
+                reporter.reset(task.dest)
+            done = offset if resumed else 0
+            if reporter is not None and not task.size:
+                # The task did not know its length (a source can omit ``size``). The response does:
+                # 206 carries the full length in Content-Range, 200 in Content-Length. Report it now
+                # so the row switches from "unknown" to a real total before the first chunk.
+                total = (
+                    _content_range_total(resp.headers)
+                    if resumed
+                    else _content_length(resp.headers)
+                )
+                if total:
+                    reporter.expect_total(task.dest, total)
+            mode = "ab" if resumed else "wb"  # non-206 means the server ignored the Range header
+            last_report = 0.0
             with part.open(mode) as f:
                 for chunk in resp.iter_bytes(CHUNK):
                     # The chunk boundary is the cancellation point: nothing is written after the flag is
@@ -925,4 +996,14 @@ class Downloader:
                     if _cancelled.is_set():
                         raise DownloadCancelled(task.url)
                     f.write(chunk)
+                    done += len(chunk)
                     self._limiter.throttle(len(chunk))
+                    if reporter is not None:
+                        now = time.monotonic()
+                        if now - last_report >= PROGRESS_INTERVAL:
+                            reporter.written(task.dest, done, task.dest.name)
+                            last_report = now
+        if reporter is not None:
+            # The last partial interval is reported even for a file smaller than one interval; the
+            # caller reports the final size again after verification, where the delta is zero.
+            reporter.written(task.dest, done, task.dest.name)

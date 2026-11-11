@@ -96,6 +96,131 @@ def test_dedupe_and_progress(ws_tmp):
 
 
 @respx.mock
+def test_single_stream_reports_progress_before_completion(ws_tmp):
+    """The reported regression: a 0 B / 0 B row that only moves when the file is already done.
+
+    The single-stream path used to call the progress callback only after ``part.replace(dest)``.
+    It now reports the known total before the first byte and the written bytes per chunk, so the
+    bar can move while the transfer is still running.
+    """
+    data = b"x" * (4 * 64 * 1024)
+
+    class Body:
+        def __iter__(self):
+            for start in range(0, len(data), 64 * 1024):
+                yield data[start : start + 64 * 1024]
+
+    respx.get("https://x/a.jar").mock(return_value=httpx.Response(200, content=Body()))
+    events = []
+    result = Downloader(segments=1, concurrency=1).download(
+        [DownloadTask("https://x/a.jar", ws_tmp / "a.jar", size=len(data))],
+        progress=events.append,
+    )
+    assert result.failed == []
+    assert events[0].done_bytes == 0
+    assert events[0].total_bytes == len(data)
+    assert any(0 < event.done_bytes < len(data) for event in events), (
+        f"no progress event arrived before completion: {[e.done_bytes for e in events]}"
+    )
+    assert events[-1].done_bytes == len(data) == events[-1].total_bytes
+    assert events[-1].done_files == 1
+
+
+@respx.mock
+def test_unknown_size_learns_content_length_before_the_first_chunk(ws_tmp):
+    """A task without ``size`` gets its total from the response instead of reporting 0 forever."""
+    data = b"y" * 3000
+
+    class Body:
+        def __iter__(self):
+            yield data[:1000]
+            yield data[1000:]
+
+    respx.get("https://x/a.jar").mock(
+        return_value=httpx.Response(
+            200, content=Body(), headers={"Content-Length": str(len(data))}
+        )
+    )
+    events = []
+    result = Downloader(segments=1).download(
+        [DownloadTask("https://x/a.jar", ws_tmp / "a.jar")],
+        progress=events.append,
+    )
+    assert result.failed == []
+    assert events[0].total_bytes == 0  # nothing was known when the batch started
+    assert any(event.total_bytes == len(data) for event in events), (
+        f"Content-Length was never adopted: {[e.total_bytes for e in events]}"
+    )
+    assert events[-1].done_bytes == len(data) == events[-1].total_bytes
+
+
+def test_first_byte_failure_switches_to_the_next_candidate(ws_tmp, monkeypatch):
+    """A slow/failed first source is not a dead end: the next candidate finishes the file."""
+    data = b"z" * 1024
+    seen: list[str] = []
+
+    class FailingBody:
+        def __iter__(self):
+            raise httpx.ReadTimeout("first byte took too long")
+            yield b""  # pragma: no cover - makes this a generator
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        if request.url.host == "slow.example":
+            return httpx.Response(200, content=FailingBody())
+        return httpx.Response(200, content=data)
+
+    monkeypatch.setattr(
+        "launcher.meta.sources.candidates",
+        lambda url, **kwargs: ["https://slow.example/a.jar", "https://fast.example/a.jar"],
+    )
+    events = []
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        result = Downloader(client=client, segments=1, retries=1, retry_wait=0.01).download(
+            [DownloadTask("https://x/a.jar", ws_tmp / "a.jar", size=len(data))],
+            progress=events.append,
+        )
+    finally:
+        client.close()
+    assert seen == ["slow.example", "fast.example"]
+    assert result.failed == []
+    assert (ws_tmp / "a.jar").read_bytes() == data
+    assert events[-1].done_bytes == len(data) == events[-1].total_bytes
+
+
+def test_mid_stream_drop_reports_partial_progress_and_keeps_the_part(ws_tmp):
+    """A dropped connection must show how far it got, then fail - never sit at 0%."""
+    first = b"p" * (64 * 1024)
+
+    class Body:
+        def __iter__(self):
+            yield first
+            raise httpx.ReadTimeout("mid-stream drop")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=Body())
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    events = []
+    try:
+        result = Downloader(
+            client=client, segments=1, retries=1, retry_wait=0.01
+        ).download(
+            [DownloadTask("https://x/a.jar", ws_tmp / "a.jar", size=len(first) + 500)],
+            progress=events.append,
+        )
+    finally:
+        client.close()
+    assert result.downloaded == 0
+    assert len(result.failed) == 1
+    assert (ws_tmp / "a.jar.part").read_bytes() == first
+    assert any(event.done_bytes == len(first) for event in events), (
+        f"the partial bytes were never reported: {[e.done_bytes for e in events]}"
+    )
+
+
+@respx.mock
 def test_force_redownload(ws_tmp):
     data = b"new-content"
     dest = ws_tmp / "a.jar"
