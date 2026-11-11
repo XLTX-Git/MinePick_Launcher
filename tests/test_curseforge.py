@@ -105,13 +105,16 @@ def test_search_params_include_filters() -> None:
 @pytest.mark.parametrize(
     ("sort", "sort_field"),
     [
-        ("relevance", None),  # no field: the API's own match order (see SORT_FIELDS)
+        # CurseForge has no relevance field. Leaving it out made the API answer in *name* order
+        # (mods starting with "#" or "(" first, a few hundred downloads); Popularity is the closest
+        # proxy and every key must map to a field.
+        ("relevance", "Popularity"),
         ("downloads", "TotalDownloads"),
         ("updated", "LastUpdated"),
         ("newest", "ReleasedDate"),
     ],
 )
-def test_search_sort_mapping_and_offset(sort: str, sort_field: str | None) -> None:
+def test_search_sort_mapping_and_offset(sort: str, sort_field: str) -> None:
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -122,8 +125,8 @@ def test_search_sort_mapping_and_offset(sort: str, sort_field: str | None) -> No
     cf.search_projects("x", limit=15, offset=30, sort=sort, client=client)
     assert seen["index"] == "30"
     assert seen["pageSize"] == "15"
-    assert seen.get("sortField") == sort_field
-    assert ("sortOrder" in seen) is (sort_field is not None)
+    assert seen["sortField"] == sort_field
+    assert seen["sortOrder"] == "desc", "no sort direction is allowed to be omitted"
 
 
 def test_search_reads_total_count_and_source() -> None:

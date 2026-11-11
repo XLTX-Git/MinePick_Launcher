@@ -72,12 +72,14 @@ LOADER_IDS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
 _LOADER_NAMES = {value: key for key, value in LOADER_IDS.items()}
 #: The dropdown's semantic sort keys mapped to CurseForge's ``ModsSearchSortField`` values.
 #:
-#: CurseForge has no relevance field. For "relevance" the parameter is omitted on purpose: the API
-#: then answers in its own match order (measured 2026-10-31: searching "entity rendering" returns the
-#: two projects whose names contain both words first), while ``Popularity`` pushes unrelated popular
-#: mods to the top. The other three map to the documented enum values.
+#: CurseForge has no relevance sort. Omitting the field is not a neutral choice: measured
+#: 2026-11-11, an unsorted search answers in *name* order, so queries beginning with "#" or "("
+#: surfaced mods with a few hundred downloads ahead of GeckoLib / JEI. ``Popularity`` is the closest
+#: proxy - the keyword filter still applies, and the popular matches rise - while ``Featured`` was
+#: measured worse (tens of thousands of downloads outranking the real hits). Every key therefore
+#: maps to a field; none is allowed to leave the request unsorted.
 SORT_FIELDS = {
-    "relevance": None,
+    "relevance": "Popularity",
     "downloads": "TotalDownloads",
     "updated": "LastUpdated",
     "newest": "ReleasedDate",
@@ -246,10 +248,9 @@ def search_projects(
         "searchFilter": query,
         "pageSize": str(min(limit, 50)),
         "index": str(max(0, offset)),
+        "sortField": sort_field,
+        "sortOrder": "desc",
     }
-    if sort_field:
-        params["sortField"] = sort_field
-        params["sortOrder"] = "desc"
     if game_version:
         params["gameVersion"] = game_version
     if loader and kind == "mod":
