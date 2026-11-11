@@ -215,8 +215,16 @@ def install_loader(
     cache_dir: Path | None = None,
     progress: Callable[[DownloadProgress], None] | None = None,
     timeout_s: int = 3600,
+    instance_id: str | None = None,
 ) -> str:
-    """Download and run the installer; return the newly generated version id."""
+    """Download and run the installer; return the newly generated version id.
+
+    The loader installer always writes its own folder name (``fabric-loader-<loader>-<mc>``,
+    ``<mc>-forge-<loader>``, ...), which a second install of the same loader would overwrite. An
+    ``instance_id`` renames exactly that new folder to the caller's instance name and rewrites the
+    profile JSON's ``id`` (plus its jar) with :func:`launcher.instances.rename_instance`, so each
+    install leaves its own launchable profile behind. The returned id is the renamed one.
+    """
     cache_dir = cache_dir or (launcher_paths.launcher_dir() / "cache")
     gp = launcher_paths.GamePaths(game_dir)
     gp.ensure_all()
@@ -243,7 +251,40 @@ def install_loader(
     after = _list_version_ids(gp.versions_dir)
     created = sorted(after - before)
     if not created:
+        # The installer is idempotent for an already-installed build: it rewrites that folder
+        # instead of creating a second one. The folder is still the one this install asked for, so
+        # it can become the new instance - copied, never moved, because it may already be somebody
+        # else's instance from an install made before every install got its own folder.
+        canonical = _canonical_loader_id(loader_version)
+        if canonical and canonical in after:
+            if instance_id and instance_id != canonical:
+                from launcher import instances
+
+                return instances.create_instance(instance_id, canonical, game_dir).id
+            return canonical
         raise ModsError(tr_core("mods.installer_no_version"))
     created_id = created[-1]
     _copy_game_jar(created_id, game_dir)
+    if instance_id and instance_id != created_id:
+        from launcher import instances
+
+        return instances.rename_instance(created_id, instance_id, game_dir).id
     return created_id
+
+
+def _canonical_loader_id(loader_version: LoaderVersion) -> str:
+    """The folder name a loader's installer writes for this loader build (its documented scheme).
+
+    Used only when the installer was idempotent (it rewrote an existing folder, so the before/after
+    folder set did not change) - the folder is still the one this install asked for. A scheme this
+    function does not know returns "" and the caller keeps its old "installer made nothing" error.
+    """
+    if loader_version.loader == "fabric":
+        return "fabric-loader-" + loader_version.version + "-" + loader_version.game_version
+    if loader_version.loader == "quilt":
+        return "quilt-loader-" + loader_version.version + "-" + loader_version.game_version
+    if loader_version.loader == "forge":
+        return loader_version.game_version + "-forge-" + loader_version.version
+    if loader_version.loader == "neoforge":
+        return "neoforge-" + loader_version.version
+    return ""

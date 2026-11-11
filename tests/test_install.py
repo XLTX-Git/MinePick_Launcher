@@ -228,3 +228,31 @@ def test_reinstall_skips_everything(ws_tmp):
     assert result.downloaded == 0
     assert result.skipped == 4
     assert result.failed == []
+
+
+@respx.mock
+def test_target_id_writes_a_separate_launchable_profile(ws_tmp):
+    """Every install may own its folder: the profile JSON and the jar follow ``target_id``."""
+    game, cache = _prepare(ws_tmp)
+    _mock_all()
+    result = install_version(
+        "testv",
+        game_dir=game,
+        cache_dir=cache,
+        concurrency=2,
+        platform=WIN,
+        target_id="testv-2",
+    )
+    assert result.failed == []
+    profile = game / "versions" / "testv-2" / "testv-2.json"
+    assert profile.read_text(encoding="utf-8").strip()
+    raw = json.loads(profile.read_text(encoding="utf-8"))
+    assert raw["id"] == "testv-2"
+    # The manifest id is kept beside the folder id: a duplicate instance still knows which Minecraft
+    # version it was installed from (the instance model reads this field).
+    assert raw["minepickMinecraft"] == "testv"
+    # The client jar is written under the target folder, so the copied profile can launch itself.
+    assert (game / "versions" / "testv-2" / "testv-2.jar").read_bytes() == CLIENT
+    # The original version folder is untouched (it was never the destination).
+    assert not (game / "versions" / "testv").exists()
+

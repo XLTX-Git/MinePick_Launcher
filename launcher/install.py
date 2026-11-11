@@ -42,6 +42,7 @@ from launcher.meta.rules import (
     resolve_libraries,
 )
 from launcher.meta.version import (
+    INSTANCE_MINECRAFT_FIELD,
     Artifact,
     VersionJson,
     load_version_json,
@@ -231,6 +232,24 @@ def write_version_files(version: VersionJson, game_dir: Path) -> Path:
     return version_file
 
 
+#: Profile-JSON field this launcher writes on a copied instance: the manifest id the copy came from.
+#: ``id`` must be the instance folder (launch reads it as the profile id), so the Minecraft version a
+#: duplicate was installed from is kept beside it. Minecraft ignores the field; the instance model
+#: reads it to label the copy with the version it actually runs (``instances.profile_identity``).
+def _tag_instance_profile(version_file: Path, minecraft_id: str) -> None:
+    """Record the manifest id a copied instance was installed from (best effort, never fatal)."""
+    try:
+        raw = json.loads(version_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(raw, dict):
+        return
+    raw[INSTANCE_MINECRAFT_FIELD] = minecraft_id
+    tmp = version_file.with_name(version_file.name + ".tmp")
+    tmp.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(version_file)
+
+
 def write_asset_index(asset_index: AssetIndex, index_id: str, game_dir: Path) -> Path:
     """Write the asset index to assets/indexes/<id>.json (official layout)."""
     gp = paths.GamePaths(game_dir)
@@ -286,17 +305,27 @@ def install_version(
     progress: Callable[[DownloadProgress], None] | None = None,
     auto_install_java: bool = False,
     runtime_dir: Path | None = None,
+    target_id: str | None = None,
 ) -> DownloadResult:
     """Install a version: write version JSON + asset index + download all files.
 Return a download summary.
 
     When auto_install_java=True, a missing suitable Java triggers an automatic JRE
 download first.
+
+    ``target_id`` is the instance folder the files are written to. The manifest entry is still
+    loaded by ``version_id``, but the written profile JSON carries ``target_id`` as its ``id`` and
+    every file is planned under that folder. That is what lets the versions page create a new
+    instance for every install (``1.21.1``, ``1.21.1-2``, ...) instead of always overwriting
+    ``versions/<version_id>``. ``None`` keeps the historical behaviour: the profile keeps its
+    manifest id.
     """
     platform = platform or detect_platform()
     version = load_version_json(
         version_id, cache_dir=cache_dir, force=force, client=client
     )
+    if target_id and target_id != version.id:
+        version = version.model_copy(update={"id": target_id})
     if auto_install_java:
         ensure_java_for_version(
             version,
@@ -306,7 +335,9 @@ download first.
         )
     gp = paths.GamePaths(game_dir)
     gp.ensure_all()
-    write_version_files(version, game_dir)
+    version_file = write_version_files(version, game_dir)
+    if target_id and target_id != version_id:
+        _tag_instance_profile(version_file, version_id)
 
     asset_index_cache = (
         cache_dir / "assets" / (version.asset_index.id + ".json")

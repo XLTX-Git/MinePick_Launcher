@@ -80,6 +80,59 @@ def test_install_loader_detects_new_version(ws_tmp, monkeypatch):
     assert version_id == "fabric-loader-0.19.3-1.20.1"
 
 
+def test_install_loader_can_own_a_new_instance_folder(ws_tmp, monkeypatch):
+    """Every loader install may get its own folder; the canonical profile is renamed, not reused."""
+    import json
+
+    import launcher.mods.installer as inst
+
+    game = ws_tmp / "mc"
+    versions = game / "versions"
+    versions.mkdir(parents=True)
+
+    def fake_run(jar, args, *, java_path, work_dir, temp_dir, timeout_s=3600):
+        folder = work_dir / "versions" / "fabric-loader-0.19.3-1.20.1"
+        folder.mkdir(parents=True)
+        (folder / "fabric-loader-0.19.3-1.20.1.json").write_text(
+            json.dumps(
+                {
+                    "id": "fabric-loader-0.19.3-1.20.1",
+                    "inheritsFrom": "1.20.1",
+                    "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return 0
+
+    monkeypatch.setattr(
+        inst,
+        "list_java",
+        lambda probe_dir=None: [JavaRuntime(path=Path("/fake/java"), major=21, provider="system")],
+    )
+    monkeypatch.setattr(
+        inst,
+        "download_installer",
+        lambda lv, cache_dir, progress=None: Path("/fake.jar"),
+    )
+    monkeypatch.setattr(inst, "run_installer_jar", fake_run)
+
+    created = install_loader(
+        FABRIC, game, cache_dir=ws_tmp / "cache", instance_id="my-fabric-pack"
+    )
+    assert created == "my-fabric-pack"
+    profile = json.loads(
+        (versions / "my-fabric-pack" / "my-fabric-pack.json").read_text(encoding="utf-8")
+    )
+    assert profile["id"] == "my-fabric-pack"
+    assert profile["inheritsFrom"] == "1.20.1"
+    assert not (versions / "fabric-loader-0.19.3-1.20.1").exists()
+    sidecar = json.loads(
+        (versions / "my-fabric-pack" / "minepick.json").read_text(encoding="utf-8")
+    )
+    assert sidecar["id"] == "my-fabric-pack"
+
+
 def test_install_loader_nonzero_exit(ws_tmp, monkeypatch):
     import launcher.mods.installer as inst
 
