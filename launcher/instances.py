@@ -50,7 +50,7 @@ import re
 import shutil
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,6 +59,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from launcher import paths
 from launcher.i18n import tr_core
 from launcher.meta.version import (
+    INSTANCE_MINECRAFT_FIELD,
     load_version_json,
     version_json_error,
     version_json_path,
@@ -66,6 +67,9 @@ from launcher.meta.version import (
 
 INSTANCE_META_FILENAME = "minepick.json"  # per-instance metadata inside the folder
 LEGACY_INSTANCES_DIRNAME = "instances"  # pre-0.3.0 layout, no longer used
+
+#: Longest instance folder/display name the launcher accepts (see :func:`validate_name`).
+MAX_INSTANCE_NAME_LENGTH = 32
 
 #: Prefix that marks an icon as a user picture: ``custom:icon.png`` is ``<instance folder>/icon.png``.
 #: The value is stored relative to the instance folder, never as an absolute path.
@@ -77,7 +81,10 @@ ISOLATION_ON = "on"
 ISOLATION_OFF = "off"
 ISOLATION_CHOICES = (ISOLATION_FOLLOW, ISOLATION_ON, ISOLATION_OFF)
 
-_NAME_RE = re.compile(r"^[\w\u4e00-\u9fff][\w\u4e00-\u9fff ._-]{0,31}$")
+_NAME_RE = re.compile(
+    rf"^[\w\u4e00-\u9fff][\w\u4e00-\u9fff ._-]{{0,{MAX_INSTANCE_NAME_LENGTH - 1}}}$"
+)
+
 
 
 class InstanceSettings(BaseModel):
@@ -175,6 +182,35 @@ def validate_name(name: str) -> str:
     if not name or not _NAME_RE.match(name):
         raise InstancesError(tr_core("instances.name_invalid"))
     return name
+
+
+def unique_instance_name(
+    name: str,
+    taken: Iterable[str],
+    *,
+    fallback: str = "instance",
+) -> str:
+    """The first folder name that is free: ``name``, else ``name-2``, ``name-3`` ...
+
+    The suffix is the one the versions page already suggests (``suggest_name``), so an automatic
+    duplicate and the advice under the name field say the same thing. ``taken`` may hold display
+    names as well as folder ids; the comparison is case-insensitive like the Windows file system, so
+    ``Mine`` cannot be created beside ``mine``. The result is always a name
+    :func:`validate_name` accepts (32 characters at most, safe punctuation only).
+    """
+    reserved = {str(item).strip().casefold() for item in taken if str(item).strip()}
+    base = (name or "").strip() or fallback
+    base = base[:MAX_INSTANCE_NAME_LENGTH].strip() or fallback
+    if base.casefold() not in reserved:
+        return base
+    index = 2
+    while True:
+        suffix = f"-{index}"
+        candidate = base[: MAX_INSTANCE_NAME_LENGTH - len(suffix)].rstrip() + suffix
+        if candidate.casefold() not in reserved:
+            return candidate
+        index += 1
+
 
 
 def default_instance_name(version_id: str) -> str:
@@ -495,31 +531,52 @@ class VersionIdentity:
     ``version_id`` is the *profile* (what ``base_version`` would store); ``minecraft`` and ``loader``
     are what a person reads on the modify page ("1.21.11" and "Fabric 0.19.3"). ``loader`` is empty
     for a vanilla profile - the label itself is not translated here, because loader names are proper
-    nouns; the page supplies 原版 for the empty case.
+    nouns; the page supplies 原版 for the empty case. ``loader_id`` is the API identifier
+    ("fabric" / "forge" / "neoforge" / "quilt") the resources page filters with.
     """
 
     version_id: str
     minecraft: str
     loader: str = ""
+    loader_id: str = ""
 
     @property
     def is_loader(self) -> bool:
         return bool(self.loader)
 
 
-def _known_profile(version_id: str) -> tuple[str, str] | None:
-    """(minecraft version, loader label) for the profile-id shapes this launcher installs."""
+#: Library coordinate prefix -> (loader id, display label). The version after the prefix is what the
+#: loader actually is; Forge joins it to its Minecraft version (``1.20.1-47.4.22``), so the part after
+#: the last dash is the loader build.
+_LOADER_LIBRARIES = (
+    ("net.fabricmc:fabric-loader:", "fabric", "Fabric", False),
+    ("net.minecraftforge:forge:", "forge", "Forge", True),
+    ("net.neoforged:neoforge:", "neoforge", "NeoForge", False),
+)
+
+#: ``mainClass`` markers for a loader profile whose libraries were stripped by a tool. The label has
+#: no version then, which is still enough to filter and to grey a mod row correctly.
+_LOADER_MAIN_CLASSES = (
+    ("net.fabricmc.loader", "fabric", "Fabric"),
+    ("net.neoforged", "neoforge", "NeoForge"),
+    ("cpw.mods", "forge", "Forge"),
+    ("net.minecraftforge", "forge", "Forge"),
+)
+
+
+def _known_profile(version_id: str) -> tuple[str, str, str] | None:
+    """(minecraft version, loader label, loader id) for profile-id shapes this launcher installs."""
     if version_id.startswith("fabric-loader-"):
         parts = version_id.split("-")
         if len(parts) >= 4:
-            return parts[3], "Fabric " + parts[2]
+            return parts[3], "Fabric " + parts[2], "fabric"
     if version_id.startswith("quilt-loader-"):
         parts = version_id.split("-")
         if len(parts) >= 4:
-            return parts[3], "Quilt " + parts[2]
+            return parts[3], "Quilt " + parts[2], "quilt"
     if "-forge-" in version_id:
         minecraft, loader_version = version_id.split("-forge-", 1)
-        return minecraft, "Forge " + loader_version
+        return minecraft, "Forge " + loader_version, "forge"
     if version_id.startswith("neoforge-"):
         loader_version = version_id[len("neoforge-") :]
         numbers = loader_version.split(".")
@@ -529,8 +586,36 @@ def _known_profile(version_id: str) -> tuple[str, str] | None:
             if len(numbers) >= 2 and numbers[0].isdigit() and numbers[1].isdigit()
             else loader_version
         )
-        return minecraft, "NeoForge " + loader_version
+        return minecraft, "NeoForge " + loader_version, "neoforge"
     return None
+
+
+def _loader_from_json(raw: dict) -> tuple[str, str]:
+    """(loader id, label) a profile JSON itself names, or ("", "") when it is vanilla.
+
+    A loader profile copied under a new folder id (the versions page now creates one per install)
+    no longer says "fabric-loader" in its folder name. Its own ``libraries`` still name the loader
+    and its build, so the identity survives the rename; ``mainClass`` is the fallback for a profile
+    whose library list an external tool rewrote. A vanilla profile has neither, so the caller keeps
+    following ``inheritsFrom``.
+    """
+    libraries = raw.get("libraries")
+    if isinstance(libraries, list):
+        for library in libraries:
+            if not isinstance(library, dict):
+                continue
+            name = str(library.get("name") or "")
+            for prefix, loader_id, label, dash_version in _LOADER_LIBRARIES:
+                if name.startswith(prefix):
+                    version = name[len(prefix) :].split(":")[0]
+                    if dash_version:
+                        version = version.rsplit("-", 1)[-1]
+                    return loader_id, f"{label} {version}".strip()
+    main_class = str(raw.get("mainClass") or "").lower()
+    for marker, loader_id, label in _LOADER_MAIN_CLASSES:
+        if marker in main_class:
+            return loader_id, label
+    return "", ""
 
 
 def _profile_json(game_dir: Path, version_id: str) -> dict:
@@ -545,13 +630,31 @@ def _profile_json(game_dir: Path, version_id: str) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _minecraft_below(game_dir: Path, version_id: str) -> str:
+    """The Minecraft version named by the first recognisable id under ``version_id``."""
+    seen: set[str] = set()
+    current = version_id
+    while current and current not in seen:
+        seen.add(current)
+        known = _known_profile(current)
+        if known is not None:
+            return known[0]
+        parent = _profile_json(game_dir, current).get("inheritsFrom")
+        if not isinstance(parent, str) or not parent.strip():
+            return current
+        current = parent.strip()
+    return ""
+
+
 def profile_identity(game_dir: Path, version_id: str) -> VersionIdentity:
     """Resolve ``version_id`` to the Minecraft version and loader a launch would actually run.
 
     The id's own shape is the first answer, because that is how this launcher names loader profiles;
-    an id it does not recognise follows ``inheritsFrom`` (the same walk the instances page does for
-    its cards), which is what a hand-made or renamed pack needs. A cycle, a missing parent or a
-    sparse profile ends the walk instead of raising: the modify page must keep rendering.
+    an id it does not recognise asks the profile JSON itself (``libraries`` / ``mainClass``), which is
+    what a renamed loader instance needs, and finally follows ``inheritsFrom`` (the same walk the
+    instances page does for its cards), which is what a hand-made or thin pack needs. A cycle, a
+    missing parent or a sparse profile ends the walk instead of raising: the modify page must keep
+    rendering.
     """
     seen: set[str] = set()
     current = version_id
@@ -559,8 +662,37 @@ def profile_identity(game_dir: Path, version_id: str) -> VersionIdentity:
         seen.add(current)
         known = _known_profile(current)
         if known is not None:
-            return VersionIdentity(version_id=version_id, minecraft=known[0], loader=known[1])
-        parent = _profile_json(game_dir, current).get("inheritsFrom")
+            return VersionIdentity(
+                version_id=version_id,
+                minecraft=known[0],
+                loader=known[1],
+                loader_id=known[2],
+            )
+        raw = _profile_json(game_dir, current)
+        tagged_minecraft = str(raw.get(INSTANCE_MINECRAFT_FIELD) or "").strip()
+        if tagged_minecraft:
+            loader_id, loader_label = _loader_from_json(raw)
+            return VersionIdentity(
+                version_id=version_id,
+                minecraft=tagged_minecraft,
+                loader=loader_label,
+                loader_id=loader_id,
+            )
+        loader_id, loader_label = _loader_from_json(raw)
+        if loader_id:
+            parent = raw.get("inheritsFrom")
+            minecraft = (
+                _minecraft_below(game_dir, parent.strip())
+                if isinstance(parent, str) and parent.strip()
+                else ""
+            )
+            return VersionIdentity(
+                version_id=version_id,
+                minecraft=minecraft or current,
+                loader=loader_label,
+                loader_id=loader_id,
+            )
+        parent = raw.get("inheritsFrom")
         if not isinstance(parent, str) or not parent.strip():
             return VersionIdentity(version_id=version_id, minecraft=current)
         current = parent.strip()
@@ -805,6 +937,9 @@ def create_instance(
     target.mkdir(parents=True, exist_ok=True)
     raw = json.loads(source_json.read_text(encoding="utf-8"))
     raw["id"] = name  # the folder name is the profile id
+    source_identity = profile_identity(game_dir, version_id)
+    if source_identity.minecraft:
+        raw[INSTANCE_MINECRAFT_FIELD] = source_identity.minecraft
     (target / (name + ".json")).write_text(
         json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
     )

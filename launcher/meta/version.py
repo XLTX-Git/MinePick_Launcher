@@ -195,6 +195,12 @@ class VersionJson(BaseModel):
         return LEGACY_JVM_ARGUMENTS
 
 
+#: Profile-JSON field this launcher writes on an instance copied from a manifest version. ``id``
+#: must be the folder name, so the original Minecraft version is kept beside it; Minecraft ignores
+#: the field and the instance model reads it to label the copy with the version it really runs.
+INSTANCE_MINECRAFT_FIELD = "minepickMinecraft"
+
+
 # Implicit JVM args for legacy versions (matching the official launcher)
 LEGACY_JVM_ARGUMENTS: list[GameArgument] = [
     "-Djava.library.path=${natives_directory}",

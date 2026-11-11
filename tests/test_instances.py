@@ -39,10 +39,12 @@ from launcher.instances import (
     isolation_enabled,
     legacy_instances_dir,
     list_instances,
+    profile_identity,
     rename_instance,
     reset_instance_settings,
     resolve_instance,
     set_instance_settings,
+    unique_instance_name,
     update_instance_note,
     validate_name,
 )
@@ -96,6 +98,61 @@ def test_validate_name():
     for bad in ("", "  ", "a/b", "a\\b", "x" * 40):
         with pytest.raises(InstancesError):
             validate_name(bad)
+
+
+def test_unique_instance_name_adds_a_suffix_and_keeps_the_charset():
+    assert unique_instance_name("1.21.1", set()) == "1.21.1"
+    assert unique_instance_name("1.21.1", {"1.21.1"}) == "1.21.1-2"
+    assert unique_instance_name("1.21.1", {"1.21.1", "1.21.1-2"}) == "1.21.1-3"
+    # Windows compares paths case-insensitively, so the name has to as well.
+    assert unique_instance_name("Mine", {"mine"}) == "Mine-2"
+    # The result must still pass validate_name, even when the base is at the length limit.
+    long = unique_instance_name("x" * 40, {"x" * 32})
+    assert len(long) <= 32
+    assert validate_name(long) == long
+
+
+def test_profile_identity_reads_a_renamed_loader_profile(ws_tmp):
+    """The versions page names a loader instance after the user; its JSON still says what it runs."""
+    game = ws_tmp / "mc"
+    folder = game / "versions" / "my pack"
+    folder.mkdir(parents=True)
+    (folder / "my pack.json").write_text(
+        json.dumps(
+            {
+                "id": "my pack",
+                "inheritsFrom": "1.20.1",
+                "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+                "libraries": [
+                    {"name": "net.fabricmc:fabric-loader:0.16.9"},
+                    {"name": "net.fabricmc:intermediary:1.20.1"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    identity = profile_identity(game, "my pack")
+    assert identity.loader_id == "fabric"
+    assert identity.loader == "Fabric 0.16.9"
+    assert identity.minecraft == "1.20.1"
+    assert identity.is_loader is True
+
+
+def test_a_copied_vanilla_profile_keeps_its_minecraft_version(ws_tmp):
+    """A duplicate folder id cannot say the version; the tag launcher.install writes still can."""
+    from launcher.instances import INSTANCE_MINECRAFT_FIELD
+
+    game = ws_tmp / "mc"
+    folder = game / "versions" / "1.21.1-2"
+    folder.mkdir(parents=True)
+    (folder / "1.21.1-2.json").write_text(
+        json.dumps({"id": "1.21.1-2", INSTANCE_MINECRAFT_FIELD: "1.21.1"}),
+        encoding="utf-8",
+    )
+    identity = profile_identity(game, "1.21.1-2")
+    assert identity.minecraft == "1.21.1"
+    assert identity.loader_id == ""
+    assert identity.is_loader is False
 
 
 def test_list_instances_only_counts_version_folders(ws_tmp):
