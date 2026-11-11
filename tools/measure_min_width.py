@@ -138,8 +138,9 @@ def _prepare():
 
     cfg, cfg_path = config.load()
     cfg.game_dir = str(game_dir)
+    cfg.title_bar_color = ""
     config.save(cfg, cfg_path)
-    apply_theme("dark", None, None, "default")
+    apply_theme("dark", None, None, "default", "")
 
     store = AccountStore()
     if not store.load():

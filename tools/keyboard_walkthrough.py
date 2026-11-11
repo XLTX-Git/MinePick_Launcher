@@ -607,7 +607,7 @@ def main() -> int:
     java_page.list_java = lambda *a, **k: []  # type: ignore[assignment]
 
     app = create_app([])
-    apply_theme(args.theme, None, None, "default")
+    apply_theme(args.theme, None, None, "default", "")
     for font_file in (
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/msyhbd.ttc",
@@ -621,8 +621,9 @@ def main() -> int:
     cfg, cfg_path = config.load()
     cfg.game_dir = str(game_dir)
     cfg.theme = args.theme
+    cfg.title_bar_color = ""
     config.save(cfg, cfg_path)
-    apply_theme(args.theme, None, None, cfg.ui_radius)
+    apply_theme(args.theme, None, None, cfg.ui_radius, "")
     store = AccountStore()
     if not store.load():
         account = create_offline_account("Steve")

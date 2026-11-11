@@ -1,4 +1,4 @@
-﻿# SPDX-FileCopyrightText: 2026 WDNDXLTX
+# SPDX-FileCopyrightText: 2026 WDNDXLTX
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # This file is part of MinePick Launcher.
@@ -87,6 +87,7 @@ def main() -> int:
         accent="",
         font="",
         radius="default",
+        title_bar="",
         game_dir=game_dir,
     )
 
@@ -113,7 +114,7 @@ def main() -> int:
         if Path(font_file).exists():
             QFontDatabase.addApplicationFont(font_file)
     cfg, _ = config.load()
-    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius, cfg.title_bar_color)
 
     from gui.main_window import NAV_KEYS, MainWindow
 

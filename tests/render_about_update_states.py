@@ -98,6 +98,7 @@ def main() -> int:
         accent="",
         font="",
         radius="default",
+        title_bar="",
         game_dir=game_dir,
     )
 
@@ -136,7 +137,7 @@ def main() -> int:
         if Path(font_file).exists():
             QFontDatabase.addApplicationFont(font_file)
     cfg, _ = config.load()
-    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius, cfg.title_bar_color)
 
     # The window schedules its startup update check 2.5s after construction. A renderer must not let
     # a real network check land in the middle of the state being captured (measured: the "ready"

@@ -518,6 +518,7 @@ def _prepare_environment(theme: str, language: str) -> Path:
     cfg.game_dir = str(game)
     cfg.theme = theme
     cfg.accent_color = ""
+    cfg.title_bar_color = ""
     cfg.ui_font = ""
     cfg.ui_radius = "default"
     config.save(cfg, cfg_path)
@@ -736,7 +737,7 @@ def main(argv: list[str] | None = None) -> int:
     from launcher import config
 
     cfg, _ = config.load()
-    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius, cfg.title_bar_color)
     _stub_sources()
 
     reports: list[ScreenReport] = []

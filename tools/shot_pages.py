@@ -330,6 +330,7 @@ def prepare_render_config(
     accent: str,
     font: str,
     radius: str,
+    title_bar: str = "",
     game_dir: Path,
 ) -> None:
     """Write every render-deciding config key **before** the application is created.
@@ -361,6 +362,7 @@ def prepare_render_config(
     cfg.game_dir = str(game_dir)
     cfg.theme = theme
     cfg.accent_color = accent
+    cfg.title_bar_color = title_bar
     cfg.ui_font = font
     cfg.ui_radius = radius
     config.save(cfg, cfg_path)
@@ -473,13 +475,19 @@ def warm_icon_cache(urls, *, workers: int = ICON_WARM_CONCURRENCY) -> None:
     print(f"warm-cache: {len(unique)} icon(s) ready")
 
 
-def _scroll_page_to_bottom(page) -> None:
-    """Scroll a page's QScrollArea to the end (settings page) so the lower rows are visible."""
+def _scroll_page_to(page, fraction: float) -> None:
+    """Scroll a page's QScrollArea to a fraction of its range (0 = top, 1 = bottom)."""
     from PySide6.QtWidgets import QScrollArea
 
+    value = max(0.0, min(1.0, float(fraction)))
     for area in page.findChildren(QScrollArea):
         bar = area.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        bar.setValue(round(bar.maximum() * value))
+
+
+def _scroll_page_to_bottom(page) -> None:
+    """Scroll a page's QScrollArea to the end (settings page) so the lower rows are visible."""
+    _scroll_page_to(page, 1.0)
 
 
 #: Property the focus ring is gated on, set by ``gui.widgets.KeyboardFocusTracker`` (see the
@@ -613,6 +621,22 @@ def page_paper_color():
     return QColor(theme.current_tokens().get("BG_PAGE", "#0a1622"))
 
 
+def show_preview_capsule(window) -> None:
+    """Put the real 联机中 capsule in the title bar for a render.
+
+    The capsule is hidden until a room exists, which a screenshot machine never has. Showing the
+    product's own widget (rather than painting a look-alike) is what makes a title-bar render prove
+    that the capsule's derived fill and text are readable on a custom bar.
+    """
+    from gui import i18n
+
+    text = i18n.tr("link.badge.active", "U/8F3K")
+    window.link_capsule.setText(text)
+    window.link_capsule.setAccessibleName(text)
+    window.link_capsule.setToolTip(i18n.tr("link.badge.tooltip"))
+    window.link_capsule.show()
+
+
 def render_page_image(widget):
     """Render ``widget`` into an opaque QImage pre-filled with the page paper colour.
 
@@ -652,10 +676,26 @@ def main() -> int:
     parser.add_argument("--theme", default="dark", choices=["dark", "light"])
     parser.add_argument("--label", default="", help="filename prefix")
     parser.add_argument("--accent", default="", help="custom accent color, e.g. #3b82f6")
+    parser.add_argument(
+        "--title-bar",
+        default="",
+        help="custom title bar color, e.g. #e08a3c; empty follows the theme",
+    )
     parser.add_argument("--font", default="", help="custom UI font family")
     parser.add_argument("--radius", default="", help="corner radius preset: compact / default / round")
     parser.add_argument(
+        "--link-capsule",
+        action="store_true",
+        help="show the 联机中 capsule in the title bar for the render (preview only)",
+    )
+    parser.add_argument(
         "--scroll-bottom", action="store_true", help="scroll the page to the bottom before rendering"
+    )
+    parser.add_argument(
+        "--scroll",
+        type=float,
+        default=None,
+        help="scroll a page to this fraction of its range before rendering (0 = top, 1 = bottom)",
     )
     parser.add_argument("--pages", default="", help="comma separated page subset, e.g. launch,settings")
     parser.add_argument(
@@ -736,6 +776,7 @@ def main() -> int:
         accent=args.accent,
         font=args.font,
         radius=args.radius or "default",
+        title_bar=args.title_bar,
         game_dir=game_dir,
     )
 
@@ -821,7 +862,7 @@ def main() -> int:
     # The config was written before create_app(); re-apply the theme here because the CJK fonts were
     # registered just above (they are not available when create_app() applies the theme).
     cfg, _ = config.load()
-    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius)
+    apply_theme(cfg.theme, cfg.accent_color, cfg.ui_font, cfg.ui_radius, cfg.title_bar_color)
     # The instance detail's 截图 / 服务器 sections need something to show: small painted pictures and
     # a real servers.dat for each demo instance. QPainter needs the application that now exists.
     seed_preview_media(Path(game_dir))
@@ -868,7 +909,12 @@ def main() -> int:
             for _ in range(6):
                 app.processEvents()
                 time.sleep(0.05)
-        if args.scroll_bottom:
+        if args.scroll is not None:
+            _scroll_page_to(window.pages[name], args.scroll)
+            for _ in range(4):
+                app.processEvents()
+                time.sleep(0.05)
+        elif args.scroll_bottom:
             _scroll_page_to_bottom(window.pages[name])
             for _ in range(4):
                 app.processEvents()
@@ -887,6 +933,9 @@ def main() -> int:
                 assert_icons_loaded(page, f"page '{name}'")
         # No focus ring can reach a published picture: defocus first, then refuse to save if any
         # keyboardFocus mark survived (see defocus_for_shot/assert_no_focus_mark).
+        if args.link_capsule:
+            show_preview_capsule(window)
+            app.processEvents()
         defocus_for_shot(window, window.pages[name])
         assert_no_focus_mark(window, window.pages[name])
         image = render_page_image(window)

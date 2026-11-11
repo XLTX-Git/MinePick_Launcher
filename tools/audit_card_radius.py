@@ -86,6 +86,7 @@ def _prepare_environment(root: Path, language: str, theme: str) -> Path:
     cfg.game_dir = str(game)
     cfg.theme = theme
     cfg.accent_color = ""
+    cfg.title_bar_color = ""
     cfg.ui_font = ""
     cfg.ui_radius = "default"
     config.save(cfg, cfg_path)
@@ -171,7 +172,7 @@ def _audit_theme(root: Path, theme: str, language: str, out_dir: Path | None) ->
 
     app = QApplication.instance() or create_app([])
     _register_fonts()
-    apply_theme(theme, None, None, "default")
+    apply_theme(theme, None, None, "default", "")
 
     from gui.main_window import NAV_KEYS, MainWindow
 
