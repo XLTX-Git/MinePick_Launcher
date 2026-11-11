@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -1153,6 +1154,41 @@ class _PopupFitCombo(QComboBox):
         super().showPopup()
 
 
+class _FieldLineEdit(QLineEdit):
+    """Line edit that keeps the 36px field metric when the sheet's ``min-height`` re-polishes.
+
+    The sheet sets a 26px effective minimum on every input, which wins over a one-shot
+    ``setMinimumHeight(36)`` after the next polish. The resource grid needs both rows to stay 36px
+    tall: otherwise hiding the slug field (26px after that polish) shortens the row and moves the
+    loader/game-version fields. Returning the height from the size hint survives every re-polish,
+    the same way :class:`_PopupFitCombo` keeps the combo height.
+    """
+
+    FIELD_HEIGHT = 36
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if hint.height() < self.FIELD_HEIGHT:
+            hint.setHeight(self.FIELD_HEIGHT)
+        return hint
+
+
+def _fit_combo_width(combo: QComboBox, labels: list[str] | None = None) -> None:
+    """Give ``combo`` the width of its longest label plus the style's own arrow/padding chrome.
+
+    The chrome is measured from the widget (``sizeHint`` minus the current text) instead of being a
+    magic number, so a theme's padding or the platform's arrow metric cannot drift away from the
+    width the grid needs. ``labels`` lets a combo size for choices it does not currently hold, which
+    keeps the sort field from jumping between browse and search modes.
+    """
+    if labels is None:
+        labels = [combo.itemText(index) for index in range(combo.count())]
+    metrics = combo.fontMetrics()
+    chrome = max(0, combo.sizeHint().width() - metrics.horizontalAdvance(combo.currentText()))
+    widest = max((metrics.horizontalAdvance(text) for text in labels), default=0)
+    combo.setMinimumWidth(widest + chrome)
+
+
 class _TaskedInstall:
     """One resources-page install, listed as a task in the window's download page.
 
@@ -1331,20 +1367,24 @@ class _ContentTab(QWidget):
         #: The install currently running on this tab, if any (its task lives in the window's list).
         self._active_install: _TaskedInstall | None = None
 
-        self.loader_combo = QComboBox()
+        self.loader_combo = _PopupFitCombo()
         for name in ("fabric", "forge", "neoforge", "quilt"):
             self.loader_combo.addItem(display_loader_name(name), name)
+        # ensurePolished first: the chrome in _fit_combo_width is measured from the styled widget,
+        # not from Fusion's default padding.
+        self.loader_combo.ensurePolished()
+        _fit_combo_width(self.loader_combo)
         # WCAG 4.1.2: the row's "loader" label is a plain QLabel beside this combo, so it never became
         # the combo's name (only a QFormLayout row does that automatically).
         self.loader_combo.setAccessibleName(tr("mods.loader"))
-        self.game_version_edit = QLineEdit("1.20.1")
+        self.game_version_edit = _FieldLineEdit("1.20.1")
         self.game_version_edit.setAccessibleName(tr("mods.game_version"))  # WCAG 4.1.2
-        self.slug_edit = QLineEdit()
+        self.slug_edit = _FieldLineEdit()
         self.slug_edit.setAccessibleName(tr("mods.slug.label"))  # WCAG 4.1.2
         self.slug_edit.setPlaceholderText(tr("mods.slug.placeholder"))
         self.query_button = QPushButton(tr("mods.query"))
         self.query_button.setObjectName("queryButton")
-        self.search_edit = QLineEdit()
+        self.search_edit = _FieldLineEdit()
         self.search_edit.setAccessibleName(tr("mods.query"))  # WCAG 4.1.2
         add_search_icon(self.search_edit)
         placeholder_key = {
@@ -1354,6 +1394,15 @@ class _ContentTab(QWidget):
         }.get(kind, "mods.search.placeholder")
         self.search_edit.setPlaceholderText(tr(placeholder_key))
         self.search_button = QPushButton(tr("mods.search.button"))
+        # The two rows share one grid: a label column, a field column, a second label column, a
+        # second field column, the stretchy text field and the action button. The labels are also
+        # what lets the source/loader pair and the sort/game-version pair start at the same x on both
+        # rows - without them the second row's field sat behind a free-standing label and was offset
+        # from the first row's field.
+        self.source_label = QLabel(tr("mods.source"))
+        self.sort_label = QLabel(tr("mods.sort"))
+        self.loader_label = QLabel(tr("mods.loader")) if kind == "mod" else None
+        self.game_version_label = QLabel(tr("mods.game_version"))
         self.sort_combo = _PopupFitCombo()
         #: True once the user picked a sort themselves; a later search then keeps their choice
         #: instead of snapping back to the search default. Programmatic rebuilds never set it.
@@ -1369,18 +1418,17 @@ class _ContentTab(QWidget):
         self.sort_combo.setMinimumHeight(36)
         # Size for the longest label of *every* mode, not the current one: switching between browse
         # (2 items) and search (4 items) must not make the field jump.
-        self.sort_combo.setMinimumWidth(
-            max(
-                self.sort_combo.fontMetrics().horizontalAdvance(tr(label_key))
-                for _key, label_key in (*SORT_OPTIONS_BROWSE, *SORT_OPTIONS_SEARCH)
-            )
-            + 60
+        _fit_combo_width(
+            self.sort_combo,
+            [tr(label_key) for _key, label_key in (*SORT_OPTIONS_BROWSE, *SORT_OPTIONS_SEARCH)],
         )
         self.install_button = QPushButton(tr("mods.install"))
         self.open_folder_button = QPushButton(tr("mods.open_folder"))
         self.open_folder_button.setObjectName("secondaryButton")
         # PCL metrics: 36px fields and buttons. The stylesheet owns radius/border/padding; the height
-        # is fixed here so it cannot drift with the font of a language.
+        # is fixed here so it cannot drift with the font of a language. A fixed, not minimum, height
+        # also keeps the second grid row 36px tall when the slug field is hidden - otherwise the
+        # remaining 26px fields would centre in a shorter row and the whole row would move by 5px.
         for control in (
             self.loader_combo,
             self.game_version_edit,
@@ -1389,7 +1437,7 @@ class _ContentTab(QWidget):
             self.query_button,
             self.search_button,
         ):
-            control.setMinimumHeight(36)
+            control.setFixedHeight(36)
         self.list = _ResourceList()
         self.list.setObjectName("resourceList")
         # WCAG 4.1.2: the list is a focus stop of its own; the category name tells the four lists apart.
@@ -1410,15 +1458,38 @@ class _ContentTab(QWidget):
         self.dep_optional = QLabel("")
         self.dep_optional.setWordWrap(True)
 
-        query_row = QHBoxLayout()
-        query_row.setSpacing(8)
-        if kind == "mod":
-            query_row.addWidget(QLabel(tr("mods.loader")))
-            query_row.addWidget(self.loader_combo)
-        query_row.addWidget(QLabel(tr("mods.game_version")))
-        query_row.addWidget(self.game_version_edit)
-        query_row.addWidget(self.slug_edit, 1)
-        query_row.addWidget(self.query_button)
+        # One grid for both rows. Columns: label | field | label | field | stretchy text | button.
+        # Both rows put their label/field pairs in the same columns, so the source and loader
+        # dropdowns share a width and a left edge, and so do sort and the game-version field.
+        self._form_grid = QGridLayout()
+        self._form_grid.setContentsMargins(0, 0, 0, 0)
+        self._form_grid.setHorizontalSpacing(8)
+        self._form_grid.setVerticalSpacing(8)
+        self._form_grid.setColumnStretch(4, 1)
+        self._form_grid.addWidget(self.source_label, 0, 0)
+        # The source combo itself is inserted at (0, 1) by ResourcesPage: the four tabs each own one.
+        self._form_grid.addWidget(self.sort_label, 0, 2)
+        self._form_grid.addWidget(self.sort_combo, 0, 3)
+        self._form_grid.addWidget(self.search_edit, 0, 4)
+        self._form_grid.addWidget(self.search_button, 0, 5)
+        if self.loader_label is not None:
+            self._form_grid.addWidget(self.loader_label, 1, 0)
+            self._form_grid.addWidget(self.loader_combo, 1, 1)
+        # No loader outside the mod tab, but the game-version field still starts in the second field
+        # column: its label sits under "排序" and its field under the sort dropdown.
+        self._form_grid.addWidget(self.game_version_label, 1, 2)
+        self._form_grid.addWidget(self.game_version_edit, 1, 3)
+        self._form_grid.addWidget(self.slug_edit, 1, 4)
+        self._form_grid.addWidget(self.query_button, 1, 5)
+        # A hidden slug field must not shrink the action column: both buttons keep the width of the
+        # longer label, so the row does not jump when the source switches to CurseForge.
+        for button in (self.search_button, self.query_button):
+            button.ensurePolished()
+        action_width = max(
+            self.search_button.sizeHint().width(), self.query_button.sizeHint().width()
+        )
+        for button in (self.search_button, self.query_button):
+            button.setMinimumWidth(action_width)
 
         self.pager = QWidget()
         pager_row = QHBoxLayout(self.pager)
@@ -1478,13 +1549,7 @@ class _ContentTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        self._search_row = QHBoxLayout()
-        self._search_row.setSpacing(8)
-        self._search_row.addWidget(self.sort_combo)
-        self._search_row.addWidget(self.search_edit, 1)
-        self._search_row.addWidget(self.search_button)
-        layout.addLayout(self._search_row)
-        layout.addLayout(query_row)
+        layout.addLayout(self._form_grid)
         layout.addLayout(body, 1)
 
         self.list.currentRowChanged.connect(self._on_select)
@@ -2604,8 +2669,8 @@ class ResourcesPage(QWidget):
         ):
             tab.page = self
             combo = _PopupFitCombo()
-            # WCAG 4.1.2: it sits in the search row with no adjacent label at all, and the four tabs
-            # each own one, so the name says both what it is and which tab it belongs to.
+            # WCAG 4.1.2: the visible "来源" label is a plain QLabel in the tab's grid, and the four
+            # tabs each own one, so the name says both what it is and which tab it belongs to.
             combo.setAccessibleName(
                 tr(_ContentTab.KIND_TITLE_KEY[tab.kind]) + " · " + tr("mods.source")
             )
@@ -2616,7 +2681,8 @@ class ResourcesPage(QWidget):
             self._fit_source_combo_width(combo)
             combo.setMinimumHeight(36)  # PCL field metric, same as the search field beside it
             combo.currentIndexChanged.connect(self._on_source_changed)
-            tab._search_row.insertWidget(0, combo)
+            # (0, 1): the first field column, under the loader dropdown on the mod tab.
+            tab._form_grid.addWidget(combo, 0, 1)
             self.source_combos.append(combo)
         self.source_combo = self.source_combos[0]  # canonical reference
         for tab in (self.mods_tab, self.modpacks_tab, self.resourcepacks_tab, self.shaderpacks_tab):
@@ -2664,14 +2730,7 @@ class ResourcesPage(QWidget):
 
     def _fit_source_combo_width(self, combo: QComboBox) -> None:
         """Size the closed field for its longest current item (plus arrow and padding)."""
-        widest = max(
-            (
-                combo.fontMetrics().horizontalAdvance(combo.itemText(index))
-                for index in range(combo.count())
-            ),
-            default=0,
-        )
-        combo.setMinimumWidth(widest + 60)
+        _fit_combo_width(combo)
 
     def _sync_source_combos(self) -> None:
         """Re-read the CurseForge availability and rebuild the four dropdowns when it changed.
