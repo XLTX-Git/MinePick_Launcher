@@ -84,6 +84,9 @@ log = logging.getLogger(__name__)
 
 #: Same scale as every other download in the launcher: 0..1000, a tenth of a percent a step.
 PROGRESS_MAX = 1000
+#: The 8px step of the page's 4/8 spacing ladder. The banner's vertical padding uses it, so the bar
+#: is one text line + 8px above and below (or the 35px self-check button + 16px, whichever is taller).
+BANNER_VERTICAL_PADDING = 8
 #: The six reviewed layouts, in the order of the design mock-up. ``FAILED`` borrows the last page.
 SCREEN_STATES: tuple[LinkState, ...] = (
     LinkState.NOT_DOWNLOADED,
@@ -559,7 +562,7 @@ class ToolsPage(QWidget):
         banner = QFrame()
         banner.setObjectName("toolsBanner")
         layout = QHBoxLayout(banner)
-        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setContentsMargins(12, BANNER_VERTICAL_PADDING, 12, BANNER_VERTICAL_PADDING)
         layout.setSpacing(8)
         layout.addWidget(_RoundBadge("i", diameter=16, fill="ACCENT", ink="FG_SELECTED", pixel_size=10))
         text = QLabel(tr("tools.banner"))
@@ -575,6 +578,11 @@ class ToolsPage(QWidget):
         self.self_check_button.setToolTip(tr("tools.net.nat.note"))
         self.self_check_button.clicked.connect(self._run_self_check)
         layout.addWidget(self.self_check_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        # The floor is the button, not the text: 35px + 8px top + 8px bottom. A shorter bar would
+        # squash the button, which is exactly the defect the old 26px fixed height caused.
+        banner.setMinimumHeight(
+            self.self_check_button.minimumSizeHint().height() + 2 * BANNER_VERTICAL_PADDING
+        )
         return banner
 
     def _run_self_check(self) -> None:

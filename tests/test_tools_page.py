@@ -25,7 +25,7 @@ import time
 import pytest
 from PySide6.QtCore import QBuffer, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel
+from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel
 
 from gui import i18n, inwindow_dialog, paint_utils
 from gui.pages.tools_page import SCREEN_STATES, ToolsPage, _MemberAvatar
@@ -613,6 +613,51 @@ def test_the_page_has_no_self_check_column(app) -> None:
         assert page.self_check_button.toolTip() == i18n.tr("tools.net.nat.note")
         assert page.self_check_button.isVisibleTo(page)
         assert page.self_check_line.isHidden()
+    finally:
+        _close(app, page)
+
+
+def test_banner_height_is_the_button_plus_the_8px_padding(app) -> None:
+    """The green bar is one line plus 8px above and below, not a thick empty block.
+
+    The floor is the self-check button: 35px + 8 + 8. A shorter bar would squash the button, which
+    is exactly what the old fixed 26px height did. 56px is the ceiling from the user's report.
+    """
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        banner = page.findChild(QFrame, "toolsBanner")
+        text = page.findChild(QLabel, "toolsBannerText")
+        assert banner is not None and text is not None
+        assert banner.height() >= page.self_check_button.height() + 16, (
+            f"banner {banner.height()}px < self-check button "
+            f"{page.self_check_button.height()}px + 16px"
+        )
+        assert banner.height() <= 56, f"banner is still {banner.height()}px tall"
+        assert page.self_check_button.height() >= page.self_check_button.minimumSizeHint().height()
+        assert text.height() >= text.fontMetrics().height()
+        # Width is untouched: the bar still spans the card's content column.
+        assert banner.width() == page.state_stack.width()
+        assert text.width() > text.sizeHint().width()
+    finally:
+        _close(app, page)
+
+
+@pytest.mark.parametrize("width", (988, 1000))
+def test_banner_fits_without_clipping_at_the_window_floor(app, width) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        page.resize(width, 610)
+        app.processEvents()
+        banner = page.findChild(QFrame, "toolsBanner")
+        text = page.findChild(QLabel, "toolsBannerText")
+        assert banner is not None and text is not None
+        button = page.self_check_button
+        assert button.isVisibleTo(page)
+        assert button.geometry().right() <= banner.contentsRect().right()
+        assert text.geometry().right() <= banner.contentsRect().right()
+        assert banner.height() <= 56
+        # No horizontal overflow of the content column.
+        assert banner.width() == page.state_stack.width()
     finally:
         _close(app, page)
 
