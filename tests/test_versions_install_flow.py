@@ -209,6 +209,15 @@ def test_back_returns_to_the_same_filter_and_scroll_position(page, app) -> None:
     assert page.list.currentRow() == kept_row
 
 
+def test_back_button_uses_the_site_back_shape(page, app) -> None:
+    """The breadcrumb back button is the shared #backButton, not a full outlined secondary button."""
+    step = _open_step(page, app, "rel-12")
+    button = step.back_button
+    assert button.objectName() == "backButton"
+    assert button.text().startswith("← ")
+    assert button.height() <= 30, f"the back button is {button.height()}px tall"
+
+
 # ---------- the instance name ----------
 
 

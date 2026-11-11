@@ -424,7 +424,9 @@ class InstallStep(QWidget):
         self.breadcrumb = QFrame()
         self.breadcrumb.setObjectName("installBreadcrumb")
         self.back_button = QPushButton("← " + tr("versions.install.back"))
-        self.back_button.setObjectName("secondaryButton")
+        # The site's one back-button shape (#backButton: 4px 8px padding, transparent, left aligned),
+        # not the larger outlined secondary button. The breadcrumb card already supplies the frame.
+        self.back_button.setObjectName("backButton")
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.setAccessibleName(tr("versions.install.back"))
         self.back_button.clicked.connect(self.back_requested.emit)
