@@ -46,7 +46,7 @@ combo that already exists when it is installed. No page has to touch its own com
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPoint, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -81,26 +81,29 @@ _SURFACE_PROPERTY = "comboPopupSurface"
 
 
 def _apply_popup_surface(popup: QWidget) -> None:
-    """Paint the container itself: opaque BG_LIST, a 1px BORDER_LIST outline, square corners.
+    """Paint the container itself: opaque BG_LIST, a 1px outline on all four sides, square corners.
 
     This is the part that makes the dropdown readable on the native platform. The old shape cleared
     the container's fill and made the window translucent, trusting the list inside to be the whole
-    panel; when that trust was wrong the page showed through the dropdown. Now the container owns
-    an opaque fill of its own, and its top border stays off so the field's bottom border is the seam
-    between field and panel (the 1px nudge in :func:`place_combo_popup` keeps the two adjacent).
+    panel; when that trust was wrong the page showed through the dropdown. Now the container owns an
+    opaque fill of its own.
+
+    The outline uses BORDER_HOVER rather than BORDER_LIST: against BG_LIST the plain border sits at
+    roughly 1.3:1, which on a real screen reads as "no border at all" and made the panel look like a
+    continuation of the field. The top edge is drawn too - sharing the field's bottom border sounded
+    tidy but left the first row's highlight touching the field with no seam between them.
     """
     from gui.theme import current_tokens
 
     tokens = current_tokens()
     background = tokens.get("BG_LIST", "#ffffff")
-    border = tokens.get("BORDER_LIST", "#c9d2dc")
+    border = tokens.get("BORDER_HOVER") or tokens.get("BORDER_LIST", "#c9d2dc")
     if popup.property(_SURFACE_PROPERTY) == (background, border):
         return
     popup.setStyleSheet(
         f"QFrame#{POPUP_OBJECT_NAME} {{"
         f" background: {background};"
         f" border: 1px solid {border};"
-        f" border-top: none;"
         f" border-radius: 0;"
         f" }}"
     )
@@ -162,6 +165,32 @@ def shape_combo_popup(combo: QComboBox) -> QWidget | None:
     return popup
 
 
+def _fit_popup_to_rows(combo: QComboBox, popup: QWidget) -> None:
+    """Make the panel exactly as tall as the rows it shows.
+
+    The listbox popup reserves a little space below the last row, which on a three-item list reads as
+    an empty strip and makes the panel look taller than its contents. Pinning the view first matters:
+    the container's layout sizes the window from the view's hints, so resizing the window alone is
+    undone on the next layout pass.
+    """
+    try:
+        view = combo.view()
+    except RuntimeError:  # the combo's C++ side is already gone
+        return
+    if view is None or view.window() is not popup:
+        return
+    model = view.model()
+    rows = model.rowCount() if model is not None else 0
+    row_height = view.sizeHintForRow(0) if rows else 0
+    if not rows or row_height <= 0 or rows > combo.maxVisibleItems():
+        return
+    wanted = rows * row_height
+    if view.minimumHeight() != wanted or view.maximumHeight() != wanted:
+        view.setFixedHeight(wanted)
+    if popup.height() > wanted + 2:  # the container's own 1px top and bottom border
+        popup.resize(popup.width(), wanted + 2)
+
+
 def place_combo_popup(popup: QWidget) -> None:
     """Prepare a shaped popup once Qt has shown it: repaint for the current theme, select the row.
 
@@ -208,6 +237,16 @@ def place_combo_popup(popup: QWidget) -> None:
     popup_top = popup.pos().y()
     if 0 < combo_bottom - popup_top <= POPUP_BORDER_OVERLAP:
         popup.move(popup.pos().x(), combo_bottom)
+
+    # Trim the panel to the rows it actually shows. The listbox popup reserves a few extra pixels
+    # below the last row, which on a three-item menu reads as an empty strip under the last entry and
+    # makes the panel taller than its contents. Only when every row fits on screen: a capped list
+    # keeps its height and scrolls instead.
+    # Fit the panel to its rows, once now and once on the next event-loop turn: this function runs on
+    # the popup's Show event, which is *before* Qt assigns the popup its final geometry, so an
+    # immediate resize is undone by the platform's own sizing. The deferred call sees the real size.
+    _fit_popup_to_rows(combo, popup)
+    QTimer.singleShot(0, popup, lambda: _fit_popup_to_rows(combo, popup))
 
 
 class _ComboPopupStyle(QProxyStyle):

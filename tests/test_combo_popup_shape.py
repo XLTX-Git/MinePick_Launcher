@@ -142,7 +142,13 @@ def test_combo_popup_is_shaped_automatically_when_the_combo_is_shown(app, shaper
     tokens = current_tokens()
     sheet = popup.styleSheet()
     assert f"background: {tokens['BG_LIST']}" in sheet
-    assert f"border: 1px solid {tokens['BORDER_LIST']}" in sheet
+    # BORDER_HOVER, not BORDER_LIST: the plain border sits at ~1.3:1 against BG_LIST on the dark
+    # theme, which reads as "no border" and made the panel look welded to the field above it.
+    assert f"border: 1px solid {tokens['BORDER_HOVER']}" in sheet
+    assert "border-top: none" not in sheet, (
+        "all four sides are drawn now: sharing the field's edge left the first row's highlight "
+        "touching the field with no seam between them"
+    )
     assert "border-radius: 0" in sheet
     assert "transparent" not in sheet
 
@@ -171,7 +177,7 @@ def test_combo_popup_window_is_the_outlined_panel(app, shaper):
     assert not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
     image = _render(popup)
-    border_hex = tokens["BORDER_LIST"].lstrip("#")
+    border_hex = tokens["BORDER_HOVER"].lstrip("#")
     border = (int(border_hex[0:2], 16), int(border_hex[2:4], 16), int(border_hex[4:6], 16), 255)
     for point in ((0, 0), (image.width() - 1, 0), (0, image.height() - 1), (image.width() - 1, image.height() - 1)):
         colour = image.pixelColor(*point)

@@ -457,8 +457,11 @@ QListView#comboPopupList {
 }
 QComboBox QAbstractItemView::item,
 QListView#comboPopupList::item {
-    padding: 8px 12px;
-    min-height: 26px;
+    /* 30px rows, the height the adjacent field's content suggests. The previous 8px/26px pair made
+       every row 42px, so a three-item list stood 138px tall and read as a panel covering the page
+       rather than a menu of three entries. */
+    padding: 4px 12px;
+    min-height: 22px;
     border-radius: 0;
 }
 /* The one highlighted row: ACCENT_SEL_ROW is a per-theme derivation of ACCENT_SEL (light uses it
