@@ -281,6 +281,7 @@ def fetch_versions(
                 game_versions=entry.get("game_versions", []),
                 files=files,
                 dependencies=deps,
+                date_published=str(entry.get("date_published") or ""),
             )
         )
     return versions
@@ -408,17 +409,33 @@ def _install_file_to_dir(
     mod_version_id: str | None = None,
     isolated: bool = False,
     progress: Callable[[DownloadProgress], None] | None = None,
+    mod_version: ModVersion | None = None,
+    dest: Path | None = None,
 ) -> ModInfo:
-    """Generic download: download a project's primary file into the given content directory (mods/resourcepacks/shaderpacks)."""
-    versions = fetch_versions(slug, loader=loader, game_version=game_version)
-    if not versions:
-        raise ModsError(tr_core("mods.no_match", loader, game_version))
-    if mod_version_id:
-        picked = next((v for v in versions if v.version_id == mod_version_id), None)
-        if picked is None:
-            raise ModsError(tr_core("mods.version_not_in_matches", mod_version_id))
+    """Generic download: download a project's primary file into a content directory.
+
+    Two overrides exist for the resources page's save-as flow, where the user picked the exact file
+    version and location before anything was downloaded:
+
+    * ``mod_version`` - the version object already chosen in the version list. It is used as-is,
+      so the install cannot silently fall back to "newest matching" after the user chose another.
+    * ``dest`` - the file path the user picked in the system save dialog. The ``game_dir`` /
+      ``version_id`` / ``isolated`` resolution is skipped entirely: the download lands exactly
+      there and only its parent directory is created. ``None`` keeps the historical
+      ``resolve_content_dir`` behaviour.
+    """
+    if mod_version is not None:
+        picked = mod_version
     else:
-        picked = versions[0]
+        versions = fetch_versions(slug, loader=loader, game_version=game_version)
+        if not versions:
+            raise ModsError(tr_core("mods.no_match", loader, game_version))
+        if mod_version_id:
+            picked = next((v for v in versions if v.version_id == mod_version_id), None)
+            if picked is None:
+                raise ModsError(tr_core("mods.version_not_in_matches", mod_version_id))
+        else:
+            picked = versions[0]
     file = pick_file(picked)
     if file is None or not file.url:
         raise ModsError(tr_core("mods.no_file"))
@@ -427,19 +444,24 @@ def _install_file_to_dir(
     dep_ids = [d.project_id for d in picked.dependencies if d.project_id]
     slugs = resolve_slugs(dep_ids)
 
-    target = resolve_content_dir(
-        game_dir,
-        subdir,
-        version_id=version_id,
-        isolated=isolated,
-        loader=loader,
-        game_version=game_version,
-    )
+    if dest is not None:
+        target_file = Path(dest)
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        target = resolve_content_dir(
+            game_dir,
+            subdir,
+            version_id=version_id,
+            isolated=isolated,
+            loader=loader,
+            game_version=game_version,
+        )
+        target_file = target / file.filename
     result = Downloader().download(
         [
             DownloadTask(
                 url=file.url,
-                dest=target / file.filename,
+                dest=target_file,
                 sha1=file.sha1,
                 size=file.size,
             )
@@ -461,6 +483,8 @@ def install_mod(
     mod_version_id: str | None = None,
     isolated: bool = False,
     progress: Callable[[DownloadProgress], None] | None = None,
+    mod_version: ModVersion | None = None,
+    dest: Path | None = None,
 ) -> ModInfo:
     """Download a mod into the mods directory; return ModInfo (with dependency hints)."""
     return _install_file_to_dir(
@@ -473,6 +497,8 @@ def install_mod(
         mod_version_id=mod_version_id,
         isolated=isolated,
         progress=progress,
+        mod_version=mod_version,
+        dest=dest,
     )
 
 
@@ -485,6 +511,8 @@ def install_resourcepack(
     mod_version_id: str | None = None,
     isolated: bool = False,
     progress: Callable[[DownloadProgress], None] | None = None,
+    mod_version: ModVersion | None = None,
+    dest: Path | None = None,
 ) -> ModInfo:
     """Download a resource pack into the resourcepacks directory."""
     return _install_file_to_dir(
@@ -496,6 +524,8 @@ def install_resourcepack(
         mod_version_id=mod_version_id,
         isolated=isolated,
         progress=progress,
+        mod_version=mod_version,
+        dest=dest,
     )
 
 
@@ -508,6 +538,8 @@ def install_shaderpack(
     mod_version_id: str | None = None,
     isolated: bool = False,
     progress: Callable[[DownloadProgress], None] | None = None,
+    mod_version: ModVersion | None = None,
+    dest: Path | None = None,
 ) -> ModInfo:
     """Download a shaderpack into the shaderpacks directory."""
     return _install_file_to_dir(
@@ -519,4 +551,6 @@ def install_shaderpack(
         mod_version_id=mod_version_id,
         isolated=isolated,
         progress=progress,
+        mod_version=mod_version,
+        dest=dest,
     )

@@ -357,3 +357,22 @@ def test_download_retries_a_5xx_then_writes_the_file(monkeypatch, ws_tmp) -> Non
     assert path.read_bytes() == b"jar-bytes"
     assert len(calls) == 2
 
+
+def test_download_can_write_one_exact_save_as_path(ws_tmp) -> None:
+    """The resources page's save-as choice is honoured byte for byte, name and folder included."""
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"jar-bytes"))
+    )
+    cf_file = cf.CfFile(
+        id=7,
+        name="Sodium 1.0",
+        url="https://x/a.jar",
+        size=9,
+        filename="sodium.jar",
+    )
+    destination = ws_tmp / "elsewhere" / "picked" / "my-sodium.jar"
+    path = cf.download_file(cf_file, ws_tmp / "ignored", dest=destination, client=client)
+    assert path == destination
+    assert destination.read_bytes() == b"jar-bytes"
+    assert not (ws_tmp / "ignored").exists()
+

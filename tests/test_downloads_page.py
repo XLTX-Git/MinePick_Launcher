@@ -19,8 +19,8 @@
 
 The window is the real ``MainWindow`` built offscreen, so the page is a real stack page reached through
 the real corner icon and the real navigation. The five install entry points are the *page* entry points
-(``install_version_id``'s flow, ``_install_mod_into``, ``_install_modpack_now``,
-``_install_content_now``) with only the core function scripted: a test may not use the network, and the
+(``install_version_id``'s flow, the resource download, ``_install_modpack_now``)
+with only the core function scripted: a test may not use the network, and the
 question here is whether the adapter wired to those functions reports what they do.
 
 Cancellation is the one place that is measured against a real transfer (:class:`_SlowPack` runs the real
@@ -43,7 +43,6 @@ from PySide6.QtCore import Qt
 from gui import i18n, inwindow_dialog
 from gui.pages import downloads_page, mods_page
 from gui.pages.downloads_page import DownloadsPage
-from gui.pages.mods_page import InstanceChoice
 from gui.task_ui import TaskButton
 from gui.tasks import CANCELLED, DONE, FAILED, RUNNING, format_size
 from launcher.meta.manifest import ManifestVersion, VersionManifest
@@ -188,18 +187,10 @@ def mods_page_flow():
     return versions_install_flow
 
 
-def _mod_choice(game_dir: Path) -> InstanceChoice:
-    return InstanceChoice(
-        game_dir=game_dir,
-        instance_id="1.21.11-fabric",
-        name="测试实例",
-        loader_id="fabric",
-        loader_label="Fabric",
-        minecraft="1.21.11",
-        isolated=True,
-        mods_dir=game_dir / "versions" / "1.21.11-fabric" / "mods",
-        folder=game_dir / "versions" / "1.21.11-fabric",
-        instance=object(),
+def _start_content_install(tab, slug: str, title: str) -> None:
+    """Step 3 of the resource flow (the scripted core is patched by each test)."""
+    tab._download_version(
+        slug, title, "modrinth", object(), tab._game_dir() / "downloads" / f"{slug}.jar"
     )
 
 
@@ -315,18 +306,13 @@ def test_the_five_installs_each_become_one_task(window, app, monkeypatch, ws_tmp
     monkeypatch.setattr(mods_page, "install_resourcepack", scripted_pack)
     monkeypatch.setattr(mods_page, "install_shaderpack", scripted_pack)
 
-    game_dir = Path(window.pages["versions"]._game_dir())
     tabs = window.pages["mods"]
 
     _version_install(window, app)
-    tabs.mods_tab._install_mod_into(_mod_choice(game_dir), "sodium", "Sodium")
+    _start_content_install(tabs.mods_tab, "sodium", "Sodium")
     tabs.modpacks_tab._install_modpack_now("better-mc", None)
-    tabs.resourcepacks_tab._install_content_now(
-        "fresh-animations", "Fresh Animations", mod_version_id=None, game_version=None
-    )
-    tabs.shaderpacks_tab._install_content_now(
-        "complementary", "Complementary", mod_version_id=None, game_version=None
-    )
+    _start_content_install(tabs.resourcepacks_tab, "fresh-animations", "Fresh Animations")
+    _start_content_install(tabs.shaderpacks_tab, "complementary", "Complementary")
 
     assert _pump(app, lambda: len(window.tasks.tasks()) == 5), (
         f"expected one task per install, got {[t.kind for t in window.tasks.tasks()]}"
@@ -389,9 +375,7 @@ def test_progress_reaches_the_task_and_the_row(window, app, monkeypatch) -> None
 
     monkeypatch.setattr(mods_page, "install_resourcepack", slow_pack)
     tabs = window.pages["mods"]
-    tabs.resourcepacks_tab._install_content_now(
-        "fresh-animations", "Fresh Animations", mod_version_id=None, game_version=None
-    )
+    _start_content_install(tabs.resourcepacks_tab, "fresh-animations", "Fresh Animations")
     assert _pump(app, lambda: len(window.tasks.tasks()) == 1)
     task = window.tasks.tasks()[0]
     page = _open_page(window, app)
@@ -474,9 +458,7 @@ def test_cancel_really_stops_the_transfer_and_is_not_a_failure(
     slow.dest.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(mods_page, "install_resourcepack", slow)
     tabs = window.pages["mods"]
-    tabs.resourcepacks_tab._install_content_now(
-        "fresh-animations", "Fresh Animations", mod_version_id=None, game_version=None
-    )
+    _start_content_install(tabs.resourcepacks_tab, "fresh-animations", "Fresh Animations")
     assert _pump(app, lambda: len(window.tasks.tasks()) == 1)
     task = window.tasks.tasks()[0]
 
@@ -532,13 +514,9 @@ def test_a_second_transfer_stopped_by_the_same_latch_ends_cancelled_not_failed(
 
     monkeypatch.setattr(mods_page, "install_resourcepack", pack_a)
     tabs = window.pages["mods"]
-    tabs.resourcepacks_tab._install_content_now(
-        "fresh-animations", "Fresh Animations", mod_version_id=None, game_version=None
-    )
+    _start_content_install(tabs.resourcepacks_tab, "fresh-animations", "Fresh Animations")
     monkeypatch.setattr(mods_page, "install_shaderpack", pack_b)
-    tabs.shaderpacks_tab._install_content_now(
-        "complementary", "Complementary", mod_version_id=None, game_version=None
-    )
+    _start_content_install(tabs.shaderpacks_tab, "complementary", "Complementary")
     assert _pump(app, lambda: len(window.tasks.tasks()) == 2)
     first, second = window.tasks.tasks()
 
@@ -794,9 +772,8 @@ def test_retry_from_the_page_runs_the_install_again(window, app, monkeypatch) ->
         return _info("Sodium", "sodium")
 
     monkeypatch.setattr(mods_page, "install_mod", broken)
-    game_dir = Path(window.pages["versions"]._game_dir())
     tabs = window.pages["mods"]
-    tabs.mods_tab._install_mod_into(_mod_choice(game_dir), "sodium", "Sodium")
+    _start_content_install(tabs.mods_tab, "sodium", "Sodium")
     assert _pump(app, lambda: len(window.tasks.tasks()) == 1)
     first = window.tasks.tasks()[0]
     assert _pump(app, lambda: first.state == FAILED)

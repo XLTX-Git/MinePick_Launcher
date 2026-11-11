@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -70,6 +70,15 @@ CLASS_IDS = {"mod": 6, "resourcepack": 12, "shaderpack": 6552, "modpack": 4471}
 # modLoaderType: Forge 1 / Fabric 4 / NeoForge 6 (mods only)
 LOADER_IDS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
 _LOADER_NAMES = {value: key for key, value in LOADER_IDS.items()}
+#: CurseForge names a loader as a string inside ``gameVersions`` ("Fabric", "NeoForge", ...).
+_LOADER_BY_NAME = {
+    "forge": "forge",
+    "fabric": "fabric",
+    "quilt": "quilt",
+    "neoforge": "neoforge",
+    "neo forge": "neoforge",
+    "legacy fabric": "fabric",
+}
 #: The dropdown's semantic sort keys mapped to CurseForge's ``ModsSearchSortField`` values.
 #:
 #: CurseForge has no relevance sort. Omitting the field is not a neutral choice: measured
@@ -88,12 +97,27 @@ SORT_FIELDS = {
 
 @dataclass
 class CfFile:
-    """A CurseForge version file."""
+    """A CurseForge version file.
+
+    ``name`` is what the service calls the file (its display name); ``filename`` is the actual file
+    name the save dialog pre-fills. ``game_versions`` / ``loaders`` / ``published`` are the metadata
+    the version list shows and the default-folder compatibility needs - the files endpoint already
+    returns them, so no extra request is made.
+    """
 
     id: int
     name: str
     url: str
     size: int
+    filename: str = ""
+    game_versions: list[str] = field(default_factory=list)
+    loaders: list[str] = field(default_factory=list)
+    published: str = ""
+
+    @property
+    def save_name(self) -> str:
+        """The name a save dialog pre-fills (the real file name, falling back to the display name)."""
+        return self.filename or self.name
 
 
 def _bundled_key() -> str:
@@ -326,12 +350,29 @@ def list_files(
         url = f.get("downloadUrl")
         if not url:
             continue
+        raw_versions = [
+            str(item).strip() for item in (f.get("gameVersions") or []) if str(item).strip()
+        ]
+        # The list mixes Minecraft versions and loader names. Anything that is a known loader name
+        # becomes a loader; the rest is a game version ("1.20.1", "26w02a", ...).
+        game_versions = [
+            item for item in raw_versions if item.casefold() not in _LOADER_BY_NAME
+        ]
+        loaders = [
+            _LOADER_BY_NAME[item.casefold()]
+            for item in raw_versions
+            if item.casefold() in _LOADER_BY_NAME
+        ]
         files.append(
             CfFile(
                 id=int(f.get("id") or 0),
                 name=f.get("displayName") or f.get("fileName") or "",
                 url=url,
                 size=int(f.get("fileLength") or 0),
+                filename=f.get("fileName") or "",
+                game_versions=game_versions,
+                loaders=list(dict.fromkeys(loaders)),
+                published=str(f.get("fileDate") or ""),
             )
         )
     files.sort(key=lambda f: f.id, reverse=True)
@@ -343,8 +384,13 @@ def download_file(
     target_dir: Path,
     *,
     client: httpx.Client | None = None,
+    dest: Path | None = None,
 ) -> Path:
     """Download the file into the target directory; return the on-disk path.
+
+    ``dest`` names one exact file path instead (the resources page's save-as choice): the parent is
+    created and the transfer writes there, whatever the service calls the file. ``target_dir`` is
+    still required so existing callers keep their behaviour.
 
     Retried like the metadata requests: a 5xx, timeout or connection error restarts the transfer
     (the ``.part`` file is truncated first), while a 403/404 fails at once. The request holds one
@@ -353,9 +399,9 @@ def download_file(
     own = client is None
     if own:
         client = _client()
-    target_dir.mkdir(parents=True, exist_ok=True)
     name = cf_file.name or str(cf_file.id) + ".jar"
-    target = target_dir / name
+    target = Path(dest) if dest is not None else Path(target_dir) / name
+    target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".part")
     try:
         attempt = 1

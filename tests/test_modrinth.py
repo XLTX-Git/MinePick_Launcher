@@ -20,6 +20,7 @@ import pytest
 import respx
 
 from launcher.mods.loaders import ModsError
+from launcher.mods.models import ModFile, ModVersion
 from launcher.mods.modrinth import (
     delete_installed_content,
     fetch_versions,
@@ -127,6 +128,41 @@ def test_install_mod_full_flow(ws_tmp):
     assert info.depends == ["fabric-api"]
     assert info.optional_depends == ["indium"]
     assert (ws_tmp / "mc" / "mods" / "sodium-extra.jar").read_bytes() == b"jar-content"
+
+
+@respx.mock
+def test_a_selected_version_downloads_to_the_exact_chosen_path(ws_tmp):
+    """The save-as flow: no version lookup, no mods/ folder, the file lands where the user said."""
+    version = ModVersion(
+        version_id="OihdIimA",
+        version_number="1.0.0",
+        loaders=["fabric"],
+        game_versions=["1.20.1"],
+        files=[
+            ModFile(
+                filename="sodium.jar",
+                url="https://cdn.modrinth.com/data/AANobbMI/versions/OihdIimA/sodium.jar",
+                size=len(b"chosen"),
+                primary=True,
+            )
+        ],
+    )
+    respx.get("https://api.modrinth.com/v2/project/sodium").mock(
+        return_value=httpx.Response(200, json=PROJECT_RAW)
+    )
+    respx.get("https://cdn.modrinth.com/data/AANobbMI/versions/OihdIimA/sodium.jar").mock(
+        return_value=httpx.Response(200, content=b"chosen")
+    )
+    destination = ws_tmp / "somewhere" / "fresh" / "my-sodium.jar"
+    info = install_mod(
+        "sodium",
+        game_dir=ws_tmp / "mc",
+        mod_version=version,
+        dest=destination,
+    )
+    assert info.title == "Sodium"
+    assert destination.read_bytes() == b"chosen"
+    assert not (ws_tmp / "mc" / "mods").exists(), "a dest install must not build the game structure"
 
 
 SEARCH_RAW = {

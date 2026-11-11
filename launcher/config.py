@@ -349,6 +349,28 @@ class LauncherConfig(BaseModel):
         default="",
         description="HTTP proxy address (e.g. http://127.0.0.1:7890); empty = auto-read proxy from environment variables",
     )
+    resource_dirs: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Last save folder per resource kind (mods / resourcepacks / shaderpacks), as an absolute "
+            "path. The resources page uses it as the first choice of the save-as default folder"
+        ),
+    )
+
+    @field_validator("resource_dirs", mode="before")
+    @classmethod
+    def _normalize_resource_dirs(cls, value: object) -> dict[str, str]:
+        """Keep a hand-edited config loadable: only string keys and non-empty string paths survive."""
+        if not isinstance(value, dict):
+            return {}
+        folders: dict[str, str] = {}
+        for key, path in value.items():
+            if not isinstance(key, str) or not key.strip():
+                continue
+            text = str(path or "").strip()
+            if text:
+                folders[key.strip()] = text
+        return folders
 
     @field_validator("accessibility_preference", mode="before")
     @classmethod

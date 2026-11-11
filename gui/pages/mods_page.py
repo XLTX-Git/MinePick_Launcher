@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -55,9 +56,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import block_icons, i18n, inwindow_dialog, paint_utils, theme
+from gui import i18n, inwindow_dialog, paint_utils, theme
 from gui.errors import show_fatal
-from gui.tasks import CANCELLED, KIND_TITLE_KEYS, Task, task_center_of
+from gui.tasks import CANCELLED, KIND_TITLE_KEYS, Task, format_size, task_center_of
 from gui.widgets import (
     EmptyState,
     add_page_top_inset,
@@ -76,7 +77,6 @@ from gui.workers import (
     run_in_background,
 )
 from launcher import config, instances, paths
-from launcher.meta.version import version_json_path
 from launcher.mods import (
     ModsError,
     fetch_project,
@@ -85,11 +85,12 @@ from launcher.mods import (
     install_modpack,
     install_resourcepack,
     install_shaderpack,
+    pick_file,
     resolve_slugs,
     search_projects,
 )
 from launcher.mods.loaders import display_loader_name
-from launcher.mods.models import ModInfo, ModSearchHit, SearchHits
+from launcher.mods.models import ModInfo, ModSearchHit, ModVersion, SearchHits
 from launcher.mods.search import (
     ALL_PAGE_SIZE,
     PAGE_SIZE,
@@ -262,10 +263,23 @@ def _fetch_icon_bytes(url: str) -> bytes:
     return fetch_icon_bytes(url, timeout=8.0)
 
 
-# ---------- the local instances a mod can be installed into ----------
+# ---------- where a downloaded file goes ----------
+
+#: The folder a content kind lives in, per game folder. The keys are also the save-as memory keys in
+#: ``launcher.config`` (``resource_dirs``), so a remembered folder always names the same kind.
+CONTENT_SUBDIRS: dict[str, str] = {
+    "mod": "mods",
+    "resourcepack": "resourcepacks",
+    "shaderpack": "shaderpacks",
+}
+
+#: The save dialog's filter per kind. A bare pattern is valid and language-independent; the dialog
+#: prints it as the file type line itself.
+_SAVE_FILTERS = {"mod": "*.jar", "resourcepack": "*.zip", "shaderpack": "*.zip"}
+_SAVE_SUFFIX = {"mod": ".jar", "resourcepack": ".zip", "shaderpack": ".zip"}
 
 #: The loader names the interface shows. ``display_loader_name`` owns the same four ids for the
-#: Modrinth rows; the instance side needs the id itself (to filter a version request) plus this label.
+#: Modrinth rows; the instance side needs the id itself (to compare a version's loaders).
 _LOADER_LABELS = {
     "fabric": "Fabric",
     "forge": "Forge",
@@ -274,82 +288,100 @@ _LOADER_LABELS = {
 }
 
 
-def _profile_json(game_dir: Path, version_id: str) -> dict:
-    path = version_json_path(game_dir / "versions" / version_id)
-    if path is None:
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
+def _safe_filename(name: str, fallback: str) -> str:
+    """A file name a save dialog can pre-fill: no folder part and no Windows-reserved character.
 
-
-def _profile_loader(version_id: str) -> str:
-    """The loader id a profile id names, or ``"vanilla"``.
-
-    Mirrors ``launcher.diagnostics.facts.derive_version_facts``. The mapping is repeated rather than
-    imported because that package costs about half a second on its first import (it is the crash
-    knowledge base, loaded on demand), and the resources page must not pay that for twelve lines.
+    The source's own file name is kept byte-for-byte when it is already usable (``fabric-api-0.92.2
+    +1.20.1.jar`` is a real name with a ``+``), so the user recognises the download. Only a name that
+    cannot be a single file name is rewritten.
     """
-    vid = (version_id or "").strip()
-    if vid.startswith("fabric-loader-"):
-        return "fabric"
-    if vid.startswith("quilt-loader-"):
-        return "quilt"
-    if vid.startswith("neoforge-"):
-        return "neoforge"
-    if "-forge-" in vid or vid.endswith("-forge"):
-        return "forge"
-    return "vanilla"
+    text = str(name or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    for char in '<>:"|?*':
+        text = text.replace(char, "_")
+    text = "".join(char for char in text if ord(char) >= 32).strip(" .")
+    return text or fallback
 
 
-def _profile_minecraft(version_id: str, loader: str) -> str:
-    """The Minecraft version a profile id carries, for the loader that id names."""
-    if loader in ("fabric", "quilt"):
-        parts = version_id.split("-")
-        return parts[-1] if len(parts) >= 4 else ""
-    if loader == "forge":
-        if "-forge-" in version_id:
-            return version_id.partition("-forge-")[0]
-        return version_id.removesuffix("-forge")
-    if loader == "neoforge":
-        base = version_id[len("neoforge-") :]
-        if base.startswith("1.") and base.count(".") >= 2 and "-" in base:
-            return base.split("-", 1)[0]  # "1.20.1-47.1.79" keeps its explicit prefix
-        numbers = base.split(".")
-        if len(numbers) >= 2 and numbers[0].isdigit() and numbers[1].isdigit():
-            return f"1.{numbers[0]}.{numbers[1]}"
-        return ""
-    return version_id
+def version_key_of(version: object) -> str:
+    """The source's identifier for one file version (Modrinth version id / CurseForge file id)."""
+    if isinstance(version, ModVersion):
+        return version.version_id
+    return str(getattr(version, "id", "") or "")
 
 
-def _loader_and_minecraft(game_dir: Path, instance_id: str) -> tuple[str, str]:
-    """(loader id, Minecraft version) for one instance, following an inherited profile.
+def version_name_of(version: object) -> str:
+    """What the version row prints as its headline."""
+    if isinstance(version, ModVersion):
+        return version.version_number or version.version_id
+    return str(getattr(version, "name", "") or getattr(version, "id", "") or "")
 
-    A copied instance keeps its own folder name and inherits the profile it was copied from, so the
-    folder name alone does not always name the loader (the instances page reads the same field).
-    """
-    seen: set[str] = set()
-    current = instance_id
-    while current and current not in seen:
-        seen.add(current)
-        loader = _profile_loader(current)
-        if loader != "vanilla":
-            return loader, _profile_minecraft(current, loader)
-        parent = _profile_json(game_dir, current).get("inheritsFrom")
-        if not isinstance(parent, str) or not parent.strip():
-            return "vanilla", _profile_minecraft(current, "vanilla")
-        current = parent.strip()
-    return "vanilla", _profile_minecraft(instance_id, "vanilla")
+
+def version_filename_of(version: object) -> str:
+    """The file name a save dialog pre-fills (empty when the source did not name a file)."""
+    if isinstance(version, ModVersion):
+        file = pick_file(version)
+        return file.filename if file is not None else ""
+    return str(
+        getattr(version, "save_name", "")
+        or getattr(version, "filename", "")
+        or getattr(version, "name", "")
+        or ""
+    )
+
+
+def version_loaders_of(version: object) -> list[str]:
+    """Loader ids the file version supports (empty = the source did not say)."""
+    if isinstance(version, ModVersion):
+        return [str(item) for item in version.loaders if str(item).strip()]
+    return [str(item) for item in (getattr(version, "loaders", ()) or ()) if str(item).strip()]
+
+
+def version_game_versions_of(version: object) -> list[str]:
+    """Minecraft versions the file version supports (empty = the source did not say)."""
+    if isinstance(version, ModVersion):
+        return [str(item) for item in version.game_versions if str(item).strip()]
+    return [
+        str(item) for item in (getattr(version, "game_versions", ()) or ()) if str(item).strip()
+    ]
+
+
+def version_published_of(version: object) -> str:
+    """The ISO publication stamp the version list shows, or "" when the source did not say."""
+    if isinstance(version, ModVersion):
+        return version.date_published
+    return str(getattr(version, "published", "") or "")
+
+
+def version_size_of(version: object) -> int:
+    """Bytes of the file this version would download (0 when unknown)."""
+    if isinstance(version, ModVersion):
+        file = pick_file(version)
+        return int(file.size) if file is not None else 0
+    return int(getattr(version, "size", 0) or 0)
+
+
+def _human_date(stamp: str) -> str:
+    """The date part of an ISO timestamp (the resources page does not need the clock time)."""
+    text = str(stamp or "").strip()
+    return text[:10] if len(text) >= 10 else text
+
+
+def _join_limited(items: list[str], limit: int = 4) -> str:
+    """``a, b, c, d +2``: every distinct value until the line would stop being one line."""
+    unique = list(dict.fromkeys(item for item in items if item))
+    if len(unique) <= limit:
+        return ", ".join(unique)
+    return ", ".join(unique[:limit]) + f" +{len(unique) - limit}"
 
 
 @dataclass(frozen=True)
 class InstanceChoice:
-    """One local instance offered by the install step, and why it may be refused.
+    """One local instance, and whether one file version fits it.
 
-    ``note`` is the loader-mismatch sentence (empty when the mod can go in): the dialog draws that row
-    greyed and cannot select it, which is the whole of the "never force a mismatch" rule.
+    ``note`` is the sentence that refuses the choice (empty when the version fits): the save-as
+    default folder only ever picks an instance whose note is empty. It is no longer drawn as a row -
+    the install step is the version list now - but the same ``_loader_mismatch`` wording decides
+    compatibility, which is the one rule the old instance picker got right.
     """
 
     game_dir: Path
@@ -373,12 +405,22 @@ class InstanceChoice:
     def usable(self) -> bool:
         return not self.note
 
+    def content_dir(self, kind: str) -> Path:
+        """This instance's folder for ``kind``: its own mods/ when isolated, else the shared one."""
+        if kind == "mod":
+            return self.mods_dir
+        subdir = CONTENT_SUBDIRS.get(kind)
+        if subdir is None:
+            return self.mods_dir
+        return (self.folder if self.isolated else self.game_dir) / subdir
+
 
 def _loader_mismatch(mod_loaders: list[str], loader_id: str, loader_label: str) -> str:
-    """The sentence that greys a row out, or "" when the instance can take the mod.
+    """The sentence that refuses a version for an instance, or "" when it fits.
 
-    An empty ``mod_loaders`` means "the source did not say", never "incompatible": a row without
-    loader metadata must stay usable, otherwise a project lookup would offer nothing.
+    An empty ``mod_loaders`` means "the source did not say", never "incompatible": a version
+    without loader metadata must stay usable, otherwise a project whose metadata is sparse would
+    have no default folder at all.
     """
     supported = {str(item).strip().lower() for item in mod_loaders if str(item).strip()}
     if not supported or loader_id in supported:
@@ -389,14 +431,55 @@ def _loader_mismatch(mod_loaders: list[str], loader_id: str, loader_label: str) 
     return tr("mods.instance.mismatch", mod_label, loader_label)
 
 
-def instance_choices(game_dir: Path, mod_loaders: list[str], *, cfg=None) -> list[InstanceChoice]:
-    """Every instance in ``game_dir``, with its loader and whether this mod fits it.
+def _instance_note(
+    kind: str,
+    *,
+    loaders: list[str],
+    game_versions: list[str],
+    loader_id: str,
+    loader_label: str,
+    minecraft: str,
+) -> str:
+    """Why ``kind``'s chosen file version cannot go into this instance, or "" when it fits."""
+    note = _loader_mismatch(loaders, loader_id, loader_label)
+    if note:
+        return note
+    if kind == "mod":
+        # PCL's rule: a mod's own game-version list is checked; a resource pack or shader is not
+        # (their "loaders" are empty, and their game versions are informational).
+        versions = [item for item in game_versions if "." in item]
+        if versions and minecraft and minecraft not in versions:
+            return tr("mods.instance.mismatch.game", _join_limited(versions), minecraft)
+    return ""
 
-    This is the local list the install step offers. It reads the folder only - no network request,
-    and no instance is created or changed here.
+
+def _loader_and_minecraft(game_dir: Path, instance_id: str) -> tuple[str, str]:
+    """(loader id, Minecraft version) for one instance, reading its profile and ``inheritsFrom``.
+
+    Delegated to :func:`launcher.instances.profile_identity`, which also recognises a loader from
+    the profile JSON itself - the versions page creates a new loader instance under the user's name,
+    so a folder called ``1.21.1_fabric_0.16.9`` must still count as a Fabric instance.
     """
+    identity = instances.profile_identity(game_dir, instance_id)
+    return (identity.loader_id or "vanilla"), identity.minecraft
+
+
+def instance_choices(
+    game_dir: Path,
+    mod_loaders: list[str],
+    *,
+    cfg=None,
+    kind: str = "mod",
+    game_versions: list[str] | None = None,
+) -> list[InstanceChoice]:
+    """Every instance in ``game_dir``, with its loader and whether the chosen file version fits.
+
+    This reads the folder only - no network request, and no instance is created or changed here.
+    """
+    game_dir = Path(game_dir)
     if cfg is None:
         cfg, _ = config.load()
+    versions = list(game_versions or ())
     choices: list[InstanceChoice] = []
     for instance in sorted(
         instances.list_instances(game_dir).values(), key=lambda item: item.name.casefold()
@@ -423,10 +506,106 @@ def instance_choices(game_dir: Path, mod_loaders: list[str], *, cfg=None) -> lis
                 mods_dir=resolved.mods_dir,
                 folder=instances.instance_dir(game_dir, instance.id),
                 instance=instance,
-                note=_loader_mismatch(mod_loaders, loader_id, loader_label),
+                note=_instance_note(
+                    kind,
+                    loaders=list(mod_loaders),
+                    game_versions=versions,
+                    loader_id=loader_id,
+                    loader_label=loader_label,
+                    minecraft=minecraft,
+                ),
             )
         )
     return choices
+
+
+def _dir_rank(path: Path) -> tuple[float, int]:
+    """(last write time, file count) of a content folder; a missing folder ranks below any real one."""
+    try:
+        modified = path.stat().st_mtime
+        count = sum(1 for entry in path.iterdir() if entry.is_file())
+    except OSError:
+        return (0.0, -1)
+    return (modified, count)
+
+
+def default_content_dir(
+    kind: str,
+    loaders: list[str],
+    game_versions: list[str],
+    *,
+    cfg,
+    game_dir: Path,
+) -> Path:
+    """The folder the save dialog starts in, in PCL's order of priority.
+
+    1. the folder the user saved this kind of resource to last time (``config.resource_dirs``);
+    2. the currently selected instance's own folder, when the file version fits it;
+    3. among every compatible instance, the folder changed most recently (then the one with the
+       most files);
+    4. the game folder itself when no instance is compatible.
+
+    The remembered folder wins outright, exactly as in PCL: it is the user's own last answer, and a
+    later install with another loader must not silently move it back into an instance.
+    """
+    game_dir = Path(game_dir)
+    key = CONTENT_SUBDIRS.get(kind, kind)
+    remembered = str((getattr(cfg, "resource_dirs", {}) or {}).get(key, "") or "").strip()
+    if remembered:
+        return Path(remembered)
+
+    choices = instance_choices(
+        game_dir, loaders, cfg=cfg, kind=kind, game_versions=game_versions
+    )
+    selected_id = str(getattr(cfg, "selected_instance", "") or "").strip()
+    if selected_id:
+        selected = next((item for item in choices if item.instance_id == selected_id), None)
+        if selected is not None and selected.usable:
+            return selected.content_dir(kind)
+
+    compatible = [item for item in choices if item.usable]
+    if compatible:
+        best = max(compatible, key=lambda item: _dir_rank(item.content_dir(kind)))
+        return best.content_dir(kind)
+    return game_dir
+
+
+def remember_content_dir(kind: str, directory: Path) -> None:
+    """Store the folder the user chose for ``kind`` (the next save dialog starts there).
+
+    The write is best-effort: a config that cannot be saved (read-only data dir, a minimal config
+    object in a test) must not turn a completed download into a failure. The key is the folder name
+    the kind lives in, so the config reads as ``{"mods": "D:/mc/mods"}``.
+    """
+    key = CONTENT_SUBDIRS.get(kind)
+    if key is None:
+        return
+    try:
+        cfg, cfg_path = config.load()
+        folders = dict(getattr(cfg, "resource_dirs", {}) or {})
+        folders[key] = str(directory)
+        cfg.resource_dirs = folders
+        config.save(cfg, cfg_path)
+    except (AttributeError, OSError, TypeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "resources: could not remember the %s save folder %s", kind, directory, exc_info=True
+        )
+
+
+def ask_save_file(
+    parent: QWidget | None, title: str, suggested: Path, filter_text: str
+) -> Path | None:
+    """The system save dialog, and nothing else; ``None`` means the user cancelled.
+
+    Kept as one module-level function so a test can replace exactly this call (the dialog itself is
+    a native window and must never open during a test run). ``QFileDialog.getSaveFileName`` is the
+    platform dialog the user asked for, pre-filled with the suggested full path.
+    """
+    chosen, _selected_filter = QFileDialog.getSaveFileName(
+        parent, title, str(suggested), filter_text
+    )
+    text = str(chosen or "").strip()
+    return Path(text) if text else None
 
 
 class _ResourceRow(QWidget):
@@ -796,44 +975,71 @@ class _ResourceList(QListWidget):
                 widget.resize(width, widget.height())
 
 
-class _InstanceRow(QAbstractButton):
-    """One local instance in the install step: 40px icon, name, version id, loader.
+class _VersionRow(QAbstractButton):
+    """One file version in the install step: version name, game versions, loaders, date, size.
 
-    Painted rather than composed for the reason the versions page's loader rows are: a list of
-    choices must elide its text on one line, and a QLabel either wraps or reports a width wider than
-    it paints. It is a real ``QAbstractButton``: it is a Tab stop, Space/Enter activate it, and
-    assistive technology reports the choice and its state. A mismatched instance is disabled and
-    **not** checkable - the greyed row is the whole of the "never force a loader mismatch" rule.
+    Painted rather than composed for the reason the version cards on the versions page are: the
+    metadata line must elide on one line, and a list of a hundred alternatives must not pay for a
+    widget tree per row. It is a real ``QAbstractButton``: a Tab stop, Space/Enter activate it, and
+    assistive technology reports the version and its metadata.
     """
 
-    HEIGHT = 64
-    #: A refused row carries a second text line: the sentence that says why.
-    NOTE_HEIGHT = 84
+    HEIGHT = 78
     PADDING = 16
-    ICON = 40
-    GAP = 12
     RADIUS = 8
     MARK = 16
 
-    def __init__(self, choice: InstanceChoice, icon: QPixmap, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        version: object,
+        *,
+        current: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.choice = choice
-        self._icon = icon
+        self.version = version
         self._hover = False
-        self.setObjectName("instanceChoiceRow")
-        self.setFixedHeight(self.NOTE_HEIGHT if choice.note else self.HEIGHT)
-        self.setCheckable(choice.usable)
-        self.setEnabled(choice.usable)
+        self.setObjectName("instanceChoiceRow")  # the resources page's choice-row surface
+        self.setFixedHeight(self.HEIGHT)
+        self.setCheckable(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setCursor(
-            Qt.CursorShape.PointingHandCursor if choice.usable else Qt.CursorShape.ArrowCursor
-        )
-        label = f"{choice.name} · {choice.version_id} · {choice.loader_label}"
-        if choice.note:
-            label += " · " + choice.note
-            self.setToolTip(choice.note)
-        self.setAccessibleName(label)  # WCAG 4.1.2
-        self.setAccessibleDescription(choice.note)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setChecked(current)
+        self._refresh_text()
+
+    # ---------- data ----------
+
+    def _meta_line(self) -> str:
+        versions = version_game_versions_of(self.version)
+        loaders = version_loaders_of(self.version)
+        parts: list[str] = []
+        if versions:
+            parts.append(tr("mods.versions.mc") + " " + _join_limited(versions, 3))
+        if loaders:
+            parts.append(
+                tr("mods.versions.loaders")
+                + " "
+                + ", ".join(display_loader_name(item) for item in loaders[:3])
+            )
+        return " · ".join(parts)
+
+    def _info_line(self) -> str:
+        parts = [part for part in (version_published_of(self.version)[:10],) if part]
+        size = version_size_of(self.version)
+        if size:
+            parts.append(format_size(size))
+        filename = version_filename_of(self.version)
+        if filename:
+            parts.append(filename)
+        return " · ".join(parts)
+
+    def _refresh_text(self) -> None:
+        name = version_name_of(self.version)
+        meta = self._meta_line()
+        info = self._info_line()
+        accessible = " · ".join(part for part in (name, meta, info) if part)
+        self.setAccessibleName(accessible)  # WCAG 4.1.2
+        self.setToolTip("\n".join(part for part in (name, meta, info) if part))
 
     # ---------- interaction ----------
 
@@ -880,7 +1086,7 @@ class _InstanceRow(QAbstractButton):
         if self.isChecked():
             border = QColor(tokens.get("ACCENT", "#2f9e6f"))
             background = QColor(tokens.get("ACCENT_TINT", background.name()))
-        elif self._hover and self.isEnabled():
+        elif self._hover:
             border = QColor(tokens.get("BORDER_HOVER", border.name()))
         if self.hasFocus() and bool(self.property("keyboardFocus")):
             border = QColor(tokens.get("FOCUS_RING", border.name()))
@@ -888,20 +1094,8 @@ class _InstanceRow(QAbstractButton):
         painter.setBrush(background)
         painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
 
-        icon_rect = QRectF(self.PADDING, (self.height() - self.ICON) / 2.0, self.ICON, self.ICON)
-        if not self._icon.isNull():
-            # A refused row keeps its icon readable but dimmed: the loader glyph is what the sentence
-            # under it is about, so hiding it would take away the "which loader is this" cue.
-            painter.setOpacity(1.0 if self.isEnabled() else 0.45)
-            painter.drawPixmap(icon_rect, self._icon, QRectF(self._icon.rect()))
-            painter.setOpacity(1.0)
-
-        text_color = QColor(
-            tokens.get("FG_TEXT" if self.isEnabled() else "FG_DISABLED", "#1f2a36")
-        )
-        hint_color = QColor(
-            tokens.get("FG_HINT" if self.isEnabled() else "FG_DISABLED", "#4f6070")
-        )
+        text_color = QColor(tokens.get("FG_TEXT", "#1f2a36"))
+        hint_color = QColor(tokens.get("FG_HINT", "#4f6070"))
         name_font = QFont(self.font())
         name_font.setPixelSize(15)
         name_font.setWeight(QFont.Weight.DemiBold)
@@ -910,14 +1104,12 @@ class _InstanceRow(QAbstractButton):
         name_metrics = QFontMetrics(name_font)
         meta_metrics = QFontMetrics(meta_font)
 
-        left = self.PADDING + self.ICON + self.GAP
+        left = self.PADDING
         right = self.width() - self.PADDING - self.MARK - 12
         text_width = max(0, right - left)
         name_height = name_metrics.height()
         meta_height = meta_metrics.height()
-        block = name_height + 2 + meta_height
-        if self.choice.note:
-            block += 2 + meta_height
+        block = name_height + 2 + meta_height + 2 + meta_height
         top = (self.height() - block) / 2.0
 
         painter.setFont(name_font)
@@ -925,33 +1117,28 @@ class _InstanceRow(QAbstractButton):
         painter.drawText(
             QRectF(left, top, text_width, name_height),
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            name_metrics.elidedText(self.choice.name, Qt.TextElideMode.ElideRight, text_width),
+            name_metrics.elidedText(
+                version_name_of(self.version), Qt.TextElideMode.ElideRight, text_width
+            ),
         )
         painter.setFont(meta_font)
         painter.setPen(hint_color)
-        meta = f"{self.choice.version_id} · {self.choice.loader_label}"
         painter.drawText(
             QRectF(left, top + name_height + 2, text_width, meta_height),
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            meta_metrics.elidedText(meta, Qt.TextElideMode.ElideRight, text_width),
+            meta_metrics.elidedText(self._meta_line(), Qt.TextElideMode.ElideRight, text_width),
         )
-        if self.choice.note:
-            painter.setPen(QColor(tokens.get("FG_STATUS_WARNING", "#87691b")))
-            painter.drawText(
-                QRectF(left, top + name_height + 2 + meta_height + 2, text_width, meta_height),
-                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-                meta_metrics.elidedText(
-                    self.choice.note, Qt.TextElideMode.ElideRight, text_width
-                ),
-            )
-
+        painter.drawText(
+            QRectF(left, top + name_height + 2 + meta_height + 2, text_width, meta_height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            meta_metrics.elidedText(self._info_line(), Qt.TextElideMode.ElideRight, text_width),
+        )
         self._paint_mark(painter, tokens)
+        painter.end()
 
     def _paint_mark(self, painter: QPainter, tokens: dict[str, str]) -> None:
         """The single-choice indicator: an empty ring, or a filled accent disc with a tick."""
-        centre = QPointF(
-            self.width() - self.PADDING - self.MARK / 2.0, self.height() / 2.0
-        )
+        centre = QPointF(self.width() - self.PADDING - self.MARK / 2.0, self.height() / 2.0)
         radius = self.MARK / 2.0 - 1.0
         if self.isChecked():
             painter.setPen(Qt.PenStyle.NoPen)
@@ -968,52 +1155,51 @@ class _InstanceRow(QAbstractButton):
             path.lineTo(centre + QPointF(3.4, -2.8))
             painter.drawPath(path)
             return
-        ring = "FG_DISABLED" if not self.isEnabled() else "FG_HINT"
-        painter.setPen(QPen(QColor(tokens.get(ring, "#4f6070")), 1.2))
+        painter.setPen(QPen(QColor(tokens.get("FG_HINT", "#4f6070")), 1.2))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(centre, radius, radius)
 
 
-class _InstancePickerDialog(inwindow_dialog.InWindowDialog):
-    """Second step of the resources page: choose which **local** instance gets the mod.
+class _VersionPickerDialog(inwindow_dialog.InWindowDialog):
+    """The resources page's install step: choose the file version, then the save location.
 
-    The panel is a window-internal card (``InWindowDialog``: a child widget, never a native window),
-    and it speaks the versions page's install-step language - one card, one row per choice with the
-    same 40px block icon the instances page uses, and one 48px accent pill as the single primary
-    action. The rows come from :func:`instance_choices`, i.e. from ``versions/`` on disk; nothing here
-    downloads a loader or creates an instance.
-
-    ``selected_choice()`` is what the page installs into. A row whose loader does not match the mod
-    is disabled and cannot be checked, so "force install anyway" has no path.
+    An in-window card (never a native window) listing every file version the source returned, newest
+    first. The row metadata is what the user needs to tell them apart - version name, Minecraft
+    versions, loaders, publication date and file size - and one 48px accent pill leads to the system
+    save dialog. Nothing is downloaded and no instance is chosen here; that is the page's next step.
     """
 
-    CARD_WIDTH = 560
-    LIST_MAX_HEIGHT = 312
+    CARD_WIDTH = 680
+    LIST_MAX_HEIGHT = 380
 
     def __init__(
-        self, parent: QWidget | None, choices: list[InstanceChoice], *, mod_title: str
+        self,
+        parent: QWidget | None,
+        versions: list[object],
+        *,
+        project_title: str,
+        current_key: str = "",
     ) -> None:
         super().__init__(
             parent,
-            title=tr("mods.instance.title"),
+            title=tr("mods.versions.title", project_title),
             severity="question",
             card_width=self.CARD_WIDTH,
         )
-        self.choices = list(choices)
-        self.rows: list[_InstanceRow] = []
-        self.wants_versions = False
+        self.versions = list(versions)
+        self.rows: list[_VersionRow] = []
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
-        # A plain label, not InWindowDialog.add_body's scroll area: the hint is one short sentence, and
-        # a scroll area's 192px size hint left a hole between the hint and the empty state.
-        self.hint_label = QLabel(tr("mods.instance.hint", mod_title))
+        # A plain label, not add_body's scroll area: the hint is one short sentence, and a scroll
+        # area's 192px size hint left a hole between the hint and the list.
+        self.hint_label = QLabel(tr("mods.versions.hint"))
         self.hint_label.setObjectName("overlayBody")
         self.hint_label.setWordWrap(True)
         self.hint_label.setMaximumWidth(self.CARD_WIDTH - 2 * inwindow_dialog.CARD_PADDING)
         self.card_layout.addWidget(self.hint_label)
 
         self.list_area = QScrollArea()
-        self.list_area.setObjectName("overlayScroll")  # the shared transparent scroll surface
+        self.list_area.setObjectName("overlayScroll")
         self.list_area.setWidgetResizable(True)
         self.list_area.setFrameShape(QFrame.Shape.NoFrame)
         self.list_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1024,78 +1210,63 @@ class _InstancePickerDialog(inwindow_dialog.InWindowDialog):
         rows_layout = QVBoxLayout(container)
         rows_layout.setContentsMargins(0, 0, 0, 0)
         rows_layout.setSpacing(8)
-        for choice in self.choices:
-            icon = block_icons.instance_icon_pixmap(
-                choice.instance, choice.folder, _InstanceRow.ICON, game_dir=choice.game_dir
-            )
-            row = _InstanceRow(choice, icon)
-            row.clicked.connect(self._sync_install)
+        first: _VersionRow | None = None
+        for version in self.versions:
+            row = _VersionRow(version, current=version_key_of(version) == current_key)
+            row.clicked.connect(self._sync_next)
             self._group.addButton(row)
             rows_layout.addWidget(row)
             self.rows.append(row)
+            if first is None:
+                first = row
         rows_layout.addStretch(1)
         self.list_area.setWidget(container)
-        self.list_area.setVisible(bool(self.choices))
         self.card_layout.addWidget(self.list_area)
-
-        self.empty_state = EmptyState(tr("mods.instance.empty"))
-        self.empty_state.update_for(len(self.choices))
-        self.versions_button = QPushButton(tr("mods.instance.go_versions"))
-        self.versions_button.setObjectName("secondaryButton")
-        self.versions_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.versions_button.setAccessibleName(tr("mods.instance.go_versions"))
-        self.versions_button.clicked.connect(self._open_versions)
-        empty_row = QHBoxLayout()
-        empty_row.setSpacing(0)
-        empty_row.addStretch(1)
-        empty_row.addWidget(self.versions_button)
-        empty_row.addStretch(1)
-        self.empty_state.setVisible(not self.choices)
-        self.versions_button.setVisible(not self.choices)
-        self.card_layout.addWidget(self.empty_state)
-        self.card_layout.addLayout(empty_row)
+        if first is not None and not any(row.isChecked() for row in self.rows):
+            first.setChecked(True)  # newest first: the same default PCL pre-selects
 
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
         button_row.addStretch(1)
-        self.cancel_button = QPushButton(tr("mods.instance.cancel"))
+        self.cancel_button = QPushButton(tr("dialog.cancel"))
         self.cancel_button.setObjectName("secondaryButton")
         self.cancel_button.setMinimumHeight(36)
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.clicked.connect(
             lambda: self._finish(inwindow_dialog.Outcome.REJECTED)
         )
-        self.install_button = QPushButton(tr("mods.instance.install"))
-        self.install_button.setObjectName("installPrimary")  # the versions step's pill
-        self.install_button.setMinimumHeight(48)
-        self.install_button.setMinimumWidth(200)
-        self.install_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.install_button.setEnabled(False)
-        self.install_button.clicked.connect(
+        self.next_button = QPushButton(tr("mods.versions.next"))
+        self.next_button.setObjectName("installPrimary")  # the versions step's pill
+        self.next_button.setMinimumHeight(48)
+        self.next_button.setMinimumWidth(200)
+        self.next_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_button.setEnabled(self.selected_version() is not None)
+        self.next_button.clicked.connect(
             lambda: self._finish(inwindow_dialog.Outcome.ACCEPTED)
         )
         button_row.addWidget(self.cancel_button)
-        button_row.addWidget(self.install_button)
+        button_row.addWidget(self.next_button)
         self.card_layout.addLayout(button_row)
-        self._mark_default(self.install_button, inwindow_dialog.Outcome.ACCEPTED)
+        self._mark_default(self.next_button, inwindow_dialog.Outcome.ACCEPTED)
 
     # ---------- data ----------
 
-    def selected_choice(self) -> InstanceChoice | None:
+    def selected_version(self) -> object | None:
         for row in self.rows:
             if row.isChecked():
-                return row.choice
+                return row.version
         return None
 
-    def _sync_install(self, *_args) -> None:
-        self.install_button.setEnabled(self.selected_choice() is not None)
+    def _sync_next(self, *_args) -> None:
+        self.next_button.setEnabled(self.selected_version() is not None)
 
     # ---------- keyboard ----------
 
     def _focus_initial(self) -> None:
-        """Start on the first instance that can actually take the mod."""
+        """Start on the checked row (the newest version), so Enter is immediately meaningful."""
+        selected = self.selected_version()
         for row in self.rows:
-            if row.isEnabled():
+            if row.version is selected:
                 row.setFocus(Qt.FocusReason.TabFocusReason)
                 return
         super()._focus_initial()
@@ -1104,18 +1275,11 @@ class _InstancePickerDialog(inwindow_dialog.InWindowDialog):
         """Enter is the pill, but only once a row is chosen; otherwise it must do nothing."""
         if (
             event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-            and self.selected_choice() is None
+            and self.selected_version() is None
         ):
             event.accept()
             return
         super().keyPressEvent(event)
-
-    # ---------- navigation ----------
-
-    def _open_versions(self) -> None:
-        """The empty state's way out: close, and let the page open the versions page."""
-        self.wants_versions = True
-        self._finish(inwindow_dialog.Outcome.REJECTED)
 
 
 class _PopupFitCombo(QComboBox):
@@ -1325,11 +1489,7 @@ class _TaskedInstall:
 class _ContentTab(QWidget):
     """Generic resource tab. kind: mod / modpack / resourcepack / shaderpack"""
 
-    CONTENT_SUBDIR: ClassVar[dict[str, str]] = {
-        "mod": "mods",
-        "resourcepack": "resourcepacks",
-        "shaderpack": "shaderpacks",
-    }
+    CONTENT_SUBDIR: ClassVar[dict[str, str]] = CONTENT_SUBDIRS
 
     # Tab title per kind, so a control inside a tab can name the tab it belongs to. The four tabs share
     # one class and each has its own source dropdown, so a bare "source" would name four different
@@ -1825,15 +1985,14 @@ class _ContentTab(QWidget):
         self._update_install_button()
 
     def _update_install_button(self) -> None:
-        # A mod always goes into a local instance, so the button names that decision. The other
-        # categories keep their old wording: resource packs, shaders and modpacks are not scoped to an
-        # instance by this page.
-        mod_label = tr("mods.install_to_instance") if self.kind == "mod" else None
+        # Every installable category now opens the same version step (a modpack keeps its own
+        # confirmation/instance flow), so the button no longer names an instance decision.
+        label = tr("mods.install")
         if self._hit is not None:
-            self.install_button.setText(mod_label or tr("mods.search.pick"))
+            self.install_button.setText(label)
             self.install_button.setEnabled(True)
         else:
-            self.install_button.setText(mod_label or tr("mods.install"))
+            self.install_button.setText(label)
             self.install_button.setEnabled(self._current is not None)
 
     # ---------- Search & paging ----------
@@ -2158,175 +2317,161 @@ class _ContentTab(QWidget):
             self._update_install_button()
         set_app_status(self, tr("mods.msg.query_done", info.title, picked.version_id))
 
-    # ---------- Install ----------
+    # ---------- Install: choose the file version, then save it where the user wants ----------
 
     def _on_install_clicked(self) -> None:
         if self._hit is not None:
-            # "All" merges both sources, so the row's own source decides the install path; the
+            # "All" merges both sources, so the row's own source decides the version request; the
             # page-level source remains the fallback for a hit built without one.
             hit_source = self._hit.source or self.page.current_source()
-            if hit_source == "curseforge":
-                self._install_cf(self._hit)
-            elif self.kind == "mod":
-                self._install_hit(self._hit)
-            else:
-                self._install_slug(
-                    self._hit.slug,
-                    mod_version_id=None,
-                    loader=None,
-                    game_version=None,
-                    title=self._hit.title,
-                )
+            self._install_project(self._hit.slug, self._hit.title, source=hit_source)
             return
         self._on_install()
-
-    # ---------- the install step: which local instance gets this mod ----------
 
     def _game_dir(self) -> Path:
         cfg, _ = config.load()
         return Path(cfg.game_dir or paths.default_game_dir())
 
-    def _pick_instance(self, mod_title: str, mod_loaders: list[str]) -> InstanceChoice | None:
-        """Show the local-instance step and return the chosen instance, or None.
-
-        The dialog owns only the choice; the page still owns the download. ``wants_versions`` is the
-        empty state's 去版本页 button: the dialog is gone by then, so the page can switch pages.
-        """
-        dialog = _InstancePickerDialog(
-            self, instance_choices(self._game_dir(), mod_loaders), mod_title=mod_title
-        )
-        outcome = dialog.ask()
-        if dialog.wants_versions:
-            self._go_to_versions()
-            return None
-        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
-            return None
-        return dialog.selected_choice()
-
-    def _go_to_versions(self) -> None:
-        """Open the versions page in the main rail (the same route the instances page's empty state uses)."""
-        from gui.main_window import NAV_KEYS
-
-        sidebar = getattr(self.window(), "sidebar", None)
-        if sidebar is None:
-            return
-        sidebar.setCurrentRow(NAV_KEYS.index("versions"))
-
     def _install_hit(self, hit: ModSearchHit) -> None:
-        """A Modrinth mod row: choose the instance, then let that instance pick the version."""
-        choice = self._pick_instance(hit.title, [str(item) for item in hit.loaders])
-        if choice is None:
-            return
-        self._install_mod_into(choice, hit.slug, hit.title)
+        """A result row: the same version -> save-as step every installable project takes."""
+        self._install_project(
+            hit.slug, hit.title, source=hit.source or self.page.current_source()
+        )
 
-    def _install_mod_into(self, choice: InstanceChoice, slug: str, title: str) -> None:
-        """Download one mod into the chosen instance's own mods directory.
+    def _install_project(
+        self, slug: str, title: str, *, source: str, current_version_id: str = ""
+    ) -> None:
+        """Step 1 of PCL's flow: fetch every file version of the project and let the user pick one.
 
-        The instance supplies the loader and the game version the version request is filtered by;
-        ``version_id`` + ``isolated`` make ``install_mod`` resolve the instance folder itself - the
-        very directory the instances page counts. Nothing is created and no loader is downloaded.
-
-        The download is listed as a task (``gui/pages/downloads_page.py``) through the adapter above:
-        ``install_mod`` itself is called unchanged, with the page's progress handed to its own
-        ``progress`` parameter.
+        No instance is chosen and nothing is created here. The version list is a background request
+        (the same ``fetch_versions`` the slug lookup uses, or CurseForge's file listing); the picker
+        then opens in-window, and only an accepted pick moves on to the save dialog.
         """
-        loader = None if choice.loader_id == "vanilla" else choice.loader_id
+        if self.kind == "modpack":
+            if source == "curseforge":
+                set_app_status(self, tr("mods.cf.modpack_unsupported"))
+            else:
+                self._install_modpack_now(slug, None)
+            return
+        if source == "curseforge":
+            from launcher.mods import curseforge as cf
+
+            if not cf.available():
+                # A row from an earlier successful page can survive a 403; never start a request.
+                self._sync_source_availability()
+                return
         disable_keeping_focus(self.install_button)
-        set_app_status(self, tr("mods.msg.downloading_into", title or slug, choice.name))
+        set_app_status(self, tr("mods.versions.loading"))
 
-        def do_install(progress) -> object:
-            return install_mod(
-                slug,
-                game_dir=choice.game_dir,
-                loader=loader,
-                game_version=choice.minecraft or None,
-                version_id=choice.instance_id,
-                isolated=choice.isolated,
-                progress=progress,
+        def do_load() -> object:
+            if source == "curseforge":
+                from launcher.mods import curseforge as cf
+
+                return cf.list_files(int(slug))
+            return fetch_versions(slug)
+
+        def on_result(versions) -> None:
+            self.install_button.setEnabled(True)
+            if not versions:
+                set_app_status(self, tr("mods.versions.none"))
+                return
+            dialog = _VersionPickerDialog(
+                self,
+                list(versions),
+                project_title=title or slug,
+                current_key=current_version_id,
             )
+            if dialog.ask() is not inwindow_dialog.Outcome.ACCEPTED:
+                set_app_status(self, tr("mods.status.default"))
+                return
+            picked = dialog.selected_version()
+            if picked is not None:
+                self._continue_install(slug, title, source, picked)
 
+        def on_error(message: str) -> None:
+            self.install_button.setEnabled(True)
+            self._sync_source_availability()
+            set_app_status(self, tr("mods.versions.fail", message), "error")
+
+        run_in_background(do_load, on_result=on_result, on_error=on_error)
+
+    def _continue_install(self, slug: str, title: str, source: str, picked: object) -> None:
+        """Step 2: compute PCL's default folder, pre-fill the system save dialog, remember the answer.
+
+        The default folder is only a suggestion - the user may navigate anywhere. Cancelling the
+        dialog ends the install here: no task is created and no byte is downloaded.
+        """
+        cfg, _ = config.load()
+        game_dir = self._game_dir()
+        default_dir = default_content_dir(
+            self.kind,
+            version_loaders_of(picked),
+            version_game_versions_of(picked),
+            cfg=cfg,
+            game_dir=game_dir,
+        )
+        fallback = str(slug or "download") + _SAVE_SUFFIX.get(self.kind, ".jar")
+        filename = _safe_filename(version_filename_of(picked), fallback)
+        chosen = ask_save_file(
+            self,
+            tr("mods.save.title", title or slug),
+            default_dir / filename,
+            _SAVE_FILTERS.get(self.kind, "*.jar"),
+        )
+        if chosen is None:
+            set_app_status(self, tr("mods.msg.save_cancelled"))
+            self.install_button.setEnabled(True)
+            return
+        remember_content_dir(self.kind, chosen.parent)
+        self._download_version(slug, title, source, picked, chosen)
+
+    def _download_version(
+        self, slug: str, title: str, source: str, picked: object, dest: Path
+    ) -> None:
+        """Step 3: download exactly one file to exactly ``dest`` (no instance, no folder structure)."""
+        game_dir = self._game_dir()
+
+        def do_install(_progress) -> object:
+            if source == "curseforge":
+                from launcher.mods import curseforge as cf
+
+                path = cf.download_file(picked, Path(dest).parent, dest=dest)
+                return ModInfo(slug=slug, title=title or slug), path
+            install = {
+                "mod": install_mod,
+                "resourcepack": install_resourcepack,
+                "shaderpack": install_shaderpack,
+            }[self.kind]
+            info = install(
+                slug,
+                game_dir=game_dir,
+                mod_version=picked,
+                dest=dest,
+                progress=_progress,
+            )
+            return info, dest
+
+        disable_keeping_focus(self.install_button)
+        set_app_status(self, tr("mods.msg.downloading", title or slug))
         self._run_install(
-            kind="mod",
+            kind=self.kind,
             title=title or slug,
             job=do_install,
-            on_result=lambda info: self._on_mod_installed(info, choice.name),
+            on_result=self._on_saved,
             on_error=lambda m: set_app_status(self, tr("mods.msg.install_fail", m), "error"),
             on_finished=self._on_install_finished,
-            retry=lambda: self._install_mod_into(choice, slug, title),
+            retry=lambda: self._download_version(slug, title, source, picked, dest),
         )
 
-    def _on_mod_installed(self, info: ModInfo, instance_name: str) -> None:
-        """Stays on the resources page; the status line names the instance that just gained the mod."""
-        message = tr("mods.msg.installed_into", instance_name, info.title, info.slug)
+    def _on_saved(self, payload) -> None:
+        """The download landed; the status line names the file and keeps the dependency hints."""
+        info, path = payload
+        message = tr("mods.msg.saved_to", str(path))
         if info.depends:
             message += " | " + tr("mods.dep.required") + " " + ", ".join(info.depends)
         if info.optional_depends:
             message += " | " + tr("mods.dep.optional") + " " + ", ".join(info.optional_depends)
         set_app_status(self, message)
-
-    def _install_cf(self, hit: ModSearchHit) -> None:
-        """Install from CurseForge into the chosen instance (a mod is always instance-scoped)."""
-        if self.kind == "modpack":
-            set_app_status(self, tr("mods.cf.modpack_unsupported"))
-            return
-        from launcher.mods import curseforge as cf
-        from launcher.mods import resolve_content_dir
-
-        if not cf.available():
-            # A row from an earlier successful page can survive a 403; never start a request for it.
-            self._sync_source_availability()
-            return
-
-        choice = None
-        if self.kind == "mod":
-            choice = self._pick_instance(hit.title, [str(item) for item in hit.loaders])
-            if choice is None:
-                return
-        cfg, _ = config.load()
-        game_dir = cfg.game_dir or paths.default_game_dir()
-        if choice is not None:
-            game_version = choice.minecraft
-            loader = "" if choice.loader_id == "vanilla" else choice.loader_id
-        else:
-            game_version = self.game_version_edit.text().strip()
-            loader = ""
-        disable_keeping_focus(self.install_button)
-        set_app_status(self, tr("mods.cf.downloading", hit.title))
-
-        def do_install() -> object:
-            files = cf.list_files(int(hit.slug), game_version=game_version, loader=loader)
-            if not files:
-                raise ModsError(tr("mods.cf.no_file", game_version or hit.title))
-            picked = files[0]
-            if choice is not None:
-                target = choice.mods_dir
-            else:
-                subdir = {"resourcepack": "resourcepacks", "shaderpack": "shaderpacks"}.get(
-                    self.kind, self.kind
-                )
-                target = resolve_content_dir(game_dir, subdir, isolated=cfg.default_isolation)
-            return cf.download_file(picked, target), picked
-
-        run_in_background(
-            do_install,
-            on_result=lambda result: self._on_cf_installed(
-                result, choice.name if choice is not None else ""
-            ),
-            on_error=self._on_cf_install_error,
-            on_finished=lambda: self.install_button.setEnabled(True),
-        )
-
-    def _on_cf_install_error(self, message: str) -> None:
-        """Show the failure and drop the source if the service just refused the key."""
-        self._sync_source_availability()
-        set_app_status(self, tr("mods.cf.fail", message), "error")
-
-    def _on_cf_installed(self, result, instance_name: str = "") -> None:
-        target, _picked = result
-        if instance_name:
-            set_app_status(self, tr("mods.cf.done_into", instance_name, target.name))
-        else:
-            set_app_status(self, tr("mods.cf.done", target.name))
 
     def _run_install(
         self,
@@ -2361,107 +2506,6 @@ class _ContentTab(QWidget):
         install, self._active_install = self._active_install, None
         if install is not None:
             install.abandon()
-
-    def _install_slug(
-        self,
-        slug: str,
-        *,
-        mod_version_id: str | None,
-        loader: str | None,
-        game_version: str | None,
-        title: str | None,
-    ) -> None:
-        cfg, _ = config.load()
-        game_dir = cfg.game_dir or paths.default_game_dir()
-        disable_keeping_focus(self.install_button)
-        set_app_status(self, tr("mods.msg.downloading", title or slug))
-
-        def do_install(progress) -> object:
-            if self.kind == "resourcepack":
-                return install_resourcepack(
-                    slug,
-                    game_dir=game_dir,
-                    game_version=game_version,
-                    mod_version_id=mod_version_id,
-                    isolated=cfg.default_isolation,
-                    progress=progress,
-                )
-            if self.kind == "shaderpack":
-                return install_shaderpack(
-                    slug,
-                    game_dir=game_dir,
-                    game_version=game_version,
-                    mod_version_id=mod_version_id,
-                    isolated=cfg.default_isolation,
-                    progress=progress,
-                )
-            return install_mod(
-                slug,
-                game_dir=game_dir,
-                loader=loader,
-                game_version=game_version,
-                mod_version_id=mod_version_id,
-                isolated=cfg.default_isolation,
-                progress=progress,
-            )
-
-        self._run_install(
-            kind=self.kind,
-            title=title or slug,
-            job=do_install,
-            on_result=self._on_installed,
-            on_error=lambda m: set_app_status(self, tr("mods.msg.install_fail", m), "error"),
-            on_finished=self._on_install_finished,
-            retry=lambda: self._install_slug(
-                slug,
-                mod_version_id=mod_version_id,
-                loader=loader,
-                game_version=game_version,
-                title=title,
-            ),
-        )
-
-    def _install_content_now(
-        self, slug: str, title: str, *, mod_version_id: str | None, game_version: str | None
-    ) -> None:
-        """A resource pack or a shader pack, downloaded and listed as a task.
-
-        Split out of ``_on_install`` so 重试 can re-run *this* download rather than re-read whatever the
-        page happens to have selected when the retry is pressed.
-        """
-        cfg, _ = config.load()
-        game_dir = cfg.game_dir or paths.default_game_dir()
-        install = install_resourcepack if self.kind == "resourcepack" else install_shaderpack
-
-        def do_install(progress) -> object:
-            return install(
-                slug,
-                game_dir=game_dir,
-                game_version=game_version,
-                mod_version_id=mod_version_id,
-                isolated=cfg.default_isolation,
-                progress=progress,
-            )
-
-        disable_keeping_focus(self.install_button)
-        set_app_status(self, tr("mods.msg.downloading", slug))
-        self._run_install(
-            kind=self.kind,
-            title=title or slug,
-            job=do_install,
-            on_result=self._on_installed,
-            on_error=lambda m: (
-                set_app_status(self, tr("mods.msg.install_fail", m), "error"),
-                show_fatal(self, tr("mods.msg.install_fail", m)),
-            ),
-            on_finished=self._on_install_finished,
-            retry=lambda: self._install_content_now(
-                slug,
-                title,
-                mod_version_id=mod_version_id,
-                game_version=game_version,
-            ),
-        )
 
     def _install_modpack_now(self, slug: str, mod_version_id: str | None) -> None:
         """The modpack download itself: behind 安装's confirmation, and behind 重试.
@@ -2547,39 +2591,18 @@ class _ContentTab(QWidget):
         ):
             return
 
-        if self.kind == "mod":
-            # A mod is installed into a local instance, never into the shared folder and never by
-            # building a new instance from the network.
-            choice = self._pick_instance(mod.title, self._current_loaders)
-            if choice is None:
-                return
-            self._install_mod_into(choice, mod.slug, mod.title)
-            return
-
-        self._install_content_now(
+        # The slug lookup always came through Modrinth's project/version API; the version step
+        # preselects the version the lookup landed on.
+        self._install_project(
             mod.slug,
             mod.title,
-            mod_version_id=self._current_mod_version_id or None,
-            game_version=self._current_game_version or None,
+            source="modrinth",
+            current_version_id=self._current_mod_version_id,
         )
 
     def _on_install_finished(self) -> None:
         self._active_install = None
         self._update_install_button()
-
-    def _on_installed(self, info: ModInfo) -> None:
-        if self.kind == "resourcepack":
-            set_app_status(self, tr("mods.rp.done", info.title, info.slug))
-            return
-        if self.kind == "shaderpack":
-            set_app_status(self, tr("mods.sp.done", info.title, info.slug))
-            return
-        message = tr("mods.msg.installed", info.title, info.slug)
-        if info.depends:
-            message += " | " + tr("mods.dep.required") + " " + ", ".join(info.depends)
-        if info.optional_depends:
-            message += " | " + tr("mods.dep.optional") + " " + ", ".join(info.optional_depends)
-        set_app_status(self, message)
 
     def _on_modpack_installed(self, pack) -> None:
         message = tr("mods.mp.done", pack.instance_name, pack.minecraft, pack.files_count)

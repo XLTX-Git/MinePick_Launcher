@@ -67,6 +67,8 @@ class ModVersion(BaseModel):
     game_versions: list[str] = []
     files: list[ModFile] = []
     dependencies: list[ModDependency] = []
+    #: ISO-8601 publication stamp from the API ("" when the source did not say). Display-only.
+    date_published: str = ""
 
 
 class ModInfo(BaseModel):
