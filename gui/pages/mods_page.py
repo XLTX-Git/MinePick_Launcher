@@ -1425,10 +1425,10 @@ class _ContentTab(QWidget):
         self.install_button = QPushButton(tr("mods.install"))
         self.open_folder_button = QPushButton(tr("mods.open_folder"))
         self.open_folder_button.setObjectName("secondaryButton")
-        # PCL metrics: 36px fields and buttons. The stylesheet owns radius/border/padding; the height
-        # is fixed here so it cannot drift with the font of a language. A fixed, not minimum, height
-        # also keeps the second grid row 36px tall when the slug field is hidden - otherwise the
-        # remaining 26px fields would centre in a shorter row and the whole row would move by 5px.
+        # PCL metrics: 36px fields and buttons, as a *floor*. Minimum, not fixed: a machine whose font
+        # is taller than ours needs the control to grow with its own text (a fixed 36 clipped the
+        # search button's label at 17px). The row still lines up because every control shares the
+        # floor and the tallest minimum in the row sets the height for all of them.
         for control in (
             self.loader_combo,
             self.game_version_edit,
@@ -1437,7 +1437,7 @@ class _ContentTab(QWidget):
             self.query_button,
             self.search_button,
         ):
-            control.setFixedHeight(36)
+            control.setMinimumHeight(36)
         self.list = _ResourceList()
         self.list.setObjectName("resourceList")
         # WCAG 4.1.2: the list is a focus stop of its own; the category name tells the four lists apart.

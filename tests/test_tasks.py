@@ -81,7 +81,9 @@ def test_a_new_task_is_running_and_has_no_numbers_yet(center) -> None:
     assert task.state == RUNNING
     assert task.is_running() and not task.is_finished()
     assert task.percent() == 0
-    assert task.size_text() == "0 B / 0 B"
+    # A task whose size is not known yet says so rather than showing a second "0 B": the downloader
+    # learns the total from Content-Length after the first response.
+    assert task.size_text() == "0 B / 未知大小"
     assert task.speed_text() == ""
     assert task.title() == i18n.tr("tasks.title.install", "1.21.11")
     assert task.state_text() == i18n.tr("tasks.state.running")
