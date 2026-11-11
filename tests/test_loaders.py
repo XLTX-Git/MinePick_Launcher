@@ -105,6 +105,40 @@ def test_neoforge_versions():
 
 @respx.mock
 @respx.mock
+def test_neoforge_takes_whichever_host_answers_first():
+    """Both hosts are asked at once; the slow one is abandoned instead of waited for.
+
+    Sequential fallback would pay the dead host's timeout before the good one is even contacted, which
+    is the whole reason this path races.
+    """
+    import time
+
+    def _slow(**kwargs):
+        time.sleep(1.5)
+        return httpx.Response(200, text=NEOFORGE_XML)
+
+    respx.get(
+        "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml"
+    ).mock(side_effect=_slow)
+    respx.get(
+        "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+    ).mock(return_value=httpx.Response(200, text=NEOFORGE_XML))
+
+    started = time.monotonic()
+    versions = list_loader_versions("neoforge", "1.20.2")
+    elapsed = time.monotonic() - started
+
+    assert versions
+    assert elapsed < 1.0, f"waited {elapsed:.2f}s for the slow host"
+    assert all(
+        item.installer_url.startswith(
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge/"
+        )
+        for item in versions
+    )
+
+
+@respx.mock
 def test_neoforge_falls_back_to_the_official_host():
     """The mirror is asked first; when it is down the official maven still answers.
 

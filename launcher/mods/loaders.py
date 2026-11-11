@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -81,20 +83,40 @@ def _get_json(url: str, client: httpx.Client | None) -> list | dict:
 
 
 def _get_text_from_any(sources: list[tuple[str, str]], client: httpx.Client | None) -> tuple[str, str]:
-    """First source that answers, as ``(text, base)``; :class:`ModsError` when every one fails.
+    """Ask every source at once and return the first that answers, as ``(text, base)``.
 
-    ``sources`` are ``(metadata_url, maven_base)`` pairs so the caller learns which host answered:
-    the installer jar has to come from the same place as the metadata that named it.
+    ``sources`` are ``(metadata_url, maven_base)`` pairs: the caller learns which host answered, and
+    the installer jar then comes from that same host - a list from the mirror must not point the jar
+    at the host that is unreachable.
+
+    Racing instead of trying them in turn: ``maven.neoforged.net`` does not answer from mainland
+    China, so a sequential attempt costs its whole timeout before the mirror is even asked. Here the
+    mirror's 0.4s answer wins the race and the official request is abandoned. Six seconds caps each
+    request so a stalled host cannot hold the result.
     """
-    last: Exception | None = None
+    if len(sources) == 1:
+        url, base = sources[0]
+        return _get_text(url, client, timeout=6.0), base
+
+    results: queue.Queue[tuple[str, str] | Exception] = queue.Queue()
     for url, base in sources:
-        try:
-            # A dead host shows up as a connect timeout, and httpx's default is generous. Six seconds
-            # is long enough for a slow but alive host and short enough that the mirror is reached
-            # before the user concludes the page is broken.
-            return _get_text(url, client, timeout=6.0), base
-        except ModsError as exc:
-            last = exc
+        def _worker(url: str = url, base: str = base) -> None:
+            try:
+                results.put((_get_text(url, client, timeout=6.0), base))
+            except Exception as exc:  # noqa: BLE001 - handed to the caller below
+                results.put(exc)
+
+        # Daemon threads: a host that never answers must not keep the process alive at exit, and the
+        # losing request is simply dropped once a winner is in.
+        threading.Thread(target=_worker, name="loader-metadata", daemon=True).start()
+
+    last: Exception | None = None
+    for _ in range(len(sources)):
+        item = results.get()
+        if isinstance(item, Exception):
+            last = item
+            continue
+        return item
     assert last is not None
     raise last
 
