@@ -22,16 +22,18 @@ Two things are pinned here, and they pull in opposite directions on purpose:
 * the **step** - choosing a loader and naming the instance on the page itself, the breadcrumb coming
   back to the list the user left, the two loader states that must never be folded together, and the
   vanilla button that is a real option - is behaviour, so it is driven through the page's widgets;
-* the **install flow** - ``install_version_id`` and the four methods around it - is *not* behaviour to
-  re-test but a contract with the commit before this change: the tests at the bottom parse this
-  render's own methods and the sources frozen from HEAD (``FROZEN_INSTALL_FLOW``) and require the same
-  AST. A UI change that reaches into the download path fails there, whatever it does to the widgets.
+* the **download reporting** - ``_on_progress`` / ``_on_installed`` / ``_on_install_error`` - is *not*
+  behaviour to re-test but a contract: the tests at the bottom parse this render's own methods and
+  the sources frozen from HEAD (``FROZEN_INSTALL_FLOW``) and require the same AST. The install entry
+  and the instance creation deliberately changed (loader build selection, one new instance per
+  install), so those two methods are covered by the behaviour tests above instead.
 """
 
 from __future__ import annotations
 
 import ast
 import inspect
+import json
 import textwrap
 import time
 from types import SimpleNamespace
@@ -41,6 +43,7 @@ import pytest
 from launcher.instances import list_instances, update_instance
 from launcher.meta.manifest import ManifestVersion
 from launcher.mods import loaders as loader_sources
+from launcher.mods.models import LoaderVersion
 
 
 @pytest.fixture(scope="module")
@@ -144,7 +147,13 @@ def page(app, monkeypatch, ws_tmp):
     monkeypatch.setattr(versions_page, "fetch_manifest", _no_network)
     # Every loader can add every version unless a test says otherwise: one probe seam, no network.
     monkeypatch.setattr(
-        versions_install_flow, "probe_loader", lambda loader, version_id: [object()]
+        versions_install_flow,
+        "probe_loader",
+        lambda loader, version_id: [
+            LoaderVersion(
+                loader=loader, version="1.0.0", game_version=version_id, recommended=True
+            )
+        ],
     )
 
     built = versions_page.VersionsPage()
@@ -260,20 +269,28 @@ def test_an_emptied_name_falls_back_to_the_default_on_focus_out(page, app) -> No
     assert step.start_button.isEnabled()
 
 
-def test_a_name_already_in_use_suggests_the_next_numbered_alternative(page, app) -> None:
+def test_a_taken_name_is_a_hard_error_with_the_next_free_alternative(page, app) -> None:
     game = page._game_dir()
     _make_instance(game, "other", "rel-4")
     _make_instance(game, "other-2", "rel-4-2")
 
     step = _open_step(page, app, "rel-4")
+    # The default is already the first free name (the step must not open on a name it refuses).
+    assert step.instance_name() == "rel-4-3"
+    assert step.name_valid()
+
     step.name_edit.setText("rel-4")
     app.processEvents()
 
     assert "rel-4-3" in step.name_hint.text()
-    # Advice, not a refusal: the folder (the version id) is what has to stay unique, and the sidecar
-    # allows two instances to share a display name.
+    # A duplicate folder would overwrite an instance, so this is a refusal now, not advice.
+    assert step.start_button.isEnabled() is False
+    assert step.name_valid() is False
+
+    step.name_edit.setText("rel-4-3")
+    app.processEvents()
     assert step.start_button.isEnabled()
-    assert step.instance_name() == "rel-4"
+    assert step.name_valid()
 
 
 # ---------- the loaders ----------
@@ -356,7 +373,8 @@ def test_the_pill_downloads_vanilla_until_a_loader_is_chosen(page, app) -> None:
     assert step.start_button.text() == i18n.tr("versions.install.vanilla")
 
 
-def test_an_installed_version_keeps_its_name_field_hidden(page, app) -> None:
+def test_an_installed_version_can_be_installed_again_with_its_own_name(page, app) -> None:
+    """Installing a version twice is a normal setup (two instances), never a disabled state."""
     from gui import i18n
 
     game = page._game_dir()
@@ -364,11 +382,18 @@ def test_an_installed_version_keeps_its_name_field_hidden(page, app) -> None:
     page.refresh_installed()
 
     step = _open_step(page, app, "rel-8")
-    assert step.name_editable() is False
-    assert step.name_edit.isVisible() is False
-    assert step.name_fixed.isVisible() is True
-    assert step.name_fixed.text() == "rel-8"
-    assert step.name_hint.text() == i18n.tr("versions.install.name.fixed")
+    assert step.name_editable() is True
+    assert step.name_edit.isVisible() is True
+    # The existing folder is taken, so the step opens on the first free name, not on "rel-8".
+    assert step.name_edit.text() == "rel-8-2"
+    assert step.name_valid()
+    assert step.start_button.isEnabled()
+
+    row = page._row_for("rel-8")
+    assert row is not None and row.installed
+    assert row.install.text() == i18n.tr("versions.install.short"), (
+        "an installed row must still offer the same install action"
+    )
 
 
 def test_the_step_is_walkable_with_the_keyboard_and_paints_its_focus(page, app) -> None:
@@ -454,13 +479,15 @@ def test_the_row_shows_the_download_and_then_says_installed(page, app) -> None:
     assert not row.install_running()
     assert row.install.isVisible()
 
-    # A completed install rebuilds the row as installed.
+    # A completed install rebuilds the row as installed; its action stays "Install" so it can be
+    # installed a second time.
     _make_instance(page._game_dir(), "rel-9", "")
     page.refresh_installed()
     app.processEvents()
     done = page._row_for("rel-9")
     assert done.installed
-    assert done.install.text() == i18n.tr("versions.status.installed")
+    assert done.install.text() == i18n.tr("versions.install.short")
+    assert done.install.isEnabled()
 
 
 def test_the_thin_bottom_bar_can_no_longer_be_shown(page, app) -> None:
@@ -511,92 +538,126 @@ def test_a_rebuild_during_a_download_reattaches_the_progress(page, app) -> None:
     assert row.progress_value() == 300
 
 
-# ---------- the name landing on the instance ----------
+# ---------- the name landing on the new instance ----------
 
 
-def test_the_instance_name_lands_in_the_sidecar_and_is_never_overwritten(
+def test_every_install_creates_its_own_instance_with_the_typed_name(
     page, app, monkeypatch
 ) -> None:
     from gui.pages import versions_page
 
+    game = page._game_dir()
+
     def fake_install(version_id, **kwargs):
-        folder = page._game_dir() / "versions" / version_id
+        target = kwargs.get("target_id") or version_id
+        folder = game / "versions" / target
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{version_id}.json").write_text("{}", encoding="utf-8")
+        (folder / f"{target}.json").write_text(
+            json.dumps({"id": target}), encoding="utf-8"
+        )
         return SimpleNamespace(downloaded=1, skipped=0, failed=[])
 
     monkeypatch.setattr(versions_page, "install_version", fake_install)
-    game = page._game_dir()
     step = _open_step(page, app, "rel-11")
     step.name_edit.setText("我的整合包")
     app.processEvents()
     step.start_button.click()
-    _pump(app, lambda: (game / "versions" / "rel-11" / "minepick.json").is_file())
+    _pump(app, lambda: (game / "versions" / "我的整合包" / "minepick.json").is_file())
 
     assert page.stack.currentWidget() is page._list_step
     instances = list_instances(game)
-    assert instances["rel-11"].display_name == "我的整合包"
-    # The folder is still the version id: a display name never becomes a path.
-    assert (game / "versions" / "rel-11").is_dir()
-    assert not (game / "versions" / "我的整合包").exists()
+    assert instances["我的整合包"].display_name == "我的整合包"
+    # The profile JSON's id follows the folder, so the new instance launches as itself.
+    profile = json.loads(
+        (game / "versions" / "我的整合包" / "我的整合包.json").read_text(encoding="utf-8")
+    )
+    assert profile["id"] == "我的整合包"
+    # The version id itself was not used as the folder: an install is a new instance, not an
+    # overwrite of the canonical profile.
+    assert not (game / "versions" / "rel-11").exists()
 
-    # A reinstall has a fixed name (no field) and must not rename anything.
+    # A second install opens on the version id (the first instance took the typed name), and it
+    # creates a second, separately visible instance.
     _pump(app, lambda: page.install_button.isEnabled())
     again = _open_step(page, app, "rel-11")
-    assert again.name_editable() is False
+    assert again.name_editable() is True
+    assert again.instance_name() == "rel-11"
     again.start_button.click()
-    _pump(app, lambda: page.install_button.isEnabled())
-    assert list_instances(game)["rel-11"].display_name == "我的整合包"
+    _pump(app, lambda: (game / "versions" / "rel-11" / "minepick.json").is_file())
+
+    instances = list_instances(game)
+    assert instances["我的整合包"].display_name == "我的整合包"
+    assert instances["rel-11"].display_name == "rel-11"
 
 
-def test_a_name_the_user_already_owns_is_not_overwritten(page, app) -> None:
+def test_two_installs_of_the_same_version_keep_their_own_names(page, app, monkeypatch) -> None:
+    from gui.pages import versions_page
+
     game = page._game_dir()
-    _make_instance(game, "rel-13", "own name")
+    _make_instance(game, "other", "own name")
     page.refresh_installed()
 
-    # The version is installed, so a reinstall collects no name; even a pending one that reaches the
-    # sidecar write must leave a name the user chose alone.
-    page._pending_display_name = "another name"
-    page._pending_version_id = "rel-13"
-    page._install_before_ids = set(page._installed) - {"rel-13"}
-    page._apply_pending_display_name()
-    assert list_instances(game)["rel-13"].display_name == "own name"
+    def fake_install(version_id, **kwargs):
+        target = kwargs.get("target_id") or version_id
+        folder = game / "versions" / target
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{target}.json").write_text(
+            json.dumps({"id": target}), encoding="utf-8"
+        )
+        return SimpleNamespace(downloaded=1, skipped=0, failed=[])
+
+    monkeypatch.setattr(versions_page, "install_version", fake_install)
+    step = _open_step(page, app, "rel-13")
+    # "own name" is taken; the version id is free and is the suggested name.
+    assert step.instance_name() == "rel-13"
+    step.start_button.click()
+    _pump(app, lambda: (game / "versions" / "rel-13" / "minepick.json").is_file())
+
+    instances = list_instances(game)
+    assert instances["rel-13"].display_name == "rel-13"
+    assert instances["other"].display_name == "own name"  # the older instance is untouched
+    assert (game / "versions" / "rel-13").is_dir()
 
 
-def test_a_chosen_loader_reaches_the_installer_and_names_its_profile(page, app, monkeypatch) -> None:
-    """The whole point of the step: the pick has to arrive in the install, and the name on the profile.
-
-    The install body is unchanged, so this drives the seam the step replaced: ``selected_loader()`` of
-    the decision the page hands that body, then the loader installer it calls, then the sidecar of the
-    profile that installer created (the folder stays the loader's own version id).
-    """
+def test_a_chosen_loader_reaches_the_installer_and_names_its_new_instance(
+    page, app, monkeypatch
+) -> None:
+    """The pick has to arrive in the installer, and the loader profile becomes the new instance."""
     from gui.pages import versions_page
     from launcher import mods as mods_package
+    from launcher.mods.models import LoaderVersion
 
     game = page._game_dir()
-    profile_id = "fabric-loader-0.16.9-rel-5"
     seen: dict[str, object] = {}
 
     def fake_install(version_id, **kwargs):
         folder = game / "versions" / version_id
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{version_id}.json").write_text("{}", encoding="utf-8")
+        (folder / f"{version_id}.json").write_text(
+            json.dumps({"id": version_id}), encoding="utf-8"
+        )
         return SimpleNamespace(downloaded=1, skipped=0, failed=[])
 
-    def fake_list_loader_versions(loader, version_id):
-        seen["loader"] = loader
-        seen["game_version"] = version_id
-        return ["0.16.9"]
-
-    def fake_install_loader(loader_version, game_dir, *args, **kwargs):
+    def fake_install_loader(
+        loader_version, game_dir, *args, cache_dir=None, instance_id=None, **kwargs
+    ):
         seen["loader_version"] = loader_version
-        folder = game_dir / "versions" / profile_id
+        seen["instance_id"] = instance_id
+        folder = game_dir / "versions" / instance_id
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{profile_id}.json").write_text("{}", encoding="utf-8")
-        return profile_id
+        (folder / f"{instance_id}.json").write_text(
+            json.dumps({"id": instance_id, "inheritsFrom": "rel-5"}), encoding="utf-8"
+        )
+        return instance_id
 
     monkeypatch.setattr(versions_page, "install_version", fake_install)
-    monkeypatch.setattr(mods_package, "list_loader_versions", fake_list_loader_versions)
+    monkeypatch.setattr(
+        mods_package,
+        "list_loader_versions",
+        lambda loader, version_id: (_ for _ in ()).throw(
+            AssertionError("the step's selected build must be used, not a fresh list")
+        ),
+    )
     monkeypatch.setattr(mods_package, "install_loader", fake_install_loader)
 
     step = _open_step(page, app, "rel-5")
@@ -604,14 +665,70 @@ def test_a_chosen_loader_reaches_the_installer_and_names_its_profile(page, app, 
     step.name_edit.setText("my pack")
     app.processEvents()
     step.start_button.click()
-    _pump(app, lambda: (game / "versions" / profile_id / "minepick.json").is_file())
+    _pump(app, lambda: (game / "versions" / "my pack" / "minepick.json").is_file())
 
-    assert seen == {"loader": "fabric", "game_version": "rel-5", "loader_version": "0.16.9"}
+    selected = seen["loader_version"]
+    assert isinstance(selected, LoaderVersion)
+    assert selected.version == "1.0.0"
+    assert seen["instance_id"] == "my pack"
     instances = list_instances(game)
-    assert instances[profile_id].display_name == "my pack"
-    # The vanilla folder the download created keeps the default name (the loader profile is the
-    # instance the user starts, so the name went there).
+    assert instances["my pack"].display_name == "my pack"
+    # The vanilla folder the download created is the loader's inherited base, not the new instance.
     assert instances["rel-5"].display_name == ""
+
+
+def test_the_selected_loader_build_is_the_one_installed(page, app, monkeypatch) -> None:
+    """A loader can have several builds for one game version; the dropdown choice must be used."""
+    from gui.pages import versions_install_flow, versions_page
+    from launcher import mods as mods_package
+    from launcher.mods.models import LoaderVersion
+
+    builds = [
+        LoaderVersion(loader="fabric", version="0.16.9", game_version="rel-6"),
+        LoaderVersion(loader="fabric", version="0.15.0", game_version="rel-6"),
+    ]
+    monkeypatch.setattr(
+        versions_install_flow,
+        "probe_loader",
+        lambda loader, version_id: builds if loader == "fabric" else [],
+    )
+    game = page._game_dir()
+    seen: dict[str, object] = {}
+
+    def fake_install(version_id, **kwargs):
+        folder = game / "versions" / version_id
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{version_id}.json").write_text(
+            json.dumps({"id": version_id}), encoding="utf-8"
+        )
+        return SimpleNamespace(downloaded=1, skipped=0, failed=[])
+
+    def fake_install_loader(loader_version, game_dir, *args, instance_id=None, **kwargs):
+        seen["version"] = loader_version.version
+        seen["instance_id"] = instance_id
+        folder = game_dir / "versions" / instance_id
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{instance_id}.json").write_text(
+            json.dumps({"id": instance_id}), encoding="utf-8"
+        )
+        return instance_id
+
+    monkeypatch.setattr(versions_page, "install_version", fake_install)
+    monkeypatch.setattr(mods_package, "install_loader", fake_install_loader)
+
+    step = _open_step(page, app, "rel-6")
+    step.rows["fabric"].click()
+    assert step.loader_version_combo.count() == 2
+    assert step.selected_loader_version().version == "0.16.9"
+    step.loader_version_combo.setCurrentIndex(1)
+    app.processEvents()
+    assert step.selected_loader_version().version == "0.15.0"
+    # The default instance name follows the chosen build, so two builds cannot collide.
+    assert step.instance_name() == "rel-6_fabric_0.15.0"
+
+    step.start_button.click()
+    _pump(app, lambda: (game / "versions" / "rel-6_fabric_0.15.0" / "minepick.json").is_file())
+    assert seen == {"version": "0.15.0", "instance_id": "rel-6_fabric_0.15.0"}
 
 
 # ---------- the install flow itself: unchanged, proven by AST ----------
@@ -629,11 +746,11 @@ def test_the_install_flow_methods_are_unchanged() -> None:
         method = getattr(versions_page.VersionsPage, name)
         current = inspect.getsource(method)
         assert _dump(current) == _dump(frozen), (
-            f"{name} differs from the commit this UI change started from - the install flow must "
-            "not change"
+            f"{name} differs from the commit this UI change started from - the download reporting "
+            "flow must not change"
         )
         checked.append(name)
-    assert checked == list(FROZEN_INSTALL_FLOW) and len(checked) == 5
+    assert checked == list(FROZEN_INSTALL_FLOW) and len(checked) == 3
 
 
 def test_the_ast_check_would_notice_a_change() -> None:
@@ -645,62 +762,6 @@ def test_the_ast_check_would_notice_a_change() -> None:
 
 
 FROZEN_INSTALL_FLOW = {
-    "install_selected": """\
-def install_selected(self) -> None:
-    version_id = self._selected_id()
-    if version_id is None:
-        set_app_status(self, tr("versions.msg.need_select"), "warning")
-        return
-    self.install_version_id(version_id)
-""",
-    "install_version_id": """\
-def install_version_id(self, version_id: str) -> None:
-    # Ask about a mod loader before installing
-    prompt = _LoaderPromptDialog(self)
-    if prompt.exec() != QDialog.DialogCode.Accepted:
-        return
-    loader = prompt.selected_loader()
-    cfg, _ = config.load()
-    game_dir = self._game_dir()
-    disable_keeping_focus(self.install_button)
-    self.progress_row.setVisible(True)
-    self.progress_bar.setRange(0, 1000)
-    self.progress_bar.setValue(0)
-    set_app_status(self, tr("versions.msg.installing", version_id))
-    self._rate = RateTracker()
-    bridge = ProgressBridge()
-    bridge.progress.connect(self._on_progress)
-
-    def do_install(progress) -> object:
-        result = install_version(
-            version_id,
-            game_dir=game_dir,
-            cache_dir=paths.launcher_dir() / "cache",
-            concurrency=cfg.max_concurrent_downloads,
-            progress=progress,
-            auto_install_java=self.auto_jre_check.isChecked(),
-            runtime_dir=paths.launcher_dir() / "runtime",
-        )
-        profile_id = None
-        if loader is not None:
-            from launcher.mods import ModsError, install_loader, list_loader_versions
-
-            versions = list_loader_versions(loader, version_id)
-            if not versions:
-                raise ModsError(tr("versions.msg.loader_unsupported", loader, version_id))
-            profile_id = install_loader(
-                versions[0], game_dir, cache_dir=paths.launcher_dir() / "cache"
-            )
-        return result, profile_id
-
-    run_in_background(
-        do_install,
-        bridge,
-        on_result=self._on_installed,
-        on_error=self._on_install_error,
-        on_finished=lambda: self.install_button.setEnabled(True),
-    )
-""",
     "_on_progress": """\
 def _on_progress(self, p) -> None:
     if p.total_files:

@@ -15,15 +15,17 @@
 # You should have received a copy of the GNU General Public License
 # along with MinePick Launcher. If not, see <https://www.gnu.org/licenses/>.
 
-"""Adapter: the versions page's frozen install flow, seen as a task in the window's task list.
+"""Adapter: the versions page's install flow, seen as a task in the window's task list.
 
-The install flow is a contract (``tests/test_versions_install_flow.py`` pins the AST of the five methods
-that own it), and it has to stay that way: a download that changes how it reports itself is a download
-whose failure paths change too. So the page's install body keeps calling ``_on_progress(progress)``,
-``_on_installed(payload)`` and ``_on_install_error(message)`` exactly as before - and this subclass sits
-*behind* those three names. Each override does two things in a fixed order: the page's own behaviour
-first (``super()``, unchanged), then the task. Nothing is re-implemented, and no callback is replaced by
+The three reporting callbacks (``_on_progress`` / ``_on_installed`` / ``_on_install_error``) are a
+contract (``tests/test_versions_install_flow.py`` pins their AST), and they have to stay that way: a
+download that changes how it reports itself is a download whose failure paths change too. So the
+page's install body keeps calling them exactly as before - and this subclass sits *behind* those
+three names. Each override does two things in a fixed order: the page's own behaviour first
+(``super()``, unchanged), then the task. Nothing is re-implemented, and no callback is replaced by
 a stand-in that pretends to be it - the flow's effect on the page is byte for byte the one it had.
+The install entry itself (``install_version_id``) now creates a new instance per install; the task
+still wraps exactly that call, so the task list's view of it does not change.
 
 Two of the three need more than "call through":
 

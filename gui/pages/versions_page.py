@@ -93,11 +93,13 @@ from launcher import config, paths
 from launcher.install import install_version, list_installed_versions
 from launcher.instances import (
     InstancesError,
-    get_instance,
+    default_instance_name,
     list_instances,
+    unique_instance_name,
     update_instance,
 )
 from launcher.meta import block_textures, fetch_manifest, version_category
+from launcher.mods.models import LoaderVersion
 
 tr = i18n.tr
 
@@ -197,44 +199,15 @@ def human_date(release_time: str) -> str:
     return locale.toString(date, pattern)
 
 
-class _LoaderChoice:
-    """The loader decision one install runs with - the object the install body asks for it.
-
-    It used to be a modal dialog. The choice is a step of this page now (the version list is replaced
-    by ``InstallStep``, not covered by a window), so what the install body receives is the answer that
-    step already recorded: ``exec()`` reports "accepted" - the step's own back button is the only way
-    to say no, and taking it never calls the install body at all - and ``selected_loader()`` returns
-    the loader the user picked, ``None`` meaning the vanilla version.
-
-    Why the install body still asks an object rather than reading the field: ``install_version_id`` is
-    the install flow this change must not touch (``_on_progress`` / ``_on_installed`` /
-    ``_on_install_error`` and the download closure around them are byte for byte the same), and that
-    body opens with these three lines. The decision moved; the body did not.
-    """
-
-    def __init__(self, page: VersionsPage) -> None:
-        self._page = page
-
-    def exec(self) -> QDialog.DialogCode:
-        """Never opens a window: the choice was made before the install body was entered."""
-        return QDialog.DialogCode.Accepted
-
-    def selected_loader(self) -> str | None:
-        return self._page._pending_loader
-
-
-#: The name the unchanged install body constructs. It is a decision carrier now, not a window; the
-#: alias is what keeps ``install_version_id`` byte-identical to the commit before this one.
-_LoaderPromptDialog = _LoaderChoice
-
-
 class _VersionRow(QWidget):
-    """One dense version card: 48px block icon, name + type tag, date/status meta line, install.
+    """One dense version card: 48px block icon, name + type tag, date meta line, install.
 
     Everything except the install button is painted by hand, for the same two reasons the resource
     rows paint themselves: the meta line must elide on one line (a QLabel either wraps or reports text
     wider than it paints), and a list that can hold a thousand manifest entries must not pay for a
     widget tree per row - one widget plus one button is all Qt has to re-polish on a theme swap.
+    An installed profile is *not* marked in the card: the same version may be installed again as a
+    second instance, and the button keeps saying 安装.
     """
 
     HEIGHT = 68
@@ -255,7 +228,6 @@ class _VersionRow(QWidget):
         version_id: str,
         type_label: str,
         date_text: str,
-        status_text: str,
         installed: bool,
         icon: QPixmap,
         *,
@@ -268,7 +240,6 @@ class _VersionRow(QWidget):
         self.version_id = version_id
         self.type_label = type_label
         self.date_text = date_text
-        self.status_text = status_text
         self.installed = installed
         #: The search term this row was built for; the painted name highlights every occurrence.
         self.highlight = (highlight or "").strip()
@@ -280,9 +251,9 @@ class _VersionRow(QWidget):
         self._install_running = False
         self._progress_value = 0
 
-        # An installed row keeps its button - it is the reinstall path, and the step it opens hides the
-        # name field - but it says so instead of offering "Install" again.
-        label = tr("versions.status.installed") if installed else tr("versions.install.short")
+        # An installed version keeps exactly the same button: installing the same version again is a
+        # supported way to get a second instance, so "already installed" must not read as "disabled".
+        label = tr("versions.install.short")
         self.install = QPushButton(label)
         self.install.setObjectName("rowInstall")
         self.install.setFixedHeight(32)
@@ -329,8 +300,7 @@ class _VersionRow(QWidget):
         self.update()
 
     def _meta_text(self) -> str:
-        if self.installed and self.status_text:
-            return f"{self.date_text} · {self.status_text}" if self.date_text else self.status_text
+        """The date line. "Already installed" is deliberately absent: a version can be installed again."""
         return self.date_text
 
     def _tooltip_text(self) -> str:
@@ -1041,12 +1011,14 @@ class VersionsPage(QWidget):
         #: visible metadata per version id: (type label, human date, status text)
         self._meta: dict[str, tuple[str, str, str]] = {}
         self.rows: list[_VersionRow] = []
-        # The install step's state: the version being set up, the loader the user picked (None =
-        # vanilla), the name the step collected, and what the row progress is attached to.
+        # The install step's state: the version being set up, the loader (and its build) the user
+        # picked, the new instance's folder id and display name, and what the row progress is
+        # attached to. Every install creates a new instance, so these are filled by the step.
         self._pending_version_id = ""
         self._pending_loader: str | None = None
+        self._pending_loader_version: LoaderVersion | None = None
+        self._pending_instance_id = ""
         self._pending_display_name = ""
-        self._install_before_ids: set[str] = set()
         self._installing_version_id = ""
         self._installing_row: _VersionRow | None = None
         self._probe_generation = 0
@@ -1146,8 +1118,8 @@ class VersionsPage(QWidget):
         self.progress_row.setVisible(False)
         # The thin bar at the bottom of this page is gone. The download's display is the row's own
         # progress block (and the window's task views); this bar was only ever a second copy of the
-        # same numbers, and it is the one the user asked to have removed. The install flow still shows
-        # it - ``install_version_id`` and its three callbacks are frozen, see FROZEN_INSTALL_FLOW - so
+        # same numbers, and it is the one the user asked to have removed. The install body still shows
+        # it - ``install_version_id`` and its three reporting callbacks check ``progress_row`` - so
         # the refusal lives here: the widget is in no layout, is zero-sized, and the page refuses every
         # show request it gets, which means it never becomes visible and never takes a pixel.
         self.progress_row.setParent(self._list_step)
@@ -1229,6 +1201,9 @@ class VersionsPage(QWidget):
         self.step.back_requested.connect(self._leave_step)
         self.step.start_requested.connect(self._start_from_step)
         self.step.retry_requested.connect(self._probe_loader)
+        # The loader choice changes the default instance name (a loader instance cannot share the
+        # vanilla folder), and so does the build picked in the dropdown.
+        self.step.loader_changed.connect(self._on_loader_changed)
         # The inline progress rides on the page's own bar: ``_on_progress`` keeps writing the bar (the
         # install flow is unchanged), and the row follows the same numbers.
         self.progress_bar.valueChanged.connect(self._on_progress_value)
@@ -1236,10 +1211,9 @@ class VersionsPage(QWidget):
         # it in ``on_finished``, after either callback ran). That is the moment the row's inline progress
         # goes away again - success rebuilds the rows anyway, a failure offers the install button again.
         self.install_button.installEventFilter(self)
-        # The display name lands on the instance folder the install just created (the sidecar), before
-        # the other pages are told to re-read; ``versions_changed`` is emitted at the end of
-        # ``_on_installed``, where the new folders are already on disk.
-        self.versions_changed.connect(self._apply_pending_display_name)
+        # The instance name is written into the new folder's sidecar by the install worker itself
+        # (``install_version_id``), before ``versions_changed`` tells the other pages to re-read; there
+        # is no later name-application pass any more.
         self._rate = RateTracker()
         self._fetch_started = False
         self._refresh_installed()
@@ -1576,6 +1550,8 @@ class VersionsPage(QWidget):
             return
         self._pending_version_id = version_id
         self._pending_loader = None
+        self._pending_loader_version = None
+        self._pending_instance_id = ""
         self._pending_display_name = ""
         # A shortcut card can name a version inside a closed fold; open exactly enough of it that the
         # row exists, so the download's inline progress has a row to land on when the step returns.
@@ -1586,12 +1562,14 @@ class VersionsPage(QWidget):
         if index >= 0:
             self.list.setCurrentRow(index)
         row = self._row_for(version_id)
+        taken = self._taken_names()
         self.step.prepare(
             version_id,
             row.icon() if row is not None else self._latest_icons.get(version_id),
-            editable=version_id not in self._installed,
-            name=version_id,
-            taken=self._display_names(),
+            # Every install names its own instance, including a version that is already installed:
+            # two instances of one version are a normal setup, not a reinstall.
+            name=unique_instance_name(version_id, taken),
+            taken=taken,
         )
         self.stack.setCurrentWidget(self.step)
         self.step.name_edit.setFocus()
@@ -1621,18 +1599,55 @@ class VersionsPage(QWidget):
         """
         if not self.install_button.isEnabled() or not self.step.name_valid():
             return
-        self._pending_loader = self.step.selected_loader()
-        self._pending_display_name = (
-            self.step.instance_name() if self.step.name_editable() else ""
-        )
-        self._probe_generation += 1
         version_id = self._pending_version_id
-        self._install_before_ids = set(self._installed)
+        loader = self.step.selected_loader()
+        loader_version = self.step.selected_loader_version() if loader else None
+        self._pending_loader = loader
+        self._pending_loader_version = loader_version
+        wanted = self.step.instance_name()
+        taken = self._taken_names()
+        if loader is not None:
+            # The loader's inherited vanilla base occupies versions/<version_id>; the new loader
+            # instance must own a different folder, so a default that equals the base shifts to the
+            # loader-specific name before the uniqueness suffix is applied.
+            taken = taken | {version_id}
+            if wanted.casefold() == version_id.casefold():
+                wanted = self._loader_default_name(version_id, loader, loader_version)
+        instance_id = unique_instance_name(wanted, taken)
+        self._pending_instance_id = instance_id
+        # The display name follows the folder only when the default had to be adjusted; a name the
+        # user typed is kept exactly (the folder gets the suffix, the card keeps the typed text).
+        self._pending_display_name = wanted if wanted != self.step.instance_name() else self.step.instance_name()
+        self._probe_generation += 1
         self.stack.setCurrentWidget(self._list_step)
         self._attach_inline_progress(version_id)
         # The one install entry the page has always used (the loader decision is read from the field
         # the step filled in), so the download, its callbacks and its status text are untouched.
         self.install_version_id(version_id)
+
+    @staticmethod
+    def _loader_default_name(
+        version_id: str, loader: str, loader_version: LoaderVersion | None
+    ) -> str:
+        """The folder/name default for a loader instance: PCL's ``version_loader_build`` shape."""
+        if loader_version is not None and loader_version.version:
+            return f"{version_id}_{loader}_{loader_version.version}"
+        return f"{version_id}_{loader}"
+
+    def _on_loader_changed(self, loader: str) -> None:
+        """Keep the default instance name in step with the loader (and its build) the user picked."""
+        version_id = self._pending_version_id
+        if not version_id:
+            return
+        taken = self._taken_names()
+        if loader:
+            taken = taken | {version_id}
+            name = self._loader_default_name(
+                version_id, loader, self.step.selected_loader_version()
+            )
+        else:
+            name = unique_instance_name(version_id, taken)
+        self.step.set_default_name(unique_instance_name(name, taken), taken)
 
     def _probe_loaders(self, version_id: str) -> None:
         """Ask every loader row whether it can add this version (one background query per loader)."""
@@ -1655,9 +1670,10 @@ class VersionsPage(QWidget):
             if generation != self._probe_generation:
                 return  # the step moved on: an answer for an abandoned version is not shown
             # Empty is a real answer ("none for this version"), not a failure: the two states must
-            # never be folded together, because only one of them is worth retrying.
+            # never be folded together, because only one of them is worth retrying. The non-empty
+            # list is the dropdown the step shows when this loader is picked.
             state = CAN_ADD if versions else NO_VERSION
-            self.step.set_loader_status(loader, state)
+            self.step.set_loader_status(loader, state, versions=list(versions))
 
         def on_error(message: str) -> None:
             if generation != self._probe_generation:
@@ -1702,13 +1718,16 @@ class VersionsPage(QWidget):
     def _finish_inline_progress(self) -> None:
         """The download ended (success or failure): give the row its install button back.
 
-        The loader decision is dropped here too, so a later install that did not come through the step
-        cannot silently reuse the previous answer.
+        The loader and instance decisions are dropped here too, so a later install that did not come
+        through the step cannot silently reuse the previous answer.
         """
         row = self._installing_row
         self._installing_row = None
         self._installing_version_id = ""
         self._pending_loader = None
+        self._pending_loader_version = None
+        self._pending_instance_id = ""
+        self._pending_display_name = ""
         if row is not None:
             row.clear_install_progress()
 
@@ -1738,40 +1757,25 @@ class VersionsPage(QWidget):
             self._finish_inline_progress()
         return super().eventFilter(obj, event)
 
-    def _display_names(self) -> set[str]:
-        """Every display name an instance already carries (what a new name must not repeat)."""
-        try:
-            return {instance.name for instance in list_instances(self._game_dir()).values()}
-        except OSError:
-            return set()
-
-    def _apply_pending_display_name(self) -> None:
-        """Write the name the step collected onto the instance the install just created.
-
-        The folder stays ``versions/<version id>``: the name is the *display* name, stored in the
-        instance's own ``minepick.json`` sidecar (``launcher.instances``), which is what the instances
-        page renders. A name the user already set is never overwritten, and a reinstall collects no
-        name at all, so it cannot rename anything either.
-        """
-        name = self._pending_display_name.strip()
-        version_id = self._pending_version_id
-        self._pending_display_name = ""
-        if not name or not version_id:
-            return
-        created = self._installed - self._install_before_ids
-        # A loader install creates its own profile next to the vanilla folder; that profile is the
-        # instance the user will start, so it takes the name.
-        target = next((vid for vid in created if vid != version_id), version_id)
-        if target not in self._installed:
-            return
+    def _taken_names(self) -> set[str]:
+        """Every name a new instance must not repeat: folder ids and display names, plus any
+        directory under ``versions/`` (a half-written folder is still a collision on disk)."""
         game_dir = self._game_dir()
+        taken: set[str] = set()
         try:
-            existing = get_instance(target, game_dir=game_dir)
-            if existing is not None and existing.display_name.strip():
-                return  # a name the user already gave this instance is never overwritten
-            update_instance(target, game_dir=game_dir, display_name=name)
-        except (InstancesError, OSError):
-            _log.warning("versions: could not store the instance name for %s", target, exc_info=True)
+            installed = list_instances(game_dir)
+        except OSError:
+            installed = {}
+        for instance_id, instance in installed.items():
+            taken.add(instance_id)
+            if instance.display_name:
+                taken.add(instance.display_name)
+        try:
+            versions = game_dir / "versions"
+            taken.update(entry.name for entry in versions.iterdir() if entry.is_dir())
+        except OSError:
+            pass
+        return taken
 
     # ---------- the list: four folds, or one flat search result ----------
 
@@ -1962,7 +1966,6 @@ class VersionsPage(QWidget):
             version.id,
             type_label,
             date_text,
-            status_text,
             installed,
             self._row_icon(version.id, version.type, installed, game_dir, cache_root),
             on_select=lambda version_id=version.id: self._select_version(version_id),
@@ -2144,14 +2147,17 @@ class VersionsPage(QWidget):
         if version_id is None:
             set_app_status(self, tr("versions.msg.need_select"), "warning")
             return
-        self.install_version_id(version_id)
+        self.begin_install(version_id)
 
     def install_version_id(self, version_id: str) -> None:
-        # Ask about a mod loader before installing
-        prompt = _LoaderPromptDialog(self)
-        if prompt.exec() != QDialog.DialogCode.Accepted:
-            return
-        loader = prompt.selected_loader()
+        # The loader (and its build) was decided in the step; the decision carrier still answers it.
+        # install_selected() enters through the step as well, so every install names its instance.
+        loader = self._pending_loader
+        loader_version = self._pending_loader_version
+        instance_id = self._pending_instance_id or unique_instance_name(
+            default_instance_name(version_id), self._taken_names()
+        )
+        display_name = self._pending_display_name.strip() or instance_id
         cfg, _ = config.load()
         game_dir = self._game_dir()
         disable_keeping_focus(self.install_button)
@@ -2164,6 +2170,9 @@ class VersionsPage(QWidget):
         bridge.progress.connect(self._on_progress)
 
         def do_install(progress) -> object:
+            # Vanilla is downloaded straight into the new instance folder (the profile JSON's id
+            # becomes the instance name); a loader installer cannot be told a folder name, so its
+            # profile is created canonically and then renamed to the new instance by install_loader.
             result = install_version(
                 version_id,
                 game_dir=game_dir,
@@ -2172,16 +2181,35 @@ class VersionsPage(QWidget):
                 progress=progress,
                 auto_install_java=self.auto_jre_check.isChecked(),
                 runtime_dir=paths.launcher_dir() / "runtime",
+                target_id=None if loader is not None else instance_id,
             )
             profile_id = None
             if loader is not None:
                 from launcher.mods import ModsError, install_loader, list_loader_versions
 
-                versions = list_loader_versions(loader, version_id)
-                if not versions:
-                    raise ModsError(tr("versions.msg.loader_unsupported", loader, version_id))
+                chosen = loader_version
+                if chosen is None:
+                    versions = list_loader_versions(loader, version_id)
+                    if not versions:
+                        raise ModsError(
+                            tr("versions.msg.loader_unsupported", loader, version_id)
+                        )
+                    chosen = versions[0]
                 profile_id = install_loader(
-                    versions[0], game_dir, cache_dir=paths.launcher_dir() / "cache"
+                    chosen,
+                    game_dir,
+                    cache_dir=paths.launcher_dir() / "cache",
+                    instance_id=instance_id,
+                )
+            try:
+                update_instance(instance_id, game_dir=game_dir, display_name=display_name)
+            except (InstancesError, OSError):
+                # The download is still a completed install; a sidecar that cannot be written must
+                # not turn it into a failed download. The instances page will derive the name.
+                _log.warning(
+                    "versions: could not store the instance metadata for %s",
+                    instance_id,
+                    exc_info=True,
                 )
             return result, profile_id
 

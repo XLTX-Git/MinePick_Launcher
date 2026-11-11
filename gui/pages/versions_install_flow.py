@@ -43,6 +43,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -54,6 +55,7 @@ from PySide6.QtWidgets import (
 
 from gui import i18n, paint_utils
 from launcher.install import install_version
+from launcher.instances import MAX_INSTANCE_NAME_LENGTH, unique_instance_name
 from launcher.mods.installer import install_loader
 from launcher.mods.loaders import LOADERS, display_loader_name, list_loader_versions
 from launcher.mods.models import LoaderVersion
@@ -99,11 +101,8 @@ def invalid_name_chars(name: str) -> list[str]:
 
 
 def suggest_name(name: str, taken: set[str] | frozenset[str]) -> str:
-    """``name-2``, ``name-3`` ...: the first alternative the caller may offer for a taken name."""
-    index = 2
-    while f"{name}-{index}" in taken:
-        index += 1
-    return f"{name}-{index}"
+    """``name-2``, ``name-3`` ...: the first free alternative for a name that is already taken."""
+    return unique_instance_name(name, taken, fallback=name)
 
 
 def _tokens() -> dict[str, str]:
@@ -241,6 +240,7 @@ class LoaderRow(QAbstractButton):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._state = CHECKING
         self._detail = ""
+        self._versions: list[LoaderVersion] = []
         self._hover = False
         self.set_status(CHECKING)
 
@@ -253,13 +253,27 @@ class LoaderRow(QAbstractButton):
         """The error text behind a FETCH_FAILED row (empty for every other state)."""
         return self._detail
 
+    def versions(self) -> list[LoaderVersion]:
+        """Every build of this loader the source listed for the pending game version."""
+        return list(self._versions)
+
     def status_text(self) -> str:
         return tr(STATUS_KEYS[self._state])
 
-    def set_status(self, state: str, detail: str = "") -> None:
+    def set_status(
+        self,
+        state: str,
+        detail: str = "",
+        *,
+        versions: list[LoaderVersion] | None = None,
+    ) -> None:
         """Set the state (one of the four module constants) and make the row behave like it."""
         self._state = state
         self._detail = detail
+        if versions is not None:
+            self._versions = list(versions)
+        if state != CAN_ADD:
+            self._versions = []
         self.setCheckable(state == CAN_ADD)
         self.setEnabled(state in (CAN_ADD, FETCH_FAILED))
         if state != CAN_ADD and self.isChecked():
@@ -412,6 +426,9 @@ class InstallStep(QWidget):
     back_requested = Signal()
     start_requested = Signal()
     retry_requested = Signal(str)
+    #: Emitted when the checked loader changes ("" = the vanilla download). The page recomputes the
+    #: default instance name from it, because a loader instance may not share the vanilla folder.
+    loader_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -419,7 +436,7 @@ class InstallStep(QWidget):
         self.version_id = ""
         self._default_name = ""
         self._taken: frozenset[str] = frozenset()
-        self._editable = True
+        self._loader_versions: dict[str, list[LoaderVersion]] = {}
 
         self.breadcrumb = QFrame()
         self.breadcrumb.setObjectName("installBreadcrumb")
@@ -436,12 +453,10 @@ class InstallStep(QWidget):
         self.name_label = QLabel(tr("versions.install.name.label"))
         self.name_label.setObjectName("installFieldLabel")
         self.name_edit = _NameField()
+        self.name_edit.setMaxLength(MAX_INSTANCE_NAME_LENGTH)
         self.name_edit.setAccessibleName(tr("versions.install.name.label"))
         self.name_edit.textChanged.connect(lambda _text: self._refresh_name_state())
         self.name_edit.focus_lost.connect(self._refill_name)
-        self.name_fixed = QLabel()
-        self.name_fixed.setObjectName("installFixedName")
-        self.name_fixed.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.name_hint = QLabel()
         self.name_hint.setObjectName("installNameHint")
         self.name_hint.setWordWrap(True)
@@ -451,7 +466,6 @@ class InstallStep(QWidget):
         name_column.setSpacing(4)
         name_column.addWidget(self.name_label)
         name_column.addWidget(self.name_edit)
-        name_column.addWidget(self.name_fixed)
         name_column.addWidget(self.name_hint)
         breadcrumb_layout = QHBoxLayout(self.breadcrumb)
         breadcrumb_layout.setContentsMargins(12, 10, 12, 10)
@@ -473,6 +487,30 @@ class InstallStep(QWidget):
             self.rows[loader] = row
             rows_layout.addWidget(row)
 
+        # The loader build choice appears only once a loader is picked, under the rows: one closed
+        # dropdown per loader would widen every row, and the list can be dozens of builds long.
+        self.version_choice = QWidget()
+        choice_layout = QVBoxLayout(self.version_choice)
+        choice_layout.setContentsMargins(0, 4, 0, 0)
+        choice_layout.setSpacing(4)
+        self.loader_version_label = QLabel(tr("versions.install.loader.version"))
+        self.loader_version_label.setObjectName("installFieldLabel")
+        self.loader_version_combo = QComboBox()
+        self.loader_version_combo.setAccessibleName(tr("versions.install.loader.version"))
+        self.loader_version_combo.setMinimumHeight(36)
+        # The closed field stays modest: an unfiltered loader build string must not raise the page's
+        # minimum width, so the combo elides instead of asking for its longest item's width.
+        self.loader_version_combo.setMinimumWidth(220)
+        self.loader_version_combo.setMaximumWidth(420)
+        self.loader_version_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.loader_version_combo.setMinimumContentsLength(12)
+        self.loader_version_combo.currentIndexChanged.connect(self._on_loader_version_changed)
+        choice_layout.addWidget(self.loader_version_label)
+        choice_layout.addWidget(self.loader_version_combo)
+        self.version_choice.setVisible(False)
+
         self.start_button = QPushButton(tr("versions.install.vanilla"))
         self.start_button.setObjectName("installPrimary")
         self.start_button.setMinimumHeight(48)
@@ -493,6 +531,7 @@ class InstallStep(QWidget):
         layout.addWidget(self.breadcrumb)
         layout.addWidget(self.hint)
         layout.addLayout(rows_layout)
+        layout.addWidget(self.version_choice)
         layout.addStretch(1)
         layout.addLayout(button_row)
 
@@ -503,7 +542,6 @@ class InstallStep(QWidget):
         version_id: str,
         icon: QPixmap | None,
         *,
-        editable: bool,
         name: str,
         taken: set[str] | frozenset[str] = frozenset(),
     ) -> None:
@@ -511,7 +549,7 @@ class InstallStep(QWidget):
         self.version_id = version_id
         self._default_name = (name or version_id).strip() or version_id
         self._taken = frozenset(taken)
-        self._editable = editable
+        self._loader_versions = {}
         if icon is not None and not icon.isNull():
             self.icon_label.setPixmap(
                 icon.scaled(
@@ -523,49 +561,80 @@ class InstallStep(QWidget):
             )
         else:
             self.icon_label.clear()
-        self.name_edit.setVisible(editable)
-        self.name_fixed.setVisible(not editable)
-        self.name_fixed.setText(self._default_name)
-        if editable:
-            self.name_edit.setText(self._default_name)
-        else:
-            self.name_edit.setText("")
+        self.name_edit.setText(self._default_name)
         for row in self.rows.values():
             row.setChecked(False)
             row.set_status(CHECKING)
+        self._refresh_loader_choice()
         self._refresh_name_state()
         self._update_start_button()
 
     def name_editable(self) -> bool:
-        """True while the field may be edited - the first install of a version, never a reinstall."""
-        return self._editable
+        """Every install names its own instance now, including a version that is already installed."""
+        return True
+
+    def default_name(self) -> str:
+        return self._default_name
+
+    def set_default_name(
+        self, name: str, taken: set[str] | frozenset[str] | None = None
+    ) -> None:
+        """Change the name the field falls back to (the loader build changes the default).
+
+        A name the user typed is never overwritten: only an empty field or the previous default
+        follows the new loader.
+        """
+        new_default = (name or self.version_id).strip() or self.version_id
+        if taken is not None:
+            self._taken = frozenset(taken)
+        current = self.name_edit.text().strip()
+        if current in ("", self._default_name):
+            self.name_edit.setText(new_default)
+        self._default_name = new_default
+        self._refresh_name_state()
+        self._update_start_button()
 
     def instance_name(self) -> str:
         """The name the instance will carry (the default whenever the field is empty)."""
-        if not self._editable:
-            return self._default_name
         return self.name_edit.text().strip() or self._default_name
 
     def name_error(self) -> str:
-        """What the line under the field says, if anything."""
-        if not self._editable:
-            return tr("versions.install.name.fixed")
+        """What the line under the field says, if anything. Any message here is a hard error."""
         text = self.name_edit.text().strip()
         if invalid_name_chars(text):
             return tr("versions.install.name.invalid")
-        if text and text in self._taken:
-            return tr("versions.install.name.taken", suggest_name(text, self._taken))
+        if len(text) > MAX_INSTANCE_NAME_LENGTH:
+            return tr("versions.install.name.length")
+        if text and text.casefold() in {item.casefold() for item in self._taken}:
+            return tr("versions.install.name.taken_error", suggest_name(text, self._taken))
         return ""
 
     def name_valid(self) -> bool:
-        return not invalid_name_chars(self.name_edit.text().strip())
+        return not self.name_error()
 
-    def set_loader_status(self, loader: str, state: str, detail: str = "") -> None:
+    def set_loader_status(
+        self,
+        loader: str,
+        state: str,
+        detail: str = "",
+        *,
+        versions: list[LoaderVersion] | None = None,
+    ) -> None:
         row = self.rows.get(loader)
         if row is None:
             return
-        row.set_status(state, detail)
+        row.set_status(state, detail, versions=versions)
+        if versions is not None:
+            self._loader_versions[loader] = list(versions)
+        elif state != CAN_ADD:
+            self._loader_versions.pop(loader, None)
+        if self.selected_loader() == loader:
+            self._refresh_loader_choice()
         self._update_start_button()
+
+    def loader_versions(self, loader: str) -> list[LoaderVersion]:
+        """The builds offered for ``loader`` (empty until its probe answered with a list)."""
+        return list(self._loader_versions.get(loader, []))
 
     def loader_status(self, loader: str) -> str:
         row = self.rows.get(loader)
@@ -574,6 +643,17 @@ class InstallStep(QWidget):
     def loader_status_text(self, loader: str) -> str:
         row = self.rows.get(loader)
         return row.status_text() if row is not None else ""
+
+    def selected_loader_version(self) -> LoaderVersion | None:
+        """The build picked in the dropdown for the checked loader (None = no loader chosen)."""
+        loader = self.selected_loader()
+        if loader is None:
+            return None
+        versions = self._loader_versions.get(loader, [])
+        index = self.loader_version_combo.currentIndex()
+        if 0 <= index < len(versions):
+            return versions[index]
+        return versions[0] if versions else None
 
     def selected_loader(self) -> str | None:
         """The checked loader, or None - None means "download the vanilla version"."""
@@ -596,7 +676,34 @@ class InstallStep(QWidget):
             for other in self.rows.values():
                 if other is not row and other.isChecked():
                     other.setChecked(False)
+        self._refresh_loader_choice()
         self._update_start_button()
+        self.loader_changed.emit(self.selected_loader() or "")
+
+    def _on_loader_version_changed(self, _index: int) -> None:
+        """A different build of the same loader changes the default instance name."""
+        if self.selected_loader() is not None:
+            self.loader_changed.emit(self.selected_loader() or "")
+
+    def _refresh_loader_choice(self) -> None:
+        """Rebuild the build dropdown for the checked loader and show it only when it has entries."""
+        loader = self.selected_loader()
+        versions = self._loader_versions.get(loader, []) if loader else []
+        combo = self.loader_version_combo
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            for version in versions:
+                label = version.version
+                if version.game_version:
+                    label += " · " + version.game_version
+                if version.recommended:
+                    label += " · " + tr("versions.install.loader.recommended")
+                combo.addItem(label, version.version)
+            combo.setCurrentIndex(0)
+        finally:
+            combo.blockSignals(False)
+        self.version_choice.setVisible(bool(versions))
 
     def _update_start_button(self) -> None:
         loader = self.selected_loader()
@@ -608,25 +715,21 @@ class InstallStep(QWidget):
 
     def _refill_name(self) -> None:
         """Leaving the field empty hands the default name back (an instance always has a name)."""
-        if not self._editable:
-            return
         if not self.name_edit.text().strip():
             self.name_edit.setText(self._default_name)
         self._refresh_name_state()
 
     def _refresh_name_state(self) -> None:
-        invalid = bool(invalid_name_chars(self.name_edit.text()))
+        message = self.name_error()
+        invalid = bool(message)
         if bool(self.name_edit.property("invalid")) != invalid:
             self.name_edit.setProperty("invalid", invalid)
             style = self.name_edit.style()
             if style is not None:
                 style.unpolish(self.name_edit)
                 style.polish(self.name_edit)
-        message = self.name_error()
         self.name_hint.setText(message)
         self.name_hint.setVisible(bool(message))
-        # Only the refused characters are an error: the duplicate-name line is advice (the sidecar
-        # allows two instances to share a display name, the folder is what must stay unique).
         if bool(self.name_hint.property("error")) != invalid:
             self.name_hint.setProperty("error", invalid)
             style = self.name_hint.style()
