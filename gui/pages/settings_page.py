@@ -529,11 +529,16 @@ class SettingsPage(QWidget):
         form.addRow(tr("settings.concurrency"), self.concurrency_spin)
         form.addRow(tr("settings.download_segments"), self.download_segments_box)
         speed_label, speed_hint = split_label_hint(tr("settings.speed_limit"))
+        # WCAG 4.1.2: the spin sits in a box (field + hint), so QFormLayout no longer hands it the
+        # row label - the same reason the segments spin is named by hand.
+        self.speed_limit_spin.setAccessibleName(speed_label)
         form.addRow(speed_label, _field_with_hint(self.speed_limit_spin, speed_hint))
         form.addRow(tr("settings.source.meta"), self.source_meta_combo)
         form.addRow(tr("settings.source.assets"), self.source_assets_combo)
         form.addRow("", self.source_hint)
         proxy_label, proxy_hint = split_label_hint(tr("settings.proxy"))
+        # Same as above: the hint box takes the row label out of QFormLayout's reach.
+        self.proxy_edit.setAccessibleName(proxy_label)
         form.addRow(proxy_label, _field_with_hint(self.proxy_edit, proxy_hint))
         form.addRow(tr("settings.cf_key"), self.cf_key_edit)
         form.addRow("", self.cf_key_status)
