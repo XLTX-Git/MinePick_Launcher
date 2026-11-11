@@ -1632,13 +1632,15 @@ class _ContentTab(QWidget):
         self._form_grid.addWidget(self.sort_combo, 0, 3)
         self._form_grid.addWidget(self.search_edit, 0, 4)
         self._form_grid.addWidget(self.search_button, 0, 5)
+        # The game-version pair takes the first field column when the tab has no loader row. It used to
+        # sit under "排序" unconditionally, which left the whole left half of the second row empty on
+        # 整合包 / 资源包 / 光影 and read as "the row is not aligned".
+        version_column = 2 if self.loader_label is not None else 0
         if self.loader_label is not None:
             self._form_grid.addWidget(self.loader_label, 1, 0)
             self._form_grid.addWidget(self.loader_combo, 1, 1)
-        # No loader outside the mod tab, but the game-version field still starts in the second field
-        # column: its label sits under "排序" and its field under the sort dropdown.
-        self._form_grid.addWidget(self.game_version_label, 1, 2)
-        self._form_grid.addWidget(self.game_version_edit, 1, 3)
+        self._form_grid.addWidget(self.game_version_label, 1, version_column)
+        self._form_grid.addWidget(self.game_version_edit, 1, version_column + 1)
         self._form_grid.addWidget(self.slug_edit, 1, 4)
         self._form_grid.addWidget(self.query_button, 1, 5)
         # A hidden slug field must not shrink the action column: both buttons keep the width of the
