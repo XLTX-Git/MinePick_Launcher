@@ -48,7 +48,7 @@ import json
 import logging
 import time
 import zipfile
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -92,24 +92,82 @@ HASH_CHUNK = 1 << 20
 #: Progress is coalesced: a folder of a thousand small files must not queue a thousand signals.
 REPORT_INTERVAL = 0.08
 
-#: The directories a pack carries, relative to the instance's ``launch_dir``, with the override tree
-#: each lands in. ``True`` marks the mods folder: only ``*.jar`` there is a mod candidate, and a
-#: disabled jar (``*.jar.disabled``, this launcher's own suffix) is copied as a plain override so a
-#: pack keeps it without enabling it.
-PACK_DIRS: tuple[tuple[str, str, bool], ...] = (
-    ("mods", "overrides", True),
-    ("config", "overrides", False),
-    ("defaultconfigs", "overrides", False),
-    ("resourcepacks", "client-overrides", False),
-    ("shaderpacks", "client-overrides", False),
+#: The content categories the export page offers, one checkbox each. The id is what the page stores
+#: in its per-instance export preset; its label is a translation key owned by the GUI.
+CATEGORY_MODS = "mods"
+CATEGORY_CONFIG = "config"
+CATEGORY_RESOURCEPACKS = "resourcepacks"
+CATEGORY_SHADERPACKS = "shaderpacks"
+CATEGORY_SAVES = "saves"
+CATEGORY_SCREENSHOTS = "screenshots"
+CATEGORY_SCHEMATICS = "schematics"
+CATEGORY_SERVERS = "servers"
+CATEGORY_OTHER = "other"
+
+#: Every category, in the order the page shows them.
+CATEGORIES: tuple[str, ...] = (
+    CATEGORY_MODS,
+    CATEGORY_CONFIG,
+    CATEGORY_RESOURCEPACKS,
+    CATEGORY_SHADERPACKS,
+    CATEGORY_SAVES,
+    CATEGORY_SCREENSHOTS,
+    CATEGORY_SCHEMATICS,
+    CATEGORY_SERVERS,
+    CATEGORY_OTHER,
 )
 
-#: Root files that belong to a pack. ``options.txt``/``optionsof.txt`` carry controls, not accounts.
-#: ``servers.dat`` is deliberately absent: it is a private address book, and a pack is something
-#: people hand to other people.
-PACK_ROOT_FILES: tuple[tuple[str, str], ...] = (
-    ("options.txt", "client-overrides"),
-    ("optionsof.txt", "client-overrides"),
+#: What a new export selects: the game content a pack is *for*. The user's own media (saves,
+#: screenshots, schematics) and their private address book start out unchecked.
+DEFAULT_CATEGORIES: frozenset[str] = frozenset(
+    {CATEGORY_MODS, CATEGORY_CONFIG, CATEGORY_RESOURCEPACKS, CATEGORY_SHADERPACKS}
+)
+
+#: category -> directories a pack carries, relative to the instance's ``launch_dir``, with the
+#: override tree each lands in. ``True`` marks the mods folder: only ``*.jar`` there is a mod
+#: candidate, and a disabled jar (``*.jar.disabled``, this launcher's own suffix) is copied as a
+#: plain override so a pack keeps it without enabling it.
+CATEGORY_DIRS: dict[str, tuple[tuple[str, str, bool], ...]] = {
+    CATEGORY_MODS: (("mods", "overrides", True),),
+    CATEGORY_CONFIG: (
+        ("config", "overrides", False),
+        ("defaultconfigs", "overrides", False),
+    ),
+    CATEGORY_RESOURCEPACKS: (("resourcepacks", "client-overrides", False),),
+    CATEGORY_SHADERPACKS: (("shaderpacks", "client-overrides", False),),
+    CATEGORY_SAVES: (("saves", "client-overrides", False),),
+    CATEGORY_SCREENSHOTS: (("screenshots", "client-overrides", False),),
+    CATEGORY_SCHEMATICS: (("schematics", "client-overrides", False),),
+}
+
+#: Root files that belong to a category. ``options.txt``/``optionsof.txt`` carry controls, not
+#: accounts. ``servers.dat`` is a private address book and therefore its own, unchecked category.
+CATEGORY_ROOT_FILES: dict[str, tuple[tuple[str, str], ...]] = {
+    CATEGORY_CONFIG: (
+        ("options.txt", "client-overrides"),
+        ("optionsof.txt", "client-overrides"),
+    ),
+    CATEGORY_SERVERS: (("servers.dat", "client-overrides"),),
+}
+
+#: Directories that are never part of 其他文件夹: the covered categories (handled above), the
+#: launcher's own bookkeeping, and data the game regenerates (logs, crash reports). A pack that
+#: carried those would be a bug report, not a pack.
+OTHER_EXCLUDED_DIRS: frozenset[str] = frozenset(
+    {
+        *(dirname for _category, dirs in CATEGORY_DIRS.items() for dirname, _tree, _mods in dirs),
+        "logs",
+        "crash-reports",
+        "natives",
+        "backups",
+        "versions",
+        "libraries",
+        "assets",
+        "cache",
+        "runtime",
+        ".minepick",
+        "PCLInstallBackups",
+    }
 )
 
 #: Loader name (as :func:`launcher.instances.profile_identity` reports it) -> importer vocabulary.
@@ -193,11 +251,27 @@ class ExportEntry:
     size: int
     override: str
     is_mod: bool = False
+    #: The content category this file belongs to (one of :data:`CATEGORIES`). The export page's
+    #: checkboxes are exactly this field: an unchecked category never reaches ``overrides/``.
+    category: str = ""
+
+
+@dataclass(frozen=True)
+class CategoryStat:
+    """How much of the instance one content category holds (file count and bytes)."""
+
+    files: int
+    bytes: int
 
 
 @dataclass(frozen=True)
 class ExportPlan:
-    """What an export would contain, decided locally and before a byte is hashed."""
+    """What an export would contain, decided locally and before a byte is hashed.
+
+    ``all_entries`` is the complete scan; ``entries`` is that scan filtered by the categories the
+    user ticked. Keeping both is what lets the page show "N files · X MB" for a category it is *not*
+    exporting, and change the summary the moment a checkbox flips, without rescanning the folder.
+    """
 
     instance_id: str
     name: str
@@ -206,11 +280,33 @@ class ExportPlan:
     loader_version: str
     summary: str
     fmt: str
-    entries: tuple[ExportEntry, ...]
-    total_bytes: int
+    all_entries: tuple[ExportEntry, ...]
+    #: The categories this plan exports. Defaults to the four a pack is made of; the page passes its
+    #: checkboxes.
+    categories: frozenset[str] = DEFAULT_CATEGORIES
+    total_bytes: int = 0
     #: Files that were looked at but are not pack material (a non-jar in ``mods/``, an unreadable
     #: file). Reported so a surprising count has an explanation.
     skipped: int = 0
+
+    @property
+    def entries(self) -> tuple[ExportEntry, ...]:
+        """The files this plan exports (the scan filtered by the ticked categories)."""
+        return tuple(
+            entry for entry in self.all_entries if entry.category in self.categories
+        )
+
+    def category_stats(self) -> dict[str, CategoryStat]:
+        """Per-category count and size over the *whole* scan, for the page's category rows."""
+        stats = {category: CategoryStat(0, 0) for category in CATEGORIES}
+        for entry in self.all_entries:
+            current = stats.get(entry.category)
+            if current is None:
+                continue
+            stats[entry.category] = CategoryStat(
+                current.files + 1, current.bytes + entry.size
+            )
+        return stats
 
     @property
     def mod_entries(self) -> tuple[ExportEntry, ...]:
@@ -291,6 +387,8 @@ class ExportResult:
     matched: int
     degraded: bool
     size: int
+    #: True when 打包资源文件 was on: every file travelled in ``overrides/`` and ``files[]`` is empty.
+    embedded: bool = False
 
 
 @dataclass(frozen=True)
@@ -386,51 +484,94 @@ def _iter_files(folder: Path) -> Iterator[Path]:
         yield entry
 
 
+def _other_dirs(launch_dir: Path) -> list[Path]:
+    """Top-level folders the named categories do not cover, minus the ones a pack must not carry."""
+    try:
+        children = sorted(launch_dir.iterdir())
+    except OSError:
+        return []
+    out: list[Path] = []
+    for entry in children:
+        try:
+            if entry.is_symlink() or not entry.is_dir():
+                continue
+        except OSError:
+            continue
+        if entry.name.startswith(".") or entry.name in OTHER_EXCLUDED_DIRS:
+            continue
+        out.append(entry)
+    return out
+
+
 def _scan_entries(launch_dir: Path, fmt: str) -> tuple[list[ExportEntry], int]:
-    """The pack contents of one game directory, plus how many files were deliberately left out."""
+    """Every file a category could carry, plus how many files were deliberately left out.
+
+    The scan is categorised, not filtered: the page needs the complete inventory to label all its
+    checkboxes. Filtering happens in :meth:`ExportPlan.entries`.
+    """
     entries: list[ExportEntry] = []
     skipped = 0
-    for dirname, category, is_mods in PACK_DIRS:
-        folder = launch_dir / dirname
-        if not folder.is_dir():
-            continue
-        override = _override_tree(category, fmt)
+    for category, dirs in CATEGORY_DIRS.items():
+        for dirname, override_tree, is_mods in dirs:
+            folder = launch_dir / dirname
+            if not folder.is_dir():
+                continue
+            override = _override_tree(override_tree, fmt)
+            for path in _iter_files(folder):
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    skipped += 1
+                    continue
+                lowered = path.name.casefold()
+                if is_mods and not lowered.endswith((".jar", ".jar.disabled")):
+                    skipped += 1
+                    continue
+                entries.append(
+                    ExportEntry(
+                        relative=path.relative_to(launch_dir).as_posix(),
+                        source=path,
+                        size=size,
+                        override=override,
+                        is_mod=is_mods and lowered.endswith(".jar"),
+                        category=category,
+                    )
+                )
+    for category, files in CATEGORY_ROOT_FILES.items():
+        for filename, override_tree in files:
+            path = launch_dir / filename
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                size = path.stat().st_size
+            except OSError:
+                continue
+            entries.append(
+                ExportEntry(
+                    relative=filename,
+                    source=path,
+                    size=size,
+                    override=_override_tree(override_tree, fmt),
+                    category=category,
+                )
+            )
+    for folder in _other_dirs(launch_dir):
+        override = _override_tree("overrides", fmt)
         for path in _iter_files(folder):
             try:
                 size = path.stat().st_size
             except OSError:
                 skipped += 1
                 continue
-            relative = path.relative_to(launch_dir).as_posix()
-            lowered = path.name.casefold()
-            if is_mods and not lowered.endswith((".jar", ".jar.disabled")):
-                skipped += 1
-                continue
             entries.append(
                 ExportEntry(
-                    relative=relative,
+                    relative=path.relative_to(launch_dir).as_posix(),
                     source=path,
                     size=size,
                     override=override,
-                    is_mod=is_mods and lowered.endswith(".jar"),
+                    category=CATEGORY_OTHER,
                 )
             )
-    for filename, category in PACK_ROOT_FILES:
-        path = launch_dir / filename
-        try:
-            if path.is_symlink() or not path.is_file():
-                continue
-            size = path.stat().st_size
-        except OSError:
-            continue
-        entries.append(
-            ExportEntry(
-                relative=filename,
-                source=path,
-                size=size,
-                override=_override_tree(category, fmt),
-            )
-        )
     entries.sort(key=lambda entry: entry.relative.casefold())
     return entries, skipped
 
@@ -449,15 +590,26 @@ def plan_export(
     game_dir: Path,
     *,
     fmt: str = FORMAT_MODRINTH,
+    categories: Iterable[str] | None = None,
 ) -> ExportPlan:
     """Scan one instance and describe the pack an export would write.
 
     Local only: ``mods/*.jar`` is counted, not opened; no hash is computed and no request is made.
     That is what lets the page show "N mods, up to M in overrides, total size" the moment the tab
     is opened, without a network round trip or a noticeable pause.
+
+    ``categories`` is the page's checkbox set; None means the four a pack is made of. An empty set
+    is allowed (the page shows it as "nothing to export") - the refusal happens when an *archive*
+    would be written.
     """
     if fmt not in (FORMAT_MODRINTH, FORMAT_CURSEFORGE):
         raise ValueError(f"unsupported modpack format: {fmt!r}")
+    selected = (
+        DEFAULT_CATEGORIES if categories is None else frozenset(str(item) for item in categories)
+    )
+    unknown = selected - set(CATEGORIES)
+    if unknown:
+        raise ValueError(f"unsupported modpack categories: {sorted(unknown)}")
     root = Path(game_dir)
     resolved = resolve_instance(instance_id, game_dir=root)
     instance = get_instance(instance_id, root)
@@ -471,8 +623,9 @@ def plan_export(
         loader_version=loader_version,
         summary=_summary_line(instance.note if instance is not None else ""),
         fmt=fmt,
-        entries=tuple(entries),
-        total_bytes=sum(entry.size for entry in entries),
+        all_entries=tuple(entries),
+        categories=frozenset(selected),
+        total_bytes=sum(entry.size for entry in entries if entry.category in selected),
         skipped=skipped,
     )
 
@@ -658,6 +811,8 @@ def export_modpack(
     fmt: str = FORMAT_MODRINTH,
     name: str = "",
     version: str = "1.0.0",
+    categories: Iterable[str] | None = None,
+    embed_files: bool = False,
     on_progress: Report | None = None,
     should_stop: StopCheck | None = None,
     matcher: Callable[[Sequence[ModCandidate], str, str], MatchOutcome] | None = None,
@@ -671,12 +826,22 @@ def export_modpack(
     replace the lookup without patching HTTP. The default is the real source the launcher already
     uses for that format.
 
+    ``categories`` is the page's content selection (None = the four a pack is made of): an
+    unchecked category is never scanned into the archive, so it cannot leak into ``overrides/``.
+
+    ``embed_files`` is 打包资源文件: every file - mods included - travels in ``overrides/`` instead of
+    being named in ``files[]``. It is the Modrinth answer to "the pack must not depend on any of its
+    download sources still existing", and it skips hashing and the lookup entirely. CurseForge's
+    manifest has no URL list at all, so the flag is ignored there (the page disables the checkbox
+    and says why rather than pretending).
+
     Raises :class:`ModpackError` with a user-facing message, and ``DownloadCancelled`` when the user
     stopped it; in both cases no archive and no ``.tmp`` is left behind.
     """
     if fmt not in (FORMAT_MODRINTH, FORMAT_CURSEFORGE):
         raise ValueError(f"unsupported modpack format: {fmt!r}")
-    plan = plan_export(instance_id, game_dir, fmt=fmt)
+    plan = plan_export(instance_id, game_dir, fmt=fmt, categories=categories)
+    embed = bool(embed_files) and fmt == FORMAT_MODRINTH
     if not plan.entries:
         raise ModpackError(tr_core("modpack.export_empty"))
     _check_stop(should_stop)
@@ -688,7 +853,11 @@ def export_modpack(
         raise ModpackError(tr_core("modpack.export_failed", str(exc))) from exc
     tmp = destination.with_name(destination.name + ".tmp")
     mod_entries = plan.mod_entries
-    hash_bytes = sum(entry.size for entry in mod_entries) if fmt == FORMAT_MODRINTH else 0
+    hash_bytes = (
+        sum(entry.size for entry in mod_entries)
+        if fmt == FORMAT_MODRINTH and not embed
+        else 0
+    )
     total_work = plan.total_bytes + hash_bytes
     reporter = _Reporter(on_progress, total_work, len(plan.entries))
 
@@ -699,7 +868,7 @@ def export_modpack(
     degraded = False
 
     try:
-        if fmt == FORMAT_MODRINTH:
+        if fmt == FORMAT_MODRINTH and not embed:
             reporter.start(PHASE_HASH, len(mod_entries))
             for entry in mod_entries:
                 _check_stop(should_stop)
@@ -724,6 +893,10 @@ def export_modpack(
                 degraded = True
             else:
                 matched_hashes = dict(outcome.matches)
+        elif fmt == FORMAT_MODRINTH:
+            # 打包资源文件: no hashing and no lookup. Every file goes into overrides/, which is the
+            # only shape of a pack that cannot be broken by a source disappearing.
+            reporter.start(PHASE_WRITE, len(plan.entries))
         else:
             candidates = [_candidate(entry, "", entry.size) for entry in mod_entries]
             reporter.start(PHASE_MATCH, len(candidates))
@@ -832,4 +1005,5 @@ def export_modpack(
         matched=len(matched),
         degraded=degraded,
         size=size,
+        embedded=embed,
     )

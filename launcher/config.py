@@ -163,6 +163,27 @@ def _active_of(folders: list[GameFolder], game_dir: object = None) -> GameFolder
     return folders[0] if folders else None
 
 
+class ExportPreset(BaseModel):
+    """What 导出 remembers for one instance (保存配置, plus the last destination folder).
+
+    Deliberately per instance: the content selection is a decision about *this* pack - a mod pack
+    and a build pack answer the nine checkboxes differently - and the remembered folder is where the
+    user put that pack. It lives in the launcher config rather than in a file that travels with the
+    instance, because it is a UI preference, not instance data.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = ""
+    version: str = "1.0.0"
+    #: The ticked content categories (``launcher.modpack.export.CATEGORIES`` ids).
+    categories: list[str] = Field(default_factory=list)
+    #: 打包资源文件: put every file into ``overrides/`` instead of naming download URLs.
+    embed_files: bool = False
+    #: The last destination folder (empty = none remembered yet).
+    folder: str = ""
+
+
 class LauncherConfig(BaseModel):
     """User-editable launcher config. Unknown fields are dropped with a warning on load.
 
@@ -348,6 +369,13 @@ class LauncherConfig(BaseModel):
     http_proxy: str = Field(
         default="",
         description="HTTP proxy address (e.g. http://127.0.0.1:7890); empty = auto-read proxy from environment variables",
+    )
+    export_presets: dict[str, ExportPreset] = Field(
+        default_factory=dict,
+        description=(
+            "Per-instance 导出 settings: pack name/version, ticked content categories, "
+            "打包资源文件 and the last destination folder"
+        ),
     )
     resource_dirs: dict[str, str] = Field(
         default_factory=dict,
