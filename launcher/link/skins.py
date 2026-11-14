@@ -53,6 +53,45 @@ _failed: set[str] = set()
 _lock = threading.Lock()
 
 
+#: Name -> UUID. Terracotta reports a member's name and nothing else, so a skin needs one more hop.
+_NAME_LOOKUP_URL = "https://api.mojang.com/users/profiles/minecraft/{name}"
+_name_cache: dict[str, str] = {}
+_MISS = ""  # a name that does not resolve is cached as an empty string
+
+
+def resolve_uuid_by_name(name: str, *, timeout: float = 6.0) -> str:
+    """The Mojang UUID for a player name, or "" when the name is not a premium account.
+
+    Terracotta's room profile carries ``machine_id, name, vendor, kind`` and no UUID, so a member who
+    did not launch through this launcher arrives with a name only. Mojang's profile endpoint turns that
+    name into the UUID the session server needs, which is the difference between a letter disc and a
+    real face.
+
+    A name that does not resolve is a normal answer, not an error: offline servers hand out names that
+    were never registered. The cost is that an offline name which happens to match somebody's premium
+    account shows that account's skin - unavoidable without a UUID from the room itself.
+    """
+    key = (name or "").strip().lower()
+    if not key:
+        return ""
+    if key in _name_cache:
+        return _name_cache[key]
+    try:
+        import httpx
+
+        response = httpx.get(_NAME_LOOKUP_URL.format(name=key), timeout=timeout, follow_redirects=True)
+        if response.status_code == 204 or response.status_code == 404:
+            _name_cache[key] = _MISS
+            return ""
+        response.raise_for_status()
+        payload = response.json()
+        player_uuid = normalize_uuid(str(payload.get("id") or ""))
+    except Exception:  # noqa: BLE001 - a lookup failure must never break the member row
+        return ""
+    _name_cache[key] = player_uuid
+    return player_uuid
+
+
 def normalize_uuid(value: str) -> str:
     """Canonical dashed UUID text, or ``""`` when the value is not a UUID at all."""
     text = str(value or "").strip().replace("-", "")
@@ -138,6 +177,7 @@ def remember_skin_url(player_uuid: str, skin_url: str) -> None:
 
 
 def clear_cache() -> None:
+    _name_cache.clear()
     """Forget every resolved URL and failure (the cache is process-wide on purpose)."""
     with _lock:
         _url_cache.clear()

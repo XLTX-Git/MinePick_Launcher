@@ -1035,9 +1035,13 @@ def _profiles_to_members(profiles: object) -> tuple[LinkMember, ...]:
         if not isinstance(profile, dict):
             continue
         name = str(profile.get("name") or "").strip()
+        kind = str(profile.get("kind") or "").upper()
         if not name:
             continue
-        kind = str(profile.get("kind") or "").upper()
+        # Terracotta labels a host that gave no name "Anonymous Host". It is still this user's room, so
+        # the row says so instead of showing a placeholder that looks like a third party.
+        if kind == "HOST" and name.lower().startswith("terracotta anonymous"):
+            name = "房主"
         members.append(
             LinkMember(
                 name=name,
@@ -1057,9 +1061,13 @@ def _selected_player_name() -> str:
         from launcher.auth import AccountStore
 
         cfg, _ = config.load()
-        if not cfg.selected_account:
-            return ""
-        account = AccountStore().load().get(cfg.selected_account)
-        return str(getattr(account, "username", "") or "").strip()
+        account = AccountStore().load().get(cfg.selected_account) if cfg.selected_account else None
+        name = str(getattr(account, "username", "") or "").strip()
+        if name:
+            return name
+        # No selected account: the launch path starts an offline "Player", so the room uses the same
+        # name. An empty string is not neutral here - Terracotta turns it into "Anonymous Host", which
+        # reads like a stranger sitting in your own room.
+        return "Player"
     except Exception:  # noqa: BLE001 - a missing account is simply an anonymous player
         return ""
