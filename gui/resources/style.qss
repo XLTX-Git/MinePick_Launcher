@@ -320,13 +320,7 @@ QProgressBar {
    the control has, and the fill is a straight edge inside it (at 100% its right edge reaches x=451, the
    frame's inner edge, one pixel short of the control's 452px outline). Same pixels at 0% and at 5% up to
    the fill's edge, and the same rule for every value in between. See tests/test_progress_shape.py. */
-QProgressBar::chunk {
-    background: __ACCENT__;
-    /* Both ends of the fill are round, like the pill it sits in. Square corners covered the track's
-       left arc and cut the fill off flat wherever it happened to stop; at 100% the right arc lands
-       exactly on the percentage label's square edge, so the pair still reads as one control. */
-    border-radius: __RADIUS_LG__;
-}
+QProgressBar::chunk { background: __ACCENT__; }
 /* The bar's own fill and the right half of its outline: one control, two segments. */
 QLabel#downloadProgressText, QLabel#updateProgressText {
     background: __BG_LIST__;
