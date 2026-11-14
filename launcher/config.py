@@ -320,8 +320,12 @@ class LauncherConfig(BaseModel):
         description="Behavior after the game starts: keep / hide / exit",
     )
     trim_memory_on_launch: bool = Field(
-        default=True,
-        description="Trim the launcher working set after the game starts",
+        default=False,
+        description=(
+            "Trim the launcher working set after the game starts. Off by default: the multiplayer "
+            "room lives in this process, and trimming it (or letting the user think the launcher is "
+            "gone) breaks the room capsule and the 联机 page on a fresh install"
+        ),
     )
     demo_mode: bool = Field(
         default=False,

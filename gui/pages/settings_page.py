@@ -523,6 +523,9 @@ class SettingsPage(QWidget):
         java_stack.addLayout(java_row)
         java_stack.addWidget(_hint_label(java_hint))
         form.addRow(tr("settings.game_dir"), self.folder_box)
+        # 版本隔离 sits with the game folder, not after the accessibility group: both answer "where do
+        # an instance's files go", and under 无障碍 it read as one of that group's options.
+        form.addRow(self.isolation_row)
         form.addRow(java_label, java_box)
         form.addRow(tr("settings.memory") + tr("unit.gb.label"), self.memory_box)
         form.addRow("", _field_with_hint(self.memory_auto_check, memory_auto_hint))
@@ -534,8 +537,16 @@ class SettingsPage(QWidget):
         self.speed_limit_spin.setAccessibleName(speed_label)
         form.addRow(speed_label, _field_with_hint(self.speed_limit_spin, speed_hint))
         form.addRow(tr("settings.source.meta"), self.source_meta_combo)
-        form.addRow(tr("settings.source.assets"), self.source_assets_combo)
-        form.addRow("", self.source_hint)
+        # The hint belongs under the second dropdown, not in a row of its own: a separate row paid
+        # the form's whole row spacing for one line of 12px text, which is what made the block
+        # between the source dropdowns and 网络代理 look so tall.
+        assets_box = QWidget()
+        assets_stack = QVBoxLayout(assets_box)
+        assets_stack.setContentsMargins(0, 0, 0, 0)
+        assets_stack.setSpacing(4)
+        assets_stack.addWidget(self.source_assets_combo)
+        assets_stack.addWidget(self.source_hint)
+        form.addRow(tr("settings.source.assets"), assets_box)
         proxy_label, proxy_hint = split_label_hint(tr("settings.proxy"))
         # Same as above: the hint box takes the row label out of QFormLayout's reach.
         self.proxy_edit.setAccessibleName(proxy_label)
@@ -596,11 +607,10 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addLayout(form)
-        layout.addWidget(self.accessibility_box)
-        layout.addWidget(self.isolation_row)
         layout.addWidget(self.demo_check)
         layout.addWidget(self.trim_memory_check)
         layout.addWidget(self.analysis_check)
+        layout.addWidget(self.accessibility_box)
         layout.addWidget(encrypt_box)
         layout.addLayout(buttons_row)
         layout.addStretch(1)
