@@ -309,6 +309,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.tab.link": "联机",
         "tools.footer.provided": "联机由 Terracotta | 陶瓦联机 提供",
         "tools.footer.disable": "停用联机功能",
+    "tools.ready.close_confirm.title": "关闭大厅",
+    "tools.ready.close_confirm.body": "房间里还有 {} 人，关闭后他们会断开连接。确定关闭？",
+    "tools.ready.close_confirm.accept": "关闭并断开",
         "tools.disable.title": "停用联机功能",
         "tools.disable.message": (
             "会删除已下载的陶瓦联机组件（约 8 MB），下次使用联机时需要重新下载。\n\n"
@@ -380,6 +383,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.onboard.downloading": "正在下载 · {} / {} MB",
         "tools.onboard.channels.footer": "默认自动选最快的，也可以手动指定",
         "tools.onboard.channels.unmeasured": "未测",
+        "tools.onboard.channels.timeout": "超时",
         "tools.onboard.channels.latency": "{} ms",
         "tools.onboard.channels.auto": "自动（推荐）",
         "link.badge.active": "联机中 · {}",
@@ -1697,6 +1701,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.tab.link": "Multiplayer",
         "tools.footer.provided": "Multiplayer is provided by Terracotta | 陶瓦联机",
         "tools.footer.disable": "Disable multiplayer",
+    "tools.ready.close_confirm.title": "Close the room",
+    "tools.ready.close_confirm.body": "{} other players are still in this room and will be disconnected. Close it anyway?",
+    "tools.ready.close_confirm.accept": "Close and disconnect",
         "tools.disable.title": "Disable multiplayer",
         "tools.disable.message": (
             "This deletes the downloaded Terracotta multiplayer component (about 8 MB); using "
@@ -1788,6 +1795,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tools.onboard.downloading": "Downloading · {} / {} MB",
         "tools.onboard.channels.footer": "The fastest mirror is chosen automatically; you can also pick one.",
         "tools.onboard.channels.unmeasured": "Not measured",
+        "tools.onboard.channels.timeout": "Timed out",
         "tools.onboard.channels.latency": "{} ms",
         "tools.onboard.channels.auto": "Automatic (recommended)",
         "link.badge.active": "Multiplayer · {}",

@@ -336,6 +336,7 @@ def install(
     preferred: str = "",
     cache_path: Path | None = None,
     timeout: float = 30.0,
+    on_latency: mirror_module.LatencyCallback | None = None,
 ) -> ComponentStatus:
     """Download and install the payload; raise :class:`ComponentError` with an i18n key on failure.
 
@@ -362,6 +363,7 @@ def install(
         mirrors=mirrors,
         preferred=preferred,
         path=cache_path if cache_path is not None else mirror_module.cache_path(),
+        on_latency=on_latency,
     )
     ordered = [mirror] + [item for item in mirrors if item.key != mirror.key]
     try:

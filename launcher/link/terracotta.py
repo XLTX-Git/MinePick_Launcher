@@ -804,20 +804,24 @@ class TerracottaLinkSession:
     def close_room(self) -> None:
         """Close the room, then end the core process if this launcher started it.
 
-        The core is shared on purpose - another launcher may be hosting its own room on the same
-        instance - so a core that was already running when we joined is left alone and 停用联机功能
-        remains the way to force it. But a core this launcher started and nobody else is using is ours
-        to end, and leaving it behind means an 8 MB process outlives the room the user just closed.
+        关闭大厅 means the room is gone: the tunnel stops, guests drop, and the process this launcher
+        started is ended, so a person who wants to play alone is not left hosting an empty room. The
+        page asks first when somebody else is still in the room.
+
+        The core is shared on purpose - another launcher may host its own room on the same instance -
+        so a core that was already running when we joined is left alone, and 停用联机功能 remains the
+        way to force that one.
         """
         self._leave_remote("close")
         process = self._process
-        if process is not None and process.started_here():
-            try:
-                from launcher.link.components import terminate_core_processes
+        if process is None or not process.started_here():
+            return  # a core another launcher is hosting on: not ours to end
+        try:
+            from launcher.link.components import terminate_core_processes
 
-                terminate_core_processes()
-            except Exception:
-                logger.debug("结束联机核心失败", exc_info=True)
+            terminate_core_processes()
+        except Exception:
+            logger.debug("结束联机核心失败", exc_info=True)
 
     def _leave_remote(self, reason: str) -> None:
         with self._lock:
