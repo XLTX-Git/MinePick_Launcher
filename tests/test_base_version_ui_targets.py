@@ -270,9 +270,10 @@ def test_the_detail_page_still_shows_the_pointed_profile(app, window):
 
     detail.tabs[TAB_MODIFY].click()
     app.processEvents()
-    assert detail.modify_values["point_to"].text() == POINTED
-    assert detail.modify_values["game_version"].text() == POINTED
-    assert detail.modify_values["loader"].text() == i18n.tr("instances.detail.modify.vanilla")
+    assert detail.modify_rows["minecraft"].value_text() == POINTED
+    assert detail.modify_summary_subtitle.text() == (
+        POINTED + " · " + i18n.tr("instances.detail.modify.vanilla")
+    )
 
 
 def test_the_cli_still_launches_the_pointed_profile(monkeypatch, window):

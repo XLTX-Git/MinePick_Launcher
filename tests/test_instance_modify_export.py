@@ -79,7 +79,7 @@ def _offline(monkeypatch):
     # The 修改 chooser asks for the official catalog and for downloadable loaders in the
     # background; without these stubs every dialog in this file would wait on a real request.
     monkeypatch.setattr(instance_detail, "fetch_catalog", _fail)
-    monkeypatch.setattr(instance_detail, "loader_install_options", lambda *a, **kw: ([], []))
+    monkeypatch.setattr(instance_detail, "list_loader_versions", lambda *a, **kw: [])
     monkeypatch.setattr("launcher.mods.modrinth._client", _fail)
     monkeypatch.setattr("gui.pages.java_page.list_java", lambda *a, **kw: [])
 
@@ -220,27 +220,25 @@ def test_the_modify_page_lists_the_installed_versions(app, monkeypatch, ws_tmp, 
 
     # The top of the page is the state the launch path will really use: 1.21.11 through Fabric,
     # reached by following the pack's inheritsFrom chain.
-    assert detail.modify_values["game_version"].text() == "1.21.11"
-    assert detail.modify_values["loader"].text() == "Fabric 0.19.3"
-    assert detail.modify_values["point_to"].text() == "红石包"
+    assert detail.modify_rows["minecraft"].value_text() == "1.21.11"
+    assert detail.modify_summary_subtitle.text() == "1.21.11 · Fabric 0.19.3"
 
-    seen: dict[str, list[str]] = {}
-
-    def record(dialog) -> object:
-        seen["ids"] = [row.identity.version_id for row in dialog.rows]
-        seen["labels"] = [row.label_text() for row in dialog.rows]
-        return inwindow_dialog.Outcome.DISMISSED
-
-    monkeypatch.setattr(instance_detail._VersionChoiceDialog, "ask", record)
-
-    detail.change_game_version()
-    assert seen["ids"] == ["1.20.1", "1.20.2"]  # only the *other* Minecraft versions, sorted
-    assert seen["labels"] == ["1.20.1 · 原版", "1.20.2 · 原版"]
-
-    detail.change_loader()
-    # Same Minecraft version only: the vanilla profile (which drops the loader) and the other loader.
-    assert seen["ids"] == ["1.21.11", "fabric-loader-0.19.3-1.21.11"]
-    assert seen["labels"] == ["1.21.11 · 原版", "1.21.11 · Fabric 0.19.3"]
+    # A loader row expands in place into that loader's installed profiles of this game version;
+    # here that is the pack's own profile, which is the one it runs now (and so is disabled).
+    detail.change_loader("fabric")
+    _pump(
+        app,
+        lambda: detail.modify_rows["fabric"].body.findChildren(
+            instance_detail._LoaderBuildRow
+        ),
+    )
+    rows = detail.modify_rows["fabric"].body.findChildren(instance_detail._LoaderBuildRow)
+    assert [row.choice.version_id for row in rows] == [
+        "fabric-loader-0.19.3-1.21.11"
+    ]
+    assert rows[0].current
+    # The interaction is in the panel: the version list dialog no longer exists.
+    assert not hasattr(instance_detail, "_VersionChoiceDialog")
 
 
 # ---------------------------------------------------------------------------
@@ -333,13 +331,14 @@ def test_cancelling_the_confirmation_changes_nothing(app, monkeypatch, ws_tmp, w
     backups = paths.launcher_dir() / "backups"
     assert not backups.exists() or not list(backups.glob("*.zip"))
 
-    # Cancelling the *list* (Esc, 取消) is the other half of the same promise.
-    monkeypatch.setattr(
-        instance_detail._VersionChoiceDialog, "ask", lambda dialog: inwindow_dialog.Outcome.DISMISSED
-    )
+    # Opening the picker or expanding a row and backing out is the other half of the same
+    # promise: only the primary button writes anything.
     detail.change_game_version()
-    detail.change_loader()
     _settle(app, built)
+    detail.picker_back_button.click()
+    detail.change_loader("fabric")
+    _settle(app, built)
+    detail._collapse_loader_row()
     assert detail.instance.base_version == ""
     assert _tree(folder) == before
 

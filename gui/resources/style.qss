@@ -320,7 +320,13 @@ QProgressBar {
    the control has, and the fill is a straight edge inside it (at 100% its right edge reaches x=451, the
    frame's inner edge, one pixel short of the control's 452px outline). Same pixels at 0% and at 5% up to
    the fill's edge, and the same rule for every value in between. See tests/test_progress_shape.py. */
-QProgressBar::chunk { background: __ACCENT__; }
+QProgressBar::chunk {
+    background: __ACCENT__;
+    /* Both ends of the fill are round, like the pill it sits in. Square corners covered the track's
+       left arc and cut the fill off flat wherever it happened to stop; at 100% the right arc lands
+       exactly on the percentage label's square edge, so the pair still reads as one control. */
+    border-radius: __RADIUS_LG__;
+}
 /* The bar's own fill and the right half of its outline: one control, two segments. */
 QLabel#downloadProgressText, QLabel#updateProgressText {
     background: __BG_LIST__;
@@ -1634,6 +1640,63 @@ QLabel#instanceCardTitle {
     font-size: 15px;
     font-weight: 700;
 }
+/* ---------- 修改: component rows, their glyph actions, and the one primary button ---------- */
+QWidget#instanceModifyStack, QWidget#modifySummary, QWidget#modifyRows,
+QWidget#modifyComponentRow, QWidget#modifyComponentHeader, QWidget#modifyComponentBody,
+QWidget#modifyPickerBody, QWidget#exportCategoryRow { background: transparent; }
+QLabel#modifySummaryTitle {
+    background: transparent;
+    color: __FG_TEXT__;
+    font-size: 16px;
+    font-weight: 700;
+}
+QLabel#modifySummaryIcon { background: transparent; }
+QFrame#modifySeparator { background: __BORDER_LIST__; border: none; }
+QLabel#modifyRowName {
+    background: transparent;
+    color: __FG_TEXT__;
+    font-size: 13px;
+    font-weight: 600;
+}
+QLabel#modifyRowValue {
+    background: transparent;
+    color: __FG_TEXT__;
+    font-size: 13px;
+}
+QLabel#modifyRowValue[muted="true"] { color: __FG_HINT__; }
+QLabel#modifyRowIcon { background: transparent; }
+QPushButton#modifyRowAction {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: __RADIUS_SM__;
+    color: __FG_HINT__;
+    /* 4px 8px, not 2px: the spacing ladder is 4/8/12/16/24, and 2px failed tools/audit_spacing.py. */
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 400;
+}
+QPushButton#modifyRowAction:hover { color: __FG_TEXT__; border-color: __BORDER_HOVER__; }
+QPushButton#modifyRowAction:pressed { color: __ACCENT__; }
+QPushButton#modifyRowAction:disabled { color: __FG_DISABLED__; border-color: transparent; }
+QPushButton#modifyRowAction[keyboardFocus="true"]:focus {
+    color: __FG_TEXT__;
+    border-color: __FOCUS_RING__;
+}
+QPushButton#modifyResetButton {
+    background: __ACCENT_BUTTON__;
+    color: __FG_SELECTED__;
+    border: 1px solid transparent;
+    border-radius: 20px;
+    min-height: 40px;
+    padding: 0 24px;
+    font-size: 14px;
+    font-weight: 600;
+}
+QPushButton#modifyResetButton:hover { background: __ACCENT_BUTTON_HOVER__; }
+QPushButton#modifyResetButton:pressed { background: __ACCENT_BUTTON_PRESS__; }
+QPushButton#modifyResetButton:disabled { background: __BG_DISABLED__; color: __FG_DISABLED__; }
+QPushButton#modifyResetButton[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
 QPlainTextEdit#instanceLogView {
     background: __BG_LIST_2__;
     border: 1px solid __BORDER_LIST__;

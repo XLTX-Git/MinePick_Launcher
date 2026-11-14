@@ -30,7 +30,7 @@ import logging
 import shutil
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
@@ -52,7 +52,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
-    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -92,9 +91,24 @@ from gui.pages.instance_files import (
 )
 from gui.pages.screenshots_page import ScreenshotsPage
 from gui.pages.servers_page import ServersPage
-from gui.pages.versions_install_flow import (
-    install_selection,
-    loader_install_options,
+from gui.pages.versions_install_flow import install_selection
+from gui.pages.versions_page import (
+    _GROUP_ORDER as VERSION_GROUP_ORDER,
+)
+from gui.pages.versions_page import (
+    _GROUP_TITLE_KEYS as VERSION_GROUP_TITLE_KEYS,
+)
+from gui.pages.versions_page import (
+    _group_of as version_group_of,
+)
+from gui.pages.versions_page import (
+    _GroupHeader as VersionGroupHeader,
+)
+from gui.pages.versions_page import (
+    _LatestCard as VersionLatestCard,
+)
+from gui.pages.versions_page import (
+    human_datetime as version_human_datetime,
 )
 from gui.tasks import CANCELLED, task_center_of
 from gui.view_state import STATE_FILENAME
@@ -116,13 +130,11 @@ from gui.workers import ProgressBridge, RateTracker, run_in_background
 from launcher import config, paths
 from launcher.accessibility import TriggerSource
 from launcher.auth import AccountStore
-from launcher.install import list_installed_versions
 from launcher.instances import (
     ISOLATION_FOLLOW,
     ISOLATION_OFF,
     ISOLATION_ON,
     SWITCH_LOADER,
-    SWITCH_VERSION,
     InstancesError,
     SwitchOutcome,
     core_profile_id,
@@ -151,7 +163,19 @@ from launcher.launch import (
 )
 from launcher.meta import block_textures, fetch_manifest, version_category
 from launcher.meta.version import version_json_path
+from launcher.modpack import (
+    CATEGORIES as EXPORT_CATEGORIES,
+)
+from launcher.modpack import (
+    DEFAULT_CATEGORIES as DEFAULT_EXPORT_CATEGORIES,
+)
+from launcher.modpack import (
+    FORMAT_CURSEFORGE,
+    FORMAT_MODRINTH,
+    export_modpack,
+)
 from launcher.mods import identity
+from launcher.mods.loaders import display_loader_name, list_loader_versions
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
 from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
 from launcher.mods.zh_names import zh_name
@@ -1147,6 +1171,10 @@ class _SwitchChoice:
     version_id: str
     minecraft: str
     loader: str = ""
+    #: The API identifier behind ``loader`` (fabric / forge / neoforge / quilt). Empty for vanilla.
+    #: A staged plan needs it: "who owns this row" is a different question from "what does its label
+    #: say", and matching a translated sentence would be wrong the day a label changes.
+    loader_id: str = ""
     installed: bool = False
     meta: str = ""
     loader_version: object | None = None
@@ -1171,6 +1199,476 @@ class _SwitchChoice:
         if self.loader_version is not None:
             return self.loader
         return self.version_id
+
+
+# ---------- 修改: the component rows ----------
+
+#: The four components 修改 edits, in PCL's order. Only these four are supported: OptiFine,
+#: LiteLoader, Cleanroom and the rest of PCL's list are deliberately absent.
+MODIFY_MC = "minecraft"
+MODIFY_LOADERS: tuple[str, ...] = ("fabric", "forge", "neoforge")
+#: Loader id -> the proper noun the row shows. Loader names are names, not translated words.
+LOADER_TITLES: dict[str, str] = {
+    "fabric": "Fabric",
+    "forge": "Forge",
+    "neoforge": "NeoForge",
+    "quilt": "Quilt",
+}
+#: The overview's row geometry: a 44px header line, and the expanded body starts indented under the
+#: value column so a build row reads as belonging to its loader.
+MODIFY_ROW_HEIGHT = 44
+MODIFY_ROW_NAME_WIDTH = 112
+MODIFY_ICON_SIZE = 18
+#: The summary's loader mark: the planned loader's logo, or the grass block for a loader-free core.
+MODIFY_SUMMARY_ICON = 24
+#: One loader build row inside an expanded row: 34px, the versions page's compact-row rhythm.
+LOADER_BUILD_ROW_HEIGHT = 34
+#: Groups expanded in the Minecraft picker build their rows a batch at a time (snapshots alone are
+#: ~800 entries); the manifest is never turned into widgets all at once.
+PICKER_BATCH = 50
+
+
+def _pencil_pixmap(color: str, size: int = 14) -> QPixmap:
+    """A small pencil glyph for 修改, drawn rather than taken from the font (no tofu risk)."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.2, size / 11.0))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    # The body is one slanted stroke; the nib is a short cross stroke at its lower-left end.
+    painter.drawLine(
+        QPointF(size * 0.28, size * 0.72), QPointF(size * 0.76, size * 0.24)
+    )
+    painter.drawLine(
+        QPointF(size * 0.24, size * 0.76), QPointF(size * 0.36, size * 0.64)
+    )
+    painter.drawLine(
+        QPointF(size * 0.28, size * 0.72), QPointF(size * 0.24, size * 0.76)
+    )
+    painter.end()
+    return pixmap
+
+
+def _reset_pixmap(color: str, size: int = 16) -> QPixmap:
+    """A small circular-arrow glyph for 开始重置 (PCL's rotate-ccw), drawn, not from the font."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.3, size / 10.0))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    box = QRectF(size * 0.20, size * 0.20, size * 0.60, size * 0.60)
+    # Three quarters of a circle, then the arrow head at the open end (top left).
+    painter.drawArc(box, 40 * 16, 280 * 16)
+    head = size * 0.14
+    tip = QPointF(size * 0.20, size * 0.30)
+    painter.drawLine(tip, QPointF(tip.x() + head, tip.y() - head * 0.2))
+    painter.drawLine(tip, QPointF(tip.x() + head * 0.2, tip.y() + head))
+    painter.end()
+    return pixmap
+
+
+class _RowGlyphButton(QAbstractButton):
+    """A 26px icon button that paints its own chevron or cross.
+
+    Painted for the reason the versions page paints its chevrons: the UI font has no guaranteed
+    U+203A/U+2715, and a missing glyph would be a tofu box in the middle of the row. It is still a
+    real button - one Tab stop, Space/Enter activate it, and assistive technology reads the name the
+    caller gives it.
+    """
+
+    SIZE = 26
+
+    def __init__(self, shape: str, *, name: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._shape = shape  # "chevron" | "up" | "cross"
+        self._hover = False
+        self.setObjectName("modifyRowGlyph")
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(name)
+        self.setToolTip(name)
+
+    def shape(self) -> str:
+        return self._shape
+
+    def set_shape(self, shape: str) -> None:
+        if self._shape != shape:
+            self._shape = shape
+            self.update()
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.SIZE, self.SIZE)
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._hover and self.isEnabled():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens.get("BG_HOVER", "#e6eaf0")))
+            painter.drawRoundedRect(
+                QRectF(0, 0, self.SIZE, self.SIZE), 6.0, 6.0
+            )
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(tokens.get("FOCUS_RING", "#3b82f6")), 1.0))
+            painter.drawRoundedRect(
+                QRectF(0.5, 0.5, self.SIZE - 1.0, self.SIZE - 1.0), 6.0, 6.0
+            )
+        color = QColor(
+            tokens.get("FG_HINT", "#4f6070")
+            if self.isEnabled()
+            else tokens.get("FG_DISABLED", "#9aa7b4")
+        )
+        pen = QPen(color)
+        pen.setWidthF(1.7)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        middle = self.SIZE / 2.0
+        if self._shape == "cross":
+            arm = self.SIZE * 0.20
+            painter.drawLine(
+                QPointF(middle - arm, middle - arm), QPointF(middle + arm, middle + arm)
+            )
+            painter.drawLine(
+                QPointF(middle - arm, middle + arm), QPointF(middle + arm, middle - arm)
+            )
+        elif self._shape == "up":
+            arm = self.SIZE * 0.18
+            painter.drawPolyline(
+                QPolygonF(
+                    [
+                        QPointF(middle - arm, middle + arm * 0.7),
+                        QPointF(middle, middle - arm * 0.7),
+                        QPointF(middle + arm, middle + arm * 0.7),
+                    ]
+                )
+            )
+        else:
+            arm = self.SIZE * 0.18
+            painter.drawPolyline(
+                QPolygonF(
+                    [
+                        QPointF(middle - arm * 0.7, middle - arm),
+                        QPointF(middle + arm * 0.7, middle),
+                        QPointF(middle - arm * 0.7, middle + arm),
+                    ]
+                )
+            )
+        painter.end()
+
+
+class _ComponentRow(QWidget):
+    """One component of the core: a name, its version (or why it cannot be chosen), and its actions.
+
+    The row is a summary line, not a control: the whole row is not clickable (a mis-click would
+    change a loader). The actions are the two small buttons on the right (修改 for Minecraft, ✕/›
+    for a loader), each a real focusable button with its own accessible name.
+
+    A loader row owns an expandable body. Expanding it lists that loader's compatible builds in
+    place (``›`` becomes ``⌃``); the list is built by the page, because only the page knows which
+    builds are installed and how to reach the loader source.
+    """
+
+    def __init__(self, key: str, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.key = key
+        self.setObjectName("modifyComponentRow")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("modifyComponentHeader")
+        header.setMinimumHeight(MODIFY_ROW_HEIGHT)
+        row = QHBoxLayout(header)
+        row.setContentsMargins(0, 4, 0, 4)
+        row.setSpacing(8)
+        self.name_label = QLabel(title)
+        self.name_label.setObjectName("modifyRowName")
+        self.name_label.setFixedWidth(MODIFY_ROW_NAME_WIDTH)
+        self.icon_label = QLabel()
+        self.icon_label.setObjectName("modifyRowIcon")
+        self.icon_label.setFixedSize(MODIFY_ICON_SIZE, MODIFY_ICON_SIZE)
+        self.icon_label.setVisible(False)
+        self.value_label = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideRight)
+        self.value_label.setObjectName("modifyRowValue")
+        self.edit_button = QPushButton(tr("instances.detail.modify.edit"))
+        self.edit_button.setObjectName("modifyRowAction")
+        self.edit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit_button.setIcon(QIcon(_pencil_pixmap(theme.current_tokens().get("FG_HINT", "#4f6070"))))
+        self.edit_button.setIconSize(QSize(14, 14))
+        self.edit_button.setVisible(False)
+        self.change_button = _RowGlyphButton(
+            "chevron", name=tr("instances.detail.modify.row.change")
+        )
+        self.change_button.setVisible(False)
+        self.remove_button = _RowGlyphButton(
+            "cross", name=tr("instances.detail.modify.row.remove")
+        )
+        self.remove_button.setVisible(False)
+        row.addWidget(self.name_label)
+        row.addWidget(self.icon_label)
+        row.addWidget(self.value_label, 1)
+        row.addWidget(self.edit_button)
+        row.addWidget(self.remove_button)
+        row.addWidget(self.change_button)
+        outer.addWidget(header)
+        self._header = header
+
+        self.body = QWidget()
+        self.body.setObjectName("modifyComponentBody")
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(MODIFY_ROW_NAME_WIDTH, 0, 0, 8)
+        self.body_layout.setSpacing(4)
+        self.body.setVisible(False)
+        outer.addWidget(self.body)
+        self._expanded = False
+
+    # ---------- data ----------
+
+    def value_text(self) -> str:
+        return self.value_label.text()
+
+    def value_muted(self) -> bool:
+        return bool(self.value_label.property("muted"))
+
+    def set_value(
+        self,
+        text: str,
+        *,
+        muted: bool = False,
+        icon: QPixmap | None = None,
+        tooltip: str = "",
+    ) -> None:
+        """One line: the version with its loader mark, or the reason this component cannot be used."""
+        self.value_label.setText(text)
+        self.value_label.setToolTip(tooltip or text)
+        if bool(self.value_label.property("muted")) != muted:
+            self.value_label.setProperty("muted", muted)
+            style = self.value_label.style()
+            if style is not None:
+                style.unpolish(self.value_label)
+                style.polish(self.value_label)
+        if icon is None or icon.isNull():
+            self.icon_label.clear()
+            self.icon_label.setVisible(False)
+        else:
+            self.icon_label.setPixmap(
+                icon.scaled(
+                    MODIFY_ICON_SIZE,
+                    MODIFY_ICON_SIZE,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            self.icon_label.setVisible(True)
+
+    def set_actions(self, *, edit: bool = False, change: bool = False, remove: bool = False) -> None:
+        self.edit_button.setVisible(edit)
+        self.change_button.setVisible(change)
+        self.remove_button.setVisible(remove)
+
+    def set_busy(self, busy: bool) -> None:
+        for button in (self.edit_button, self.change_button, self.remove_button):
+            button.setEnabled(not busy)
+
+    def set_remove_name(self, name: str) -> None:
+        self.remove_button.setAccessibleName(name)
+        self.remove_button.setToolTip(name)
+
+    # ---------- expansion ----------
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool, *, shape: str | None = None) -> None:
+        self._expanded = expanded
+        self.body.setVisible(expanded)
+        self.change_button.set_shape(shape or ("up" if expanded else "chevron"))
+        self.setProperty("expanded", expanded)
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+
+    def clear_body(self) -> None:
+        while self.body_layout.count():
+            item = self.body_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+
+
+class _LoaderBuildRow(QAbstractButton):
+    """One loader build inside an expanded row: version, stability and what choosing it does.
+
+    Compact (34px, one line) on purpose: this list sits *inside* the card, under the row that owns
+    it, so it must read as a sub-list rather than a second page. ``当前`` marks the build the
+    instance runs now; every other row applies the normal switch flow when clicked.
+    """
+
+    def __init__(
+        self,
+        choice: _SwitchChoice,
+        *,
+        title: str,
+        stability: str,
+        current: bool,
+        status: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.choice = choice
+        self.title = title
+        self.stability = stability
+        self.current = current
+        self.status = status
+        self._hover = False
+        self.setObjectName("loaderBuildRow")
+        self.setFixedHeight(LOADER_BUILD_ROW_HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setEnabled(not current)
+        parts = [title, stability, status]
+        self.setAccessibleName(" · ".join(part for part in parts if part))
+        self.setToolTip(self.accessibleName())
+
+    def title_text(self) -> str:
+        return self.title
+
+    def stability_text(self) -> str:
+        return self.stability
+
+    def status_text(self) -> str:
+        return self.status
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        tokens = theme.current_tokens() or theme.theme_palette("light")
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if (self._hover and self.isEnabled()) or self.current:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(
+                QColor(
+                    tokens.get(
+                        "ACCENT_TINT" if self.current else "BG_HOVER", "#eef2f7"
+                    )
+                )
+            )
+            painter.drawRoundedRect(
+                QRectF(0, 0, self.width(), self.height()), 6.0, 6.0
+            )
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(tokens.get("FOCUS_RING", "#3b82f6")), 1.0))
+            painter.drawRoundedRect(
+                QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0), 6.0, 6.0
+            )
+        title_font = QFont(self.font())
+        title_font.setPixelSize(13)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(12)
+        title_metrics = QFontMetrics(title_font)
+        meta_metrics = QFontMetrics(meta_font)
+        right = self.width() - 10 - meta_metrics.horizontalAdvance(self.status) - 12
+        title_width = max(0, right - 10)
+        text_color = QColor(
+            tokens.get("FG_TEXT", "#1f2a36")
+            if self.isEnabled()
+            else tokens.get("FG_HINT", "#4f6070")
+        )
+        painter.setFont(title_font)
+        painter.setPen(text_color)
+        title = self.title_text()
+        stability_width = (
+            meta_metrics.horizontalAdvance(self.stability) + 10 if self.stability else 0
+        )
+        painter.drawText(
+            QRectF(10, 0, max(0, title_width - stability_width), self.height()),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            title_metrics.elidedText(
+                title, Qt.TextElideMode.ElideRight, max(0, title_width - stability_width)
+            ),
+        )
+        if self.stability:
+            painter.setFont(meta_font)
+            painter.setPen(QColor(tokens.get("FG_HINT", "#4f6070")))
+            painter.drawText(
+                QRectF(
+                    10 + max(0, title_width - stability_width) + 8,
+                    0,
+                    stability_width,
+                    self.height(),
+                ),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                self.stability,
+            )
+        painter.setFont(meta_font)
+        painter.setPen(
+            QColor(
+                tokens.get("ACCENT_TEXT", "#2f7d5b")
+                if self.status
+                else tokens.get("FG_HINT", "#4f6070")
+            )
+        )
+        painter.drawText(
+            QRectF(right, 0, self.width() - right - 10, self.height()),
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            meta_metrics.elidedText(
+                self.status, Qt.TextElideMode.ElideRight, max(0, self.width() - right - 10)
+            ),
+        )
+        painter.end()
 
 
 def _catalog_cache_path() -> Path:
@@ -1209,67 +1707,6 @@ def fetch_catalog() -> list:
     manifest = fetch_manifest(cache_path=_catalog_cache_path())
     _CATALOG_CACHE = list(manifest.versions)
     return _CATALOG_CACHE
-
-
-def _catalog_choices(
-    versions: list, *, installed_ids: set[str], current_version_id: str, current_minecraft: str
-) -> list[_SwitchChoice]:
-    """The official versions 修改 does not already offer as an installed profile.
-
-    A version that is installed is already in the first part of the list with its real loader, so the
-    catalog entry would only be a second row for the same folder. The current Minecraft version is
-    excluded for the same reason the installed candidates exclude it: changing the loader is the other
-    button, and this list is about a different game version.
-    """
-    out: list[_SwitchChoice] = []
-    for version in versions:
-        version_id = getattr(version, "id", "")
-        if not version_id or version_id == current_version_id or version_id == current_minecraft:
-            continue
-        if version_id in installed_ids:
-            continue
-        category = version_category(version_id, getattr(version, "type", "release"))
-        type_label = tr(_VERSION_TYPE_LABELS.get(category, "versions.type.release"))
-        released = str(getattr(version, "release_time", "") or "")[:10]
-        out.append(
-            _SwitchChoice(
-                version_id=version_id,
-                minecraft=version_id,
-                installed=False,
-                meta=" · ".join(part for part in (type_label, released) if part),
-            )
-        )
-    return out
-
-
-def _loader_choices(
-    options: list[tuple[str, object]], installed: list[_SwitchChoice], minecraft: str
-) -> list[_SwitchChoice]:
-    """The newest downloadable loader of each kind, minus the version already installed.
-
-    ``installed`` carries the display labels of the profiles this game version already has ("Fabric
-    0.19.3"); a downloadable row whose label matches is the same loader build, so offering it would
-    be a download that changes nothing. A newer build than the installed one still gets a row.
-    """
-    from launcher.mods.loaders import display_loader_name
-
-    installed_labels = {choice.loader for choice in installed if choice.loader}
-    out: list[_SwitchChoice] = []
-    for loader_key, loader_version in options:
-        label = f"{display_loader_name(loader_key)} {loader_version.version}"
-        if label in installed_labels:
-            continue
-        out.append(
-            _SwitchChoice(
-                version_id="",
-                minecraft=minecraft,
-                loader=label,
-                installed=False,
-                meta=tr("instances.detail.modify.status.download_loader"),
-                loader_version=loader_version,
-            )
-        )
-    return out
 
 
 class _VersionChoiceRow(QAbstractButton):
@@ -1419,199 +1856,6 @@ class _VersionChoiceRow(QAbstractButton):
         painter.end()
 
 
-class _VersionChoiceDialog(inwindow_dialog.InWindowDialog):
-    """The version list: installed profiles first, then the official catalog, each with its state.
-
-    Choosing a row closes the card and returns the choice; the page then asks the second question
-    (the confirmation with the backup option). Nothing is written here - this dialog is a list, and
-    the only thing it decides is which profile the user wants, or which version to download first.
-
-    The catalog arrives after the dialog is already open (the page reads a warm disk cache
-    synchronously and fetches a cold one in the background), so ``add_choices`` is part of the
-    interface: the installed rows are usable immediately, and the official rows appear when they are
-    known. The list never builds the whole manifest at once: it shows ``CHOICE_PAGE`` rows and a
-    "load more" row, and the search field filters the whole catalog without rendering it.
-    """
-
-    def __init__(
-        self,
-        parent: QWidget | None,
-        *,
-        title: str,
-        hint: str,
-        choices: list[_SwitchChoice],
-        empty_text: str,
-        searchable: bool = False,
-        loading_text: str = "",
-    ) -> None:
-        super().__init__(parent, title=title, severity="question")
-        self.chosen: _SwitchChoice | None = None
-        self.rows: list[_VersionChoiceRow] = []
-        self.list_area: QScrollArea | None = None
-        self.search_edit: QLineEdit | None = None
-        self.more_button: QPushButton | None = None
-        self._choices = list(choices)
-        self._empty_text = empty_text
-        self._limit = CHOICE_PAGE
-        self._rebuilding = False
-
-        # A plain label, not add_body(): the body helper builds a *scroll area* with stretch 1, which
-        # took the whole card and left the list a clipped strip at the bottom (measured on the
-        # 更换游戏版本 shot). The hint is one sentence; it needs no scroller.
-        hint_label = QLabel(hint)
-        hint_label.setObjectName("overlayBody")
-        hint_label.setWordWrap(True)
-        hint_label.setAccessibleName(title)
-        self.card_layout.addWidget(hint_label)
-
-        if searchable:
-            self.search_edit = QLineEdit()
-            self.search_edit.setObjectName("inWindowInput")
-            self.search_edit.setPlaceholderText(tr("instances.detail.modify.search"))
-            self.search_edit.setAccessibleName(tr("instances.detail.modify.search"))
-            self.search_edit.setClearButtonEnabled(True)
-            self.search_edit.textChanged.connect(self._on_search)
-            self.card_layout.addWidget(self.search_edit)
-
-        area = QScrollArea()
-        area.setObjectName("overlayScroll")
-        area.setWidgetResizable(True)
-        area.setFrameShape(QFrame.Shape.NoFrame)
-        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        area.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.card_layout.addWidget(area)
-        self.list_area = area
-
-        self.empty_label = QLabel(empty_text)
-        self.empty_label.setObjectName("overlayBody")
-        self.empty_label.setWordWrap(True)
-        self.empty_label.setAccessibleName(empty_text)
-        self.card_layout.addWidget(self.empty_label)
-
-        self.status_label = QLabel("")
-        self.status_label.setObjectName("overlayBody")
-        self.status_label.setWordWrap(True)
-        self.status_label.setVisible(bool(loading_text))
-        self.status_label.setText(loading_text)
-        self.card_layout.addWidget(self.status_label)
-
-        self.add_buttons(
-            [(tr("dialog.cancel"), inwindow_dialog.Outcome.REJECTED)], default=None
-        )
-        self._rebuild()
-
-    # ---------- data ----------
-
-    def add_choices(self, choices: list[_SwitchChoice]) -> None:
-        """Append rows that arrived after the dialog opened (a catalog fetch / loader probe)."""
-        if not choices:
-            self._rebuild()
-            return
-        self._choices.extend(choices)
-        self._rebuild()
-
-    def set_status_text(self, text: str) -> None:
-        """One line under the list: what is loading, failed, or could not be found."""
-        self.status_label.setText(text)
-        self.status_label.setVisible(bool(text))
-
-    def _on_search(self, _text: str) -> None:
-        self._limit = CHOICE_PAGE
-        self._rebuild()
-
-    def _visible_choices(self) -> list[_SwitchChoice]:
-        search_edit = self.search_edit
-        needle = search_edit.text().strip().casefold() if search_edit is not None else ""
-        if not needle:
-            return list(self._choices)
-        return [
-            choice
-            for choice in self._choices
-            if needle in choice.version_id.casefold()
-            or needle in choice.minecraft.casefold()
-            or needle in choice.loader.casefold()
-        ]
-
-    # ---------- construction ----------
-
-    def _rebuild(self) -> None:
-        """Rebuild the visible page of rows (a catalog answer, a search keystroke, "load more")."""
-        if self._rebuilding or self.list_area is None:
-            return
-        self._rebuilding = True
-        try:
-            focused = QApplication.focusWidget()
-            focus_index = next(
-                (index for index, row in enumerate(self.rows) if row is focused), None
-            )
-            visible = self._visible_choices()
-            shown = visible[: self._limit]
-            body = QWidget()
-            layout = QVBoxLayout(body)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(8)
-            self.rows = []
-            for choice in shown:
-                row = _VersionChoiceRow(choice)
-                row.clicked.connect(partial(self._choose, choice))
-                layout.addWidget(row)
-                self.rows.append(row)
-            self.more_button = None
-            if len(visible) > len(shown):
-                self.more_button = QPushButton(
-                    tr("instances.detail.modify.load_more", len(visible) - len(shown))
-                )
-                self.more_button.setObjectName("secondaryButton")
-                self.more_button.setAccessibleName(self.more_button.text())
-                self.more_button.clicked.connect(self._load_more)
-                layout.addWidget(self.more_button)
-            layout.addStretch(1)
-            self.list_area.setWidget(body)
-            extra = 48 if self.more_button is not None else 0
-            height = len(shown) * CHOICE_ROW_HEIGHT + max(0, len(shown) - 1) * 8 + extra
-            self.list_area.setFixedHeight(min(max(height, CHOICE_ROW_HEIGHT), CHOICE_LIST_MAX_HEIGHT))
-            self.list_area.setVisible(bool(visible))
-            empty_key = (
-                self._empty_text
-                if not self._choices
-                else tr("instances.detail.modify.empty.search")
-            )
-            self.empty_label.setText(empty_key)
-            self.empty_label.setVisible(not visible)
-            if focus_index is not None and focus_index < len(self.rows):
-                self.rows[focus_index].setFocus(Qt.FocusReason.TabFocusReason)
-            if self.isVisible():
-                self._place_card()
-        finally:
-            self._rebuilding = False
-
-    def _load_more(self) -> None:
-        self._limit += CHOICE_PAGE
-        self._rebuild()
-
-    def _choose(self, choice: _SwitchChoice) -> None:
-        """One click is the whole choice: remember the row and close."""
-        self.chosen = choice
-        self._finish(inwindow_dialog.Outcome.ACCEPTED)
-
-    def _focus_initial(self) -> None:
-        if self.search_edit is not None:
-            self.search_edit.setFocus(Qt.FocusReason.TabFocusReason)
-        elif self.rows:
-            self.rows[0].setFocus(Qt.FocusReason.TabFocusReason)
-        else:
-            super()._focus_initial()
-
-    def focusNextPrevChild(self, next: bool) -> bool:
-        """Keep the tab trap, and scroll the newly focused row into view (the list can overflow)."""
-        handled = super().focusNextPrevChild(next)
-        target = QApplication.focusWidget()
-        if self.list_area is not None and target is not None:
-            self.list_area.ensureWidgetVisible(target)
-        return handled
-
-
 class _SwitchConfirmDialog(inwindow_dialog.InWindowDialog):
     """The second confirmation: what changes, what stays, and the backup option.
 
@@ -1668,6 +1912,67 @@ class _SwitchRun:
     outcome: SwitchOutcome
     backup_path: Path | None
     installed_profile: str
+
+
+@dataclass(frozen=True)
+class _ResetRun:
+    """What one 开始重置 left on disk (the profile it verified, and whether the loader was skipped)."""
+
+    profile_id: str
+    #: True when the current loader build is no longer offered by its source: only the vanilla core
+    #: was re-installed, and the existing loader files were deliberately left untouched.
+    loader_kept: bool = False
+
+
+def _perform_reset(
+    minecraft: str,
+    loader_id: str,
+    loader_version: str,
+    game_dir: Path,
+    *,
+    stop: threading.Event,
+    report: ProgressBridge,
+    cache_dir: Path | None,
+    runtime_dir: Path | None,
+    concurrency: int,
+) -> _ResetRun:
+    """Re-install the core this instance already runs, through the versions page's install path.
+
+    The vanilla core is installed first (``install_base=True``: that is what re-downloads and
+    verifies the jar, the libraries and the assets). The loader is re-installed only when its source
+    still lists the exact build currently in use - a reset must not silently move the instance to a
+    different loader build, so a build the source no longer offers means "keep the files" and the
+    caller says so. ``base_version`` is never touched: there is no pointer to get wrong.
+    """
+    loader = None
+    loader_kept = False
+    if loader_id and loader_version:
+        try:
+            builds = list_loader_versions(loader_id, minecraft)
+        except Exception:  # noqa: BLE001 - an unreachable source means "keep the loader files"
+            builds = []
+        loader = next(
+            (build for build in builds if str(build.version) == str(loader_version)),
+            None,
+        )
+        loader_kept = loader is None
+    if stop.is_set():
+        raise DownloadCancelled("cancelled")
+    outcome = install_selection(
+        minecraft,
+        game_dir=game_dir,
+        loader_version=loader,
+        install_base=True,
+        cache_dir=cache_dir,
+        runtime_dir=runtime_dir,
+        concurrency=concurrency,
+        auto_install_java=True,
+        progress=lambda progress: report(("install", progress)),
+        should_stop=stop.is_set,
+    )
+    if stop.is_set():
+        raise DownloadCancelled("cancelled")
+    return _ResetRun(profile_id=outcome.profile_id, loader_kept=loader_kept)
 
 
 def _perform_switch(
@@ -1748,6 +2053,99 @@ def _perform_switch(
     )
 
 
+@dataclass(frozen=True)
+class _DiagnosisPayload:
+    """Everything the 诊断 tab renders, computed on a worker thread.
+
+    The tab used to compute this inline: reading every log, scanning the mods folder and running the
+    knowledge base froze the window for seconds, and the user saw an empty page while it happened.
+    The payload is plain data, so the worker never touches a widget.
+    """
+
+    record: object | None
+    live: object | None
+    log_path: str
+    log_text: str
+    reports: int
+
+
+def _analyze_instance_data(instance_id, game_dir, instance, resolved):
+    """Run the local knowledge base over one instance's logs (never raises)."""
+    if resolved is None or instance_id is None:
+        return None
+    from launcher.diagnostics import (
+        CrashLogSet,
+        CrashModIndex,
+        CrashStackAnalyzer,
+        DiagnosisContext,
+        diagnose,
+    )
+
+    try:
+        context = DiagnosisContext(
+            version_id=instance_id,
+            game_dir=resolved.game_dir,
+            launch_dir=resolved.launch_dir,
+            instance=instance,
+            mods_dir=resolved.mods_dir,
+            memory_gb=resolved.memory_gb,
+            java_path=resolved.java_path,
+            # Only this instance's own logs: the launcher's shared log would otherwise explain a
+            # crash that happened in another instance.
+            launcher_logs_dir=instance_dir(game_dir, instance_id) / ".no-launcher-logs",
+        )
+        log_set = CrashLogSet.from_context(context)
+        index = CrashModIndex.scan(resolved.mods_dir)
+        stack = CrashStackAnalyzer(index).analyze(log_set.logs)
+        return diagnose(
+            context,
+            logs=list(log_set.logs),
+            mod_index=index,
+            stack=stack,
+        )
+    except Exception:
+        log.exception("diagnostics: the instance analysis failed")
+        return None
+
+
+def _diagnosis_payload(instance_id, game_dir, instance, resolved) -> _DiagnosisPayload:
+    """Read the logs, run the analysis and count crash reports - all off the GUI thread."""
+    from gui.crash_viewer import collect_crash_reports
+    from gui.dialogs.crash_dialog import load_recorded_diagnosis
+
+    record = load_recorded_diagnosis(instance_dir(game_dir, instance_id))
+    live = _analyze_instance_data(instance_id, game_dir, instance, resolved)
+    folder = resolved.launch_dir if resolved is not None else game_dir
+    log_path = ""
+    text = ""
+    if resolved is not None:
+        path = resolved.launch_dir / "logs" / "latest.log"
+        if not path.is_file():
+            # A crash report is the other raw log the diagnosis points into; when latest.log is
+            # already rotated away, show the newest report instead.
+            reports = sorted(
+                (resolved.launch_dir / "crash-reports").glob("crash-*.txt"),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+            if reports:
+                path = reports[0]
+        log_path = str(path)
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if len(text) > _LOG_TAIL_CHARS:
+            text = text[-_LOG_TAIL_CHARS:]
+    try:
+        count = len(collect_crash_reports(folder))
+    except OSError:
+        count = 0
+    return _DiagnosisPayload(
+        record=record, live=live, log_path=log_path, log_text=text, reports=count
+    )
+
+
 class InstanceDetail(QWidget):
     """Right-hand column of the instances page: everything about one instance."""
 
@@ -1792,6 +2190,31 @@ class InstanceDetail(QWidget):
         self._switch_stop: threading.Event | None = None
         self._switch_rate: RateTracker | None = None
         self._switch_cancelled = False
+        #: The last core job's success sentence, kept on screen after the progress row is hidden.
+        self._switch_result_text = ""
+        #: 修改's staged plan: the _SwitchChoice a 开始修改 click would apply. None means 开始重置.
+        self._plan: _SwitchChoice | None = None
+        self._identity = None
+        self._identity_minecraft = ""
+        self._core_known = False
+        self._remove_target = None
+        self._modify_ready = False
+        self._expanded_loader: str | None = None
+        #: Loader builds by (loader, minecraft), and - under the same key - whether that loader has
+        #: any build for that game version at all (True / False / None while a probe is running).
+        self._loader_builds: dict[tuple[str, str], tuple[list, str]] = {}
+        self._loader_availability: dict[tuple[str, str], object] = {}
+        self._picker_kind = ""
+        self._picker_versions: list = []
+        self._picker_choices: dict[str, _SwitchChoice] = {}
+        self._picker_group_state: dict[str, bool] = {}
+        self._picker_limits: dict[str, int] = {}
+        self._picker_generation = 0
+        #: 导出 / 诊断 own a lazily loaded body; these flags are what the tab's placeholder reads.
+        self._export_ready = False
+        self._diagnosis_ready = False
+        self._diagnosis_pending = False
+        self._diagnosis_generation = 0
         #: 导出: the running export's task, its progress bridge, its stop flag and its destination.
         self._export_task = None
         self._export_bridge: ProgressBridge | None = None
@@ -1807,6 +2230,12 @@ class InstanceDetail(QWidget):
         self._pack_dest: Path | None = None
         self._pack_last: Path | None = None
         self._pack_fmt: str | None = None
+        self._pack_embed = False
+        #: 导出's last scan (all categories), the form's instance and the destination it remembers.
+        self._export_plan = None
+        self._export_instance: str | None = None
+        self._export_dest: Path | None = None
+        self._export_dest_invalid = ""
 
         # The four card lists, keyed like the pages that own them.
         self.content_lists: dict[str, _ContentList] = {}
@@ -2006,6 +2435,10 @@ class InstanceDetail(QWidget):
         self._show_section(index)
 
     def _show_section(self, index: int) -> None:
+        if index != TAB_MODIFY:
+            # The version picker is a sub-view of 修改, not a tab: leaving the tab returns to the
+            # overview, and the sidebar's checked row is untouched either way.
+            self._show_modify_overview()
         self.stack.setCurrentIndex(index)
         self._sync_sidebar()
         self._ensure_tab_data(index)
@@ -2683,6 +3116,10 @@ class InstanceDetail(QWidget):
         card_layout.addWidget(self._card_heading("instances.detail.tab.diagnosis"))
         self.diagnosis_empty = EmptyState(tr("instances.detail.diagnosis.none"))
         card_layout.addWidget(self.diagnosis_empty)
+        # Painted before the (seconds-long) analysis starts, so switching to the tab shows a
+        # sentence instead of a blank content area.
+        self.diagnosis_loading = EmptyState(tr("instances.detail.loading"))
+        card_layout.addWidget(self.diagnosis_loading)
 
         self.diagnosis_code = QLabel("")
         self.diagnosis_code.setObjectName("hint")
@@ -2814,45 +3251,6 @@ class InstanceDetail(QWidget):
             button.setParent(None)
             button.deleteLater()
         self.diagnosis_action_buttons.clear()
-
-    def _analyze_instance(self):
-        """Run the local knowledge base over this instance's logs (never raises)."""
-        if self.resolved is None or self.instance_id is None:
-            return None
-        from launcher.diagnostics import (
-            CrashLogSet,
-            CrashModIndex,
-            CrashStackAnalyzer,
-            DiagnosisContext,
-            diagnose,
-        )
-
-        try:
-            context = DiagnosisContext(
-                version_id=self.instance_id,
-                game_dir=self.resolved.game_dir,
-                launch_dir=self.resolved.launch_dir,
-                instance=self.instance,
-                mods_dir=self.resolved.mods_dir,
-                memory_gb=self.resolved.memory_gb,
-                java_path=self.resolved.java_path,
-                # Only this instance's own logs: the launcher's shared log would
-                # otherwise explain a crash that happened in another instance.
-                launcher_logs_dir=instance_dir(self.game_dir, self.instance_id)
-                / ".no-launcher-logs",
-            )
-            log_set = CrashLogSet.from_context(context)
-            index = CrashModIndex.scan(self.resolved.mods_dir)
-            stack = CrashStackAnalyzer(index).analyze(log_set.logs)
-            return diagnose(
-                context,
-                logs=list(log_set.logs),
-                mod_index=index,
-                stack=stack,
-            )
-        except Exception:
-            log.exception("diagnostics: the instance analysis failed")
-            return None
 
     def _render_live_diagnosis(self, diagnosis) -> None:
         """Fill the result card from a diagnosis (cause / certainty / evidence / actions)."""
@@ -3013,43 +3411,94 @@ class InstanceDetail(QWidget):
         )
 
     def _build_modify(self) -> QWidget:
-        """修改: what the instance runs now, and the two ways to change the core it runs.
+        """修改: the core as one summary line plus one row per component.
 
-        The read-only rows name the core the launch path really resolves (version, loader, folder).
-        The two buttons open a chooser that offers both installed profiles and versions that are not
-        installed yet; a version from the catalog is downloaded through the versions page's install
-        path, then the instance's ``base_version`` points at the profile that install produced. An
-        installed profile needs neither step - it is only the pointer that moves.
+        Two views live in this panel and the sidebar never notices which one is showing:
+
+        * the overview (this method's card) - instance summary, four component rows and 开始重置;
+        * the version picker (``_build_modify_picker``) - what 修改 on the Minecraft row opens, with
+          a 返回 button that changes nothing.
+
+        A loader row does not switch views at all: its ``›`` expands the compatible builds *inside*
+        the row (``›`` becomes ``⌃``), so comparing two loaders keeps the summary in sight.
         """
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
+        self.modify_stack = QStackedWidget()
+        self.modify_stack.setObjectName("instanceModifyStack")
+        # 0 = overview, 1 = version picker. The order is also the default the page opens on.
+        self.modify_stack.addWidget(self._build_modify_overview())
+        self.modify_stack.addWidget(self._build_modify_picker())
+        layout.addWidget(self.modify_stack)
+        return page
+
+    @staticmethod
+    def _modify_separator() -> QFrame:
+        """The 1px rule between component rows (QSS paints it from BORDER_LIST)."""
+        line = QFrame()
+        line.setObjectName("modifySeparator")
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Plain)
+        line.setFixedHeight(1)
+        return line
+
+    def _build_modify_overview(self) -> QWidget:
+        """The overview card: what runs now, what can be changed, and 开始重置."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
         card, card_layout = self._make_card()
-        card_layout.addWidget(self._card_heading("instances.detail.nav.modify"))
-        form = QFormLayout()
-        style_form(form)
-        self.modify_values: dict[str, ElidedLabel] = {}
-        for key, label_key in (
-            ("game_version", "instances.detail.modify.game_version"),
-            ("loader", "instances.detail.modify.loader"),
-            ("point_to", "instances.detail.modify.point_to"),
-            ("core_dir", "instances.detail.row.core_dir"),
-        ):
-            title = QLabel(tr(label_key))
-            title.setObjectName("hint")
-            value = ElidedLabel(
-                tr("instances.detail.value.none"),
-                elide_mode=(
-                    Qt.TextElideMode.ElideLeft
-                    if key == "core_dir"
-                    else Qt.TextElideMode.ElideMiddle
-                ),
+        summary = QWidget()
+        summary.setObjectName("modifySummary")
+        summary_row = QHBoxLayout(summary)
+        summary_row.setContentsMargins(0, 0, 0, 0)
+        summary_row.setSpacing(12)
+        self.modify_summary_icon = QLabel()
+        self.modify_summary_icon.setObjectName("modifySummaryIcon")
+        self.modify_summary_icon.setFixedSize(MODIFY_SUMMARY_ICON, MODIFY_SUMMARY_ICON)
+        self.modify_summary_icon.setVisible(False)
+        self.modify_summary_title = QLabel(tr("instances.detail.value.none"))
+        self.modify_summary_title.setObjectName("modifySummaryTitle")
+        self.modify_summary_subtitle = QLabel("")
+        self.modify_summary_subtitle.setObjectName("hint")
+        summary_row.addWidget(self.modify_summary_icon)
+        summary_row.addWidget(self.modify_summary_title)
+        summary_row.addWidget(self.modify_summary_subtitle, 1)
+        card_layout.addWidget(summary)
+        card_layout.addWidget(self._modify_separator())
+
+        # The page used to paint nothing at all while the instance was being read: an EmptyState is
+        # the honest placeholder, and it is what the tab shows until _fill_modify has real data.
+        self.modify_loading = EmptyState(tr("instances.detail.loading"))
+        card_layout.addWidget(self.modify_loading)
+
+        self.modify_rows_container = QWidget()
+        self.modify_rows_container.setObjectName("modifyRows")
+        rows_layout = QVBoxLayout(self.modify_rows_container)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(0)
+        self.modify_rows: dict[str, _ComponentRow] = {}
+        for index, key in enumerate((MODIFY_MC, *MODIFY_LOADERS)):
+            title = "Minecraft" if key == MODIFY_MC else LOADER_TITLES[key]
+            row = _ComponentRow(key, title)
+            if index:
+                rows_layout.addWidget(self._modify_separator())
+            rows_layout.addWidget(row)
+            self.modify_rows[key] = row
+        card_layout.addWidget(self.modify_rows_container)
+
+        self.modify_rows[MODIFY_MC].edit_button.clicked.connect(self.change_game_version)
+        for loader_key in MODIFY_LOADERS:
+            row = self.modify_rows[loader_key]
+            row.change_button.clicked.connect(
+                partial(self.toggle_loader_row, loader_key)
             )
-            self.modify_values[key] = value
-            form.addRow(title, value)
-        card_layout.addLayout(form)
+            row.remove_button.clicked.connect(partial(self.remove_loader, loader_key))
 
         self.modify_hint = QLabel(tr("instances.detail.modify.hint"))
         self.modify_hint.setObjectName("hint")
@@ -3063,24 +3512,30 @@ class InstanceDetail(QWidget):
         self.modify_error.setWordWrap(True)
         self.modify_error.setVisible(False)
         card_layout.addWidget(self.modify_error)
+        self.modify_result = QLabel("")
+        self.modify_result.setObjectName("hint")
+        self.modify_result.setWordWrap(True)
+        self.modify_result.setVisible(False)
+        card_layout.addWidget(self.modify_result)
 
-        self.change_version_button = QPushButton(tr("instances.detail.modify.change_version"))
-        self.change_version_button.setObjectName("secondaryButton")
-        self.change_version_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.change_loader_button = QPushButton(tr("instances.detail.modify.change_loader"))
-        self.change_loader_button.setObjectName("secondaryButton")
-        self.change_loader_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        buttons = QHBoxLayout()
-        buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(6)
-        buttons.addWidget(self.change_version_button)
-        buttons.addWidget(self.change_loader_button)
-        buttons.addStretch(1)
-        card_layout.addLayout(buttons)
+        card_layout.addWidget(self._modify_separator())
+        self.reset_button = QPushButton(tr("instances.detail.modify.reset.start"))
+        self.reset_button.setObjectName("modifyResetButton")
+        self.reset_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reset_button.setAccessibleName(tr("instances.detail.modify.reset.start"))
+        self.reset_button.setEnabled(False)
+        self.reset_button.clicked.connect(self._on_modify_button)
+        reset_row = QHBoxLayout()
+        reset_row.setContentsMargins(0, 4, 0, 0)
+        reset_row.setSpacing(0)
+        reset_row.addStretch(1)
+        reset_row.addWidget(self.reset_button)
+        reset_row.addStretch(1)
+        card_layout.addLayout(reset_row)
 
-        # The install half of a switch reports in two places: this row (what the next second is
-        # doing, with a cancel button) and the window's task list (the same numbers, surviving a
-        # page change). Both read the one ProgressBridge, so they cannot disagree.
+        # The core job reports in two places: this row (what the next second is doing, with a cancel
+        # button) and the window's task list (the same numbers, surviving a page change). Both read
+        # the one ProgressBridge, so they cannot disagree.
         self.switch_state_label = QLabel("")
         self.switch_state_label.setObjectName("hint")
         self.switch_state_label.setWordWrap(True)
@@ -3106,23 +3561,68 @@ class InstanceDetail(QWidget):
 
         layout.addWidget(card)
         layout.addStretch(1)
-        # Nothing selected yet: a switch needs the instance the panel shows, and _fill_modify is what
-        # enables these two once one is loaded.
-        self.change_version_button.setEnabled(False)
-        self.change_loader_button.setEnabled(False)
-        self.change_version_button.clicked.connect(self.change_game_version)
-        self.change_loader_button.clicked.connect(self.change_loader)
+        return page
+
+    def _build_modify_picker(self) -> QWidget:
+        """The Minecraft version picker, shown in place of the overview (never a dialog).
+
+        It reuses the versions page's own grouped-list widgets - the fold header and the latest-
+        version card - so the two screens cannot drift apart. Rows are built per expanded fold, a
+        batch at a time: the official manifest is ~900 entries and the picker is inside the panel,
+        not a page of its own.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        card, card_layout = self._make_card()
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        self.picker_back_button = QPushButton("← " + tr("instances.detail.modify.back"))
+        self.picker_back_button.setObjectName("backButton")
+        self.picker_back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.picker_back_button.setAccessibleName(tr("instances.detail.modify.back"))
+        self.picker_back_button.clicked.connect(self._show_modify_overview)
+        self.picker_title = QLabel("")
+        self.picker_title.setObjectName("instanceCardTitle")
+        header.addWidget(self.picker_back_button)
+        header.addWidget(self.picker_title, 1)
+        card_layout.addLayout(header)
+
+        self.picker_subtitle = QLabel("")
+        self.picker_subtitle.setObjectName("hint")
+        self.picker_subtitle.setWordWrap(True)
+        card_layout.addWidget(self.picker_subtitle)
+        self.picker_status = QLabel("")
+        self.picker_status.setObjectName("hint")
+        self.picker_status.setWordWrap(True)
+        self.picker_status.setVisible(False)
+        card_layout.addWidget(self.picker_status)
+
+        self.picker_body = QWidget()
+        self.picker_body.setObjectName("modifyPickerBody")
+        self.picker_body_layout = QVBoxLayout(self.picker_body)
+        self.picker_body_layout.setContentsMargins(0, 0, 0, 0)
+        self.picker_body_layout.setSpacing(8)
+        card_layout.addWidget(self.picker_body)
+
+        layout.addWidget(card)
+        layout.addStretch(1)
         return page
 
     def _build_export(self) -> QWidget:
         """导出: the whole instance as a zip, or a standard modpack other launchers can import.
 
-        Two products on purpose. The zip is a backup of this folder and only this launcher can read
-        it back as an instance; the 整合包 is the portable artifact (``.mrpack`` / CurseForge zip),
-        which is the thing to hand to somebody else. Both run as tasks on the download page, and the
-        pack's numbers are also shown in place so 取消 is reachable without leaving the page.
+        Two products on purpose, in one card divided by a rule. The zip is a backup of this folder
+        and only this launcher can read it back as an instance; the 整合包 is the portable artifact
+        (``.mrpack`` / CurseForge zip). The pack half is the same shape PCL's page has: a name and a
+        version, one checkbox per content category with its file count and size, one advanced
+        option (打包资源文件), the destination it will use, and one primary button. Nothing here opens
+        a wizard: the page decides, then the export runs as a task with progress and 取消 in place.
         """
-        from launcher.modpack import FORMAT_CURSEFORGE, FORMAT_MODRINTH
+        from launcher.modpack import CATEGORIES
 
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -3135,6 +3635,11 @@ class InstanceDetail(QWidget):
         self.export_hint.setObjectName("hint")
         self.export_hint.setWordWrap(True)
         card_layout.addWidget(self.export_hint)
+
+        # Lazily filled: the placeholder is what the tab shows before _fill_export has data, instead
+        # of the blank page a slow first scan used to leave behind.
+        self.export_loading = EmptyState(tr("instances.detail.loading"))
+        card_layout.addWidget(self.export_loading)
 
         self.export_button = QPushButton(tr("instances.detail.export.button"))
         self.export_button.setObjectName("secondaryButton")
@@ -3152,6 +3657,7 @@ class InstanceDetail(QWidget):
         self.export_zip_note.setObjectName("hint")
         self.export_zip_note.setWordWrap(True)
         card_layout.addWidget(self.export_zip_note)
+        card_layout.addWidget(self._modify_separator())
 
         self.export_pack_hint = QLabel(tr("instances.detail.export.pack.hint"))
         self.export_pack_hint.setObjectName("hint")
@@ -3171,21 +3677,114 @@ class InstanceDetail(QWidget):
             tr("instances.detail.export.pack.format")
         )
         self.export_pack_format.currentIndexChanged.connect(self._on_export_format_changed)
-        format_row = QFormLayout()
-        style_form(format_row)
+        name_form = QFormLayout()
+        style_form(name_form)
         format_label = QLabel(tr("instances.detail.export.pack.format"))
         format_label.setObjectName("hint")
-        format_row.addRow(format_label, self.export_pack_format)
-        card_layout.addLayout(format_row)
+        name_form.addRow(format_label, self.export_pack_format)
+
+        self.export_name_edit = QLineEdit()
+        self.export_name_edit.setMaxLength(120)
+        self.export_name_edit.setAccessibleName(tr("instances.detail.export.name"))
+        self.export_name_edit.textChanged.connect(self._on_export_name_changed)
+        name_label = QLabel(tr("instances.detail.export.name"))
+        name_label.setObjectName("hint")
+        name_form.addRow(name_label, self.export_name_edit)
+
+        self.export_version_edit = QLineEdit()
+        self.export_version_edit.setMaxLength(40)
+        self.export_version_edit.setAccessibleName(tr("instances.detail.export.version"))
+        self.export_version_edit.textChanged.connect(self._on_export_name_changed)
+        version_label = QLabel(tr("instances.detail.export.version"))
+        version_label.setObjectName("hint")
+        name_form.addRow(version_label, self.export_version_edit)
+        card_layout.addLayout(name_form)
+
+        content_label = QLabel(tr("instances.detail.export.content"))
+        content_label.setObjectName("instanceCardTitle")
+        card_layout.addWidget(content_label)
+        self.export_category_rows: dict[str, tuple[QCheckBox, ElidedLabel]] = {}
+        for category in CATEGORIES:
+            line = QWidget()
+            line.setObjectName("exportCategoryRow")
+            row = QHBoxLayout(line)
+            row.setContentsMargins(0, 2, 0, 2)
+            row.setSpacing(8)
+            check = QCheckBox(tr(f"instances.detail.export.category.{category}"))
+            check.setCursor(Qt.CursorShape.PointingHandCursor)
+            check.setChecked(category in DEFAULT_EXPORT_CATEGORIES)
+            check.toggled.connect(self._on_export_category_changed)
+            stats = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideRight)
+            stats.setObjectName("hint")
+            stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            # The label takes the rest of the row and paints itself right-aligned: a fixed width put
+            # it past the row's right edge (measured: geometry x == row width), so nothing showed.
+            stats.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            row.addWidget(check)
+            row.addWidget(stats, 1)
+            self.export_category_rows[category] = (check, stats)
+            card_layout.addWidget(line)
+
+        advanced_label = QLabel(tr("instances.detail.export.advanced"))
+        advanced_label.setObjectName("instanceCardTitle")
+        card_layout.addWidget(advanced_label)
+        self.export_embed_check = QCheckBox(tr("instances.detail.export.embed"))
+        self.export_embed_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_embed_check.toggled.connect(self._on_export_embed_changed)
+        card_layout.addWidget(self.export_embed_check)
+        self.export_embed_hint = QLabel("")
+        self.export_embed_hint.setObjectName("hint")
+        self.export_embed_hint.setWordWrap(True)
+        card_layout.addWidget(self.export_embed_hint)
+
+        destination_row = QHBoxLayout()
+        destination_row.setContentsMargins(0, 0, 0, 0)
+        destination_row.setSpacing(8)
+        self.export_destination = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideMiddle)
+        self.export_destination.setObjectName("hint")
+        self.export_dest_button = QPushButton(tr("instances.detail.export.change_dest"))
+        self.export_dest_button.setObjectName("secondaryButton")
+        self.export_dest_button.setAccessibleName(tr("instances.detail.export.change_dest"))
+        self.export_dest_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_dest_button.clicked.connect(self.choose_export_folder)
+        destination_row.addWidget(self.export_destination, 1)
+        destination_row.addWidget(self.export_dest_button)
+        card_layout.addLayout(destination_row)
+
+        config_row = QHBoxLayout()
+        config_row.setContentsMargins(0, 0, 0, 0)
+        config_row.setSpacing(6)
+        self.export_save_button = QPushButton(tr("instances.detail.export.config.save"))
+        self.export_save_button.setObjectName("secondaryButton")
+        self.export_save_button.setAccessibleName(
+            tr("instances.detail.export.config.save")
+        )
+        self.export_save_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_save_button.clicked.connect(self.save_export_config)
+        self.export_load_button = QPushButton(tr("instances.detail.export.config.load"))
+        self.export_load_button.setObjectName("secondaryButton")
+        self.export_load_button.setAccessibleName(
+            tr("instances.detail.export.config.load")
+        )
+        self.export_load_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_load_button.clicked.connect(self.load_export_config)
+        config_row.addWidget(self.export_save_button)
+        config_row.addWidget(self.export_load_button)
+        config_row.addStretch(1)
+        card_layout.addLayout(config_row)
 
         self.export_pack_summary = QLabel(tr("instances.detail.export.pack.summary.none"))
         self.export_pack_summary.setObjectName("hint")
         self.export_pack_summary.setWordWrap(True)
         card_layout.addWidget(self.export_pack_summary)
 
-        self.export_pack_button = QPushButton(tr("instances.detail.export.pack.button"))
-        self.export_pack_button.setObjectName("primaryButton")
+        self.export_pack_button = QPushButton(tr("instances.detail.export.start"))
+        self.export_pack_button.setObjectName("modifyResetButton")
         self.export_pack_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_pack_button.setAccessibleName(tr("instances.detail.export.start"))
+        self.export_pack_button.setEnabled(False)
         self.export_pack_open_button = QPushButton(
             tr("instances.detail.export.pack.open_folder")
         )
@@ -3258,61 +3857,82 @@ class InstanceDetail(QWidget):
         self.export_pack_button.clicked.connect(self.export_pack)
         self.export_pack_open_button.clicked.connect(self.open_exported_pack_folder)
         # Nothing selected yet: _fill_export is what enables these once an instance is loaded.
-        self.export_pack_button.setEnabled(False)
         self.export_pack_format.setEnabled(False)
+        self.export_name_edit.setEnabled(False)
+        self.export_version_edit.setEnabled(False)
+        self.export_save_button.setEnabled(False)
+        self.export_load_button.setEnabled(False)
+        self.export_dest_button.setEnabled(False)
         return page
 
-    def _refresh_log(self) -> None:
-        """Show the tail of this instance's latest.log directly in the diagnosis page."""
-        if self.resolved is None:
-            self.log_path_label.setText("")
-            self.log_view.clear()
-            self.log_view.setVisible(False)
-            self.log_empty.setVisible(True)
-            return
-        log_path = self.resolved.launch_dir / "logs" / "latest.log"
-        if not log_path.is_file():
-            # A crash report is the other raw log the diagnosis points into; when
-            # latest.log is already rotated away, show the newest report instead.
-            reports = sorted(
-                (self.resolved.launch_dir / "crash-reports").glob("crash-*.txt"),
-                key=lambda item: item.stat().st_mtime,
-                reverse=True,
-            )
-            if reports:
-                log_path = reports[0]
-        self.log_path_label.setText(str(log_path))
-        try:
-            text = log_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = ""
-        if len(text) > _LOG_TAIL_CHARS:
-            text = text[-_LOG_TAIL_CHARS:]
-        self.log_view.setPlainText(text)
-        self.log_view.setVisible(bool(text))
-        self.log_empty.setVisible(not text)
+    def _apply_log(self, payload: _DiagnosisPayload) -> None:
+        self.log_path_label.setText(payload.log_path)
+        self.log_view.setPlainText(payload.log_text)
+        self.log_view.setVisible(bool(payload.log_text))
+        self.log_empty.setVisible(not payload.log_text)
 
     def refresh_diagnosis(self) -> None:
-        """Analyze this instance's own logs, falling back to the recorded summary.
+        """Analyse this instance's logs off the GUI thread, showing a placeholder meanwhile.
 
-        The live pass is what makes the card real: it runs the current log set
-        through the knowledge base and shows cause, certainty, evidence with
-        line numbers and the rule's actions. The recorded ``diagnosis.json``
-        remains the fallback for an instance whose logs were already cleaned up.
+        The analysis reads every log, scans the mods folder and runs the knowledge base: on a big
+        instance that is seconds of work, and doing it on the GUI thread is what left the tab blank
+        while the window stopped painting. The placeholder is painted first, the worker computes a
+        plain-data payload, and the result is rendered back on this thread.
         """
-        from gui.crash_viewer import collect_crash_reports
-        from gui.dialogs.crash_dialog import load_recorded_diagnosis
-
         if self.instance_id is None:
+            self.diagnosis_loading.setVisible(False)
             return
-        record = load_recorded_diagnosis(instance_dir(self.game_dir, self.instance_id))
+        self._diagnosis_generation += 1
+        generation = self._diagnosis_generation
+        self._diagnosis_ready = False
+        self._diagnosis_pending = True
+        self.diagnosis_loading.setText(tr("instances.detail.loading"))
+        self.diagnosis_loading.setVisible(True)
+        self.diagnosis_empty.setVisible(False)
+        for widget in self._diagnosis_result_widgets:
+            widget.setVisible(False)
+        self.log_view.setVisible(False)
+        self.log_empty.setVisible(False)
+        run_in_background(
+            partial(
+                _diagnosis_payload,
+                self.instance_id,
+                self.game_dir,
+                self.instance,
+                self.resolved,
+            ),
+            on_result=partial(self._on_diagnosis_payload, generation),
+            on_error=partial(self._on_diagnosis_failed, generation),
+        )
+
+    def _on_diagnosis_payload(self, generation: int, payload) -> None:
+        if not widget_alive(self) or generation != self._diagnosis_generation:
+            return
+        self._diagnosis_pending = False
+        self._diagnosis_ready = True
+        self.diagnosis_loading.setVisible(False)
+        self._render_diagnosis(payload)
+
+    def _on_diagnosis_failed(self, generation: int, message: str) -> None:
+        if not widget_alive(self) or generation != self._diagnosis_generation:
+            return
+        self._diagnosis_pending = False
+        self._diagnosis_ready = False
+        self.diagnosis_loading.setText(
+            tr("instances.detail.loading_failed", str(message))
+        )
+        self.diagnosis_loading.setVisible(True)
+
+    def _render_diagnosis(self, payload: _DiagnosisPayload) -> None:
+        """Render one payload (the rendering half of the old synchronous refresh)."""
+        record = payload.record
         has_record = bool(record and record.get("code"))
-        live = self._analyze_instance()
+        live = payload.live
         has_live = bool(
             live is not None and live.analysable and not live.primary.fallback
         )
 
-        self._refresh_log()
+        self._apply_log(payload)
         if has_live:
             self._render_live_diagnosis(live)
             self.diagnosis_empty.setVisible(False)
@@ -3326,14 +3946,14 @@ class InstanceDetail(QWidget):
                 widget.setVisible(True)
             self.diagnosis_code.setVisible(True)
             self.diagnosis_confidence.setVisible(True)
-            has_log = bool(self.log_view.toPlainText())
+            has_log = bool(payload.log_text)
             # A crash report / hs_err is the "raw log" a result points into, so it starts
             # collapsed. A diagnosis made from latest.log alone keeps the log card open:
             # there is no crash report to expand, and the log is the only source shown.
             from launcher.diagnostics import KIND_CRASH_REPORT, KIND_HS_ERR
 
             collapse = any(
-                log.kind in (KIND_CRASH_REPORT, KIND_HS_ERR) for log in live.logs
+                entry.kind in (KIND_CRASH_REPORT, KIND_HS_ERR) for entry in live.logs
             )
             self.log_card.setVisible(not (has_log and collapse))
             self.raw_toggle.setVisible(has_log and collapse)
@@ -3373,11 +3993,9 @@ class InstanceDetail(QWidget):
                 self.diagnosis_code.clear()
                 self.diagnosis_time.clear()
                 self.diagnosis_body.clear()
-        try:
-            count = len(collect_crash_reports(self.effective_dir()))
-        except OSError:
-            count = 0
-        self.diagnosis_reports_label.setText(tr("instances.detail.diagnosis.reports", count))
+        self.diagnosis_reports_label.setText(
+            tr("instances.detail.diagnosis.reports", payload.reports)
+        )
 
     def effective_dir(self) -> Path:
         """The directory the game actually uses for this instance (its own folder when isolated)."""
@@ -3542,6 +4160,11 @@ class InstanceDetail(QWidget):
         """Show the given instance (None clears the panel)."""
         if instance_id != self.instance_id:
             self._isolation_warned = False
+            # A plan belongs to the instance it was staged on, and the picker to the core it listed.
+            self._plan = None
+            self._loader_builds.clear()
+            self._loader_availability.clear()
+            self._show_modify_overview()
             # The finished archive's path belongs to the instance that was shown a moment ago.
             self._forget_exported_pack()
         self.instance_id = instance_id
@@ -3654,6 +4277,8 @@ class InstanceDetail(QWidget):
         self._refresh_badge_counts()
         self._sync_instance_pages()
         self._loaded_tabs = set()
+        # The lazy tabs describe the instance that just changed: their old answers must not stay.
+        self._diagnosis_ready = False
         self._reload_mods()
         # 投影 is a card of this page, not a lazily loaded tab, so it refreshes with the instance.
         self.reload_schematics()
@@ -3694,16 +4319,15 @@ class InstanceDetail(QWidget):
         self.saves_empty.setText(self.saves_empty_text)
         self.saves_empty.setVisible(True)
         self._clear_schematics()
-        for value in self.modify_values.values():
-            value.setText(tr("instances.detail.value.none"))
-            value.setToolTip("")
+        self._plan = None
         self.modify_error.setText("")
         self.modify_error.setVisible(False)
+        self.modify_result.setText("")
+        self.modify_result.setVisible(False)
         self.switch_progress_row.setVisible(False)
         self.switch_progress_container.setVisible(False)
         self.switch_state_label.setVisible(False)
-        self.change_version_button.setEnabled(False)
-        self.change_loader_button.setEnabled(False)
+        self._fill_modify()
         for key in _BADGED_SECTIONS:
             self._set_badge_count(key, 0)
         # The two media sections are hidden as well; their rows and scope labels must not outlive
@@ -3805,46 +4429,675 @@ class InstanceDetail(QWidget):
             label.setText(tr("instances.detail.share.banner", shared))
             banner.setVisible(True)
 
-    def _fill_modify(self) -> None:
-        """Show what the instance would launch now: game version, loader, profile and core folder.
+    # ---------- 修改: reading and rendering ----------
 
-        Every value comes from the profile the launch path will read (``resolved.version_id``,
-        followed through ``inheritsFrom``), so the page cannot claim a version the launcher would not
-        start. A folder whose profile is unreadable says so instead of guessing from its name.
+    def _fill_modify(self) -> None:
+        """Read the core the launch path really resolves and render the four component rows.
+
+        The rows show a *plan* when one is staged: choosing a build, or removing a loader, only
+        records what 开始修改 would do. ``_plan`` is the one piece of staged state; it is cleared when
+        the plan is applied, when the instance changes, and when it would change nothing.
         """
-        values = self.modify_values
-        if self.instance is None or self.resolved is None:
-            for value in values.values():
-                value.setText(tr("instances.detail.value.none"))
-                value.setToolTip("")
-            self.change_version_button.setEnabled(False)
-            self.change_loader_button.setEnabled(False)
+        ready = self.instance is not None and self.resolved is not None
+        self._modify_ready = ready
+        self.modify_loading.setText(
+            tr("instances.detail.loading")
+            if self.instance_id
+            else tr("instances.msg.need_select")
+        )
+        self.modify_loading.setVisible(not ready)
+        self.modify_rows_container.setVisible(ready)
+        self.modify_hint.setVisible(ready)
+        self._collapse_loader_row()
+        for row in self.modify_rows.values():
+            row.clear_body()
+            row.set_expanded(False)
+        self._identity = None
+        if not ready:
+            self.modify_summary_title.setText(tr("instances.detail.value.none"))
+            self.modify_summary_subtitle.setText("")
+            self._remove_target = None
+            for row in self.modify_rows.values():
+                row.set_value(tr("instances.detail.value.none"), muted=True)
+                row.set_actions()
+            self._sync_modify_summary()
+            self._sync_modify_button()
             return
         version_id = self.resolved.version_id
-        values["point_to"].setText(version_id)
-        values["point_to"].setToolTip(version_id)
+        identity = profile_identity(self.game_dir, version_id)
         core_folder = instance_dir(self.game_dir, core_profile_id(self.game_dir, version_id))
-        values["core_dir"].setText(str(core_folder))
-        values["core_dir"].setToolTip(str(core_folder))
-        if version_json_path(core_folder) is None:
-            unknown = tr("instances.detail.modify.unknown")
-            values["game_version"].setText(unknown)
-            values["loader"].setText(unknown)
+        self._core_known = version_json_path(core_folder) is not None
+        self._identity = identity if self._core_known else None
+        self._identity_minecraft = identity.minecraft
+        # Safe removal: a loader that is unreadable, or a game version with no loader-free profile,
+        # has no safe target - the cross is then simply not shown rather than pretending.
+        self._remove_target = (
+            self._safe_removal_target(version_id) if identity.loader_id else None
+        )
+        self.modify_summary_title.setText(self.instance.name)
+        self._render_modify_rows()
+        self._sync_modify_button()
+
+    def _render_modify_rows(self) -> None:
+        """Paint the rows from the staged plan when there is one, else from the current core.
+
+        Compatibility is a property of the *planned* core: with NeoForge staged on a Fabric
+        instance, Fabric's own row says "与 NeoForge 不兼容" - the row describes what applying the
+        plan would mean, not what is on disk this second.
+        """
+        unknown = tr("instances.detail.modify.unknown")
+        plan = self._plan
+        identity = self._identity
+        planned_loader = plan.loader_id if plan is not None else (
+            identity.loader_id if identity is not None else ""
+        )
+        planned_loader_label = (
+            LOADER_TITLES.get(planned_loader, planned_loader) if planned_loader else ""
+        )
+        planned_minecraft = (
+            plan.minecraft
+            if plan is not None and plan.minecraft
+            else (identity.minecraft if identity is not None else "")
+        )
+        mc_row = self.modify_rows[MODIFY_MC]
+        if identity is None:
+            mc_row.set_value(unknown, muted=True)
+            mc_row.set_actions(edit=True)
         else:
-            identity = profile_identity(self.game_dir, version_id)
-            values["game_version"].setText(identity.minecraft or tr("instances.detail.modify.unknown"))
-            values["loader"].setText(identity.loader or tr("instances.detail.modify.vanilla"))
-        enabled = not self._switch_busy
-        self.change_version_button.setEnabled(enabled)
-        self.change_loader_button.setEnabled(enabled)
+            mc_row.set_value(planned_minecraft or unknown, tooltip=planned_minecraft)
+            mc_row.set_actions(edit=True)
+        accent = (theme.current_tokens() or theme.theme_palette("light")).get(
+            "ACCENT", "#35a06a"
+        )
+        for key in MODIFY_LOADERS:
+            row = self.modify_rows[key]
+            if identity is None:
+                row.set_value(unknown, muted=True)
+                row.set_actions()
+                continue
+            if key == planned_loader:
+                if plan is not None and plan.loader_id == key:
+                    build = self._loader_build(plan.loader) or plan.loader_version or key
+                else:
+                    build = self._loader_build(identity.loader) or identity.loader
+                row.set_value(build, icon=block_icons.loader_pixmap(key, accent, MODIFY_ICON_SIZE))
+                row.set_actions(change=True, remove=self._remove_target is not None)
+                row.set_remove_name(
+                    tr(
+                        "instances.detail.modify.row.remove.named",
+                        LOADER_TITLES.get(key, key),
+                    )
+                )
+            elif planned_loader:
+                # Another loader owns the plan: this row names it instead of offering a replacement
+                # that would silently discard the staged one.
+                row.set_value(
+                    tr("instances.detail.modify.incompatible", planned_loader_label),
+                    muted=True,
+                )
+                row.set_actions()
+            elif self._loader_availability.get((key, planned_minecraft)) is False:
+                # The fourth state: this loader has no build for the planned game version at all.
+                # Distinct from 不兼容 - no other loader is in the way, the game version is unsupported.
+                row.set_value(tr("instances.detail.modify.no_versions"), muted=True)
+                row.set_actions()
+            else:
+                row.set_value(tr("instances.detail.modify.not_added"), muted=True)
+                row.set_actions(change=True)
+        self._sync_modify_summary()
+        self._set_modify_busy(self._switch_busy)
+        self._refresh_loader_availability(planned_minecraft)
+
+    def _sync_modify_summary(self) -> None:
+        """The first line: the current core, and - when a plan is staged - what it would become."""
+        identity = self._identity
+        if identity is None:
+            self.modify_summary_icon.clear()
+            self.modify_summary_icon.setVisible(False)
+            if self.instance is not None:
+                self.modify_summary_subtitle.setText(
+                    tr("instances.detail.loading")
+                )
+            return
+        vanilla = tr("instances.detail.modify.vanilla")
+        current = f"{identity.minecraft or tr('instances.detail.modify.unknown')} · {identity.loader or vanilla}"
+        plan = self._plan
+        if plan is None:
+            self.modify_summary_subtitle.setText(current)
+            target_loader = identity.loader_id
+            tooltip = current
+        else:
+            target = f"{plan.minecraft or identity.minecraft} · {plan.loader or vanilla}"
+            self.modify_summary_subtitle.setText(f"{current} → {target}")
+            target_loader = plan.loader_id
+            tooltip = self.modify_summary_subtitle.text()
+        self.modify_summary_subtitle.setToolTip(tooltip)
+        pixmap = self._summary_icon(target_loader)
+        if pixmap is None:
+            self.modify_summary_icon.clear()
+            self.modify_summary_icon.setVisible(False)
+        else:
+            self.modify_summary_icon.setPixmap(pixmap)
+            self.modify_summary_icon.setVisible(True)
+
+    def _summary_icon(self, loader_id: str):
+        """The planned loader's own mark, or the grass block for a loader-free core."""
+        try:
+            if loader_id:
+                accent = (theme.current_tokens() or theme.theme_palette("light")).get(
+                    "ACCENT", "#35a06a"
+                )
+                pixmap = block_icons.loader_pixmap(loader_id, accent, MODIFY_SUMMARY_ICON)
+            else:
+                pixmap = block_icons.rule_icon_pixmap(
+                    "grass",
+                    MODIFY_SUMMARY_ICON,
+                    game_dir=self.game_dir,
+                    cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
+                )
+        except Exception:  # noqa: BLE001 - a missing texture must not break the summary
+            return None
+        if pixmap is None or pixmap.isNull():
+            return None
+        return pixmap
+
+    def _sync_modify_button(self) -> None:
+        """One primary button: 开始重置 with no plan, 开始修改 with one."""
+        has_plan = self._plan is not None
+        text = tr(
+            "instances.detail.modify.start.modify"
+            if has_plan
+            else "instances.detail.modify.reset.start"
+        )
+        self.reset_button.setText(text)
+        self.reset_button.setAccessibleName(text)
+        colour = (theme.current_tokens() or theme.theme_palette("light")).get(
+            "FG_SELECTED", "#ffffff"
+        )
+        pixmap = _pencil_pixmap(colour, 16) if has_plan else _reset_pixmap(colour, 16)
+        self.reset_button.setIcon(QIcon(pixmap))
+        self.reset_button.setIconSize(QSize(16, 16))
+        self.reset_button.setEnabled(self._modify_ready and not self._switch_busy)
+
+    def _set_modify_busy(self, busy: bool) -> None:
+        """One core job at a time: the primary button and every row action follow the same flag."""
+        self.reset_button.setEnabled(not busy and self._modify_ready)
+        for row in self.modify_rows.values():
+            row.set_busy(busy)
+
+    # ---------- 修改: the staged plan ----------
+
+    def _plan_is_current(self, choice: _SwitchChoice) -> bool:
+        """True when the target is the profile (or the core profile) the instance runs now.
+
+        A thin instance folder runs a profile it only inherits, so "is this the current core?" has
+        two right answers: the instance's own id and the profile the chain reads the core from.
+        """
+        if not choice.installed or self.resolved is None:
+            return False
+        current = self.resolved.version_id
+        return choice.version_id in {
+            current,
+            core_profile_id(self.game_dir, current),
+        }
+
+    def _set_plan(self, choice: _SwitchChoice | None) -> None:
+        """Stage (or clear) the plan a 开始修改 click would apply. Never touches the disk."""
+        if choice is not None and self._plan_is_current(choice):
+            choice = None
+        self._plan = choice
+        self._collapse_loader_row()
+        self._show_modify_overview()
+        self._render_modify_rows()
+        self._sync_modify_button()
+
+    def planned_target(self) -> _SwitchChoice | None:
+        """The staged target, for tests and for the apply step."""
+        return self._plan
+
+    @staticmethod
+    def _loader_build(label: str) -> str:
+        """``Fabric 0.19.3`` -> ``0.19.3`` (the row already names the loader)."""
+        text = str(label or "").strip()
+        if not text:
+            return ""
+        _name, _sep, build = text.partition(" ")
+        return build.strip() or text
+
+    def _current_minecraft(self) -> str:
+        if self.resolved is None:
+            return ""
+        return profile_identity(self.game_dir, self.resolved.version_id).minecraft
+
+    def _planned_minecraft(self) -> str:
+        """The game version the rows describe: the staged one when there is a plan, else current."""
+        if self._plan is not None and self._plan.minecraft:
+            return self._plan.minecraft
+        return self._current_minecraft()
+
+    def _refresh_loader_availability(self, minecraft: str) -> None:
+        """Ask each loader source whether it has *any* build for the planned game version.
+
+        Only a *changed* game version is probed. The current one needs no request: its loader is
+        installed, and with no loader at all the three rows are addable by definition (the original
+        rule for a vanilla instance), so the common path costs nothing and cannot stall on a network
+        timeout. A loader that answers with an empty list is `无可用版本`; a failed request is not an
+        empty answer, and the row stays addable (its expansion retries and reports the error).
+        """
+        if not minecraft or minecraft == self._current_minecraft():
+            return
+        for key in MODIFY_LOADERS:
+            if (key, minecraft) in self._loader_availability:
+                continue
+            self._loader_availability[(key, minecraft)] = None
+            run_in_background(
+                partial(list_loader_versions, key, minecraft),
+                on_result=partial(self._on_loader_availability, key, minecraft),
+                on_error=partial(self._on_loader_availability_failed, key, minecraft),
+            )
+
+    def _on_loader_availability(self, key: str, minecraft: str, builds) -> None:
+        if not widget_alive(self):
+            return
+        builds = list(builds or [])
+        self._loader_availability[(key, minecraft)] = bool(builds)
+        self._loader_builds[(key, minecraft)] = (builds, "")
+        if minecraft == self._planned_minecraft():
+            self._render_modify_rows()
+            if self._expanded_loader == key:
+                self._fill_loader_body(key)
+
+    def _on_loader_availability_failed(self, key: str, minecraft: str, message: str) -> None:
+        if not widget_alive(self):
+            return
+        self._loader_availability[(key, minecraft)] = "error"
+        if minecraft == self._planned_minecraft():
+            self._render_modify_rows()
+
+    def _safe_removal_target(self, version_id: str):
+        """The loader-free profile of this game version, or None when there is no safe way out.
+
+        Removing a loader is a pointer move to an *installed* profile that carries no loader (the
+        vanilla ``1.21.11`` next to a Fabric instance). When no such profile exists, the cross is not
+        shown: this page does not offer deletions it cannot perform.
+        """
+        for candidate in switch_candidates(self.game_dir, version_id, SWITCH_LOADER):
+            if not candidate.loader:
+                return candidate
+        return None
 
     def change_game_version(self) -> None:
-        """更换游戏版本: installed profiles of other versions, plus the official catalog."""
-        self._choose_switch_target(SWITCH_VERSION)
+        """The Minecraft row's 修改: open the grouped version picker *inside* this panel."""
+        if self._switch_busy or not self._modify_ready or self.resolved is None:
+            return
+        self._collapse_loader_row()
+        self._picker_generation += 1
+        generation = self._picker_generation
+        self._picker_kind = MODIFY_MC
+        self._picker_versions = []
+        self._picker_choices = {}
+        self._picker_group_state = {}
+        self._picker_limits = {}
+        self.picker_title.setText(tr("instances.detail.modify.pick.version"))
+        self.picker_subtitle.setText(
+            tr("instances.detail.modify.pick.version.hint", self._current_minecraft())
+        )
+        self._clear_picker_body()
+        self.modify_stack.setCurrentIndex(1)
+        versions = _catalog_from_cache()
+        if versions is None:
+            self._set_picker_status(tr("instances.detail.modify.loading_versions"))
+            run_in_background(
+                fetch_catalog,
+                on_result=partial(self._on_catalog_ready, generation),
+                on_error=partial(self._on_catalog_failed, generation),
+            )
+            return
+        self._fill_version_picker(versions)
 
-    def change_loader(self) -> None:
-        """更换加载器: this game version's profiles, plus the loaders that can be downloaded."""
-        self._choose_switch_target(SWITCH_LOADER)
+    def change_loader(self, key: str | None = None) -> None:
+        """Expand the build list of ``key`` (default: the loader in use, else Fabric).
+
+        The list is in the row, not in a dialog and not on another page: it is the same row the
+        user just looked at, and the summary above it keeps showing the current core.
+        """
+        if self._switch_busy or not self._modify_ready or self.resolved is None:
+            return
+        identity = profile_identity(self.game_dir, self.resolved.version_id)
+        target = key or identity.loader_id or MODIFY_LOADERS[0]
+        if target not in self.modify_rows:
+            return
+        self._show_modify_overview()
+        self.expand_loader_row(target)
+
+    # ---------- 修改: loader row expansion ----------
+
+    def toggle_loader_row(self, key: str) -> None:
+        """``›`` expands the compatible builds in place; ``⌃`` collapses the row again."""
+        if key not in self.modify_rows or self._switch_busy or not self._modify_ready:
+            return
+        row = self.modify_rows[key]
+        if row.is_expanded():
+            self._collapse_loader_row(key)
+            return
+        self._collapse_loader_row()
+        row.set_expanded(True)
+        self._expanded_loader = key
+        self._fill_loader_body(key)
+
+    def expand_loader_row(self, key: str) -> None:
+        """Open a row without toggling it shut (the programmatic form of ``›``)."""
+        row = self.modify_rows.get(key)
+        if row is None:
+            return
+        if row.is_expanded():
+            self._fill_loader_body(key)
+            return
+        self.toggle_loader_row(key)
+
+    def _collapse_loader_row(self, key: str | None = None) -> None:
+        target = key or self._expanded_loader
+        if target is None:
+            return
+        row = self.modify_rows.get(target)
+        if row is not None and row.is_expanded():
+            row.set_expanded(False)
+            row.clear_body()
+        if self._expanded_loader == target:
+            self._expanded_loader = None
+
+    def _fill_loader_body(self, key: str) -> None:
+        """Paint the builds of one loader inside its row (cached answer, or a background probe)."""
+        row = self.modify_rows.get(key)
+        if row is None:
+            return
+        row.clear_body()
+        minecraft = self._planned_minecraft()
+        cached = self._loader_builds.get((key, minecraft))
+        if cached is None:
+            label = QLabel(tr("instances.detail.modify.loading_builds"))
+            label.setObjectName("hint")
+            label.setWordWrap(True)
+            row.body_layout.addWidget(label)
+            self._probe_loader_builds(key, minecraft)
+            return
+        builds, failure = cached
+        items = self._loader_build_items(key, minecraft, builds)
+        if not items:
+            # Installed profiles are listed even when the source could not answer; only a row with
+            # neither an installed profile nor a downloadable build has nothing to show.
+            label = QLabel(
+                tr("instances.detail.modify.builds_failed", failure)
+                if failure
+                else tr("instances.detail.modify.builds_none")
+            )
+            label.setObjectName("hint")
+            label.setWordWrap(True)
+            row.body_layout.addWidget(label)
+            return
+        for choice, title, stability, current, status in items:
+            button = _LoaderBuildRow(
+                choice, title=title, stability=stability, current=current, status=status
+            )
+            button.clicked.connect(partial(self._pick_loader_build, choice))
+            row.body_layout.addWidget(button)
+
+    def _probe_loader_builds(self, key: str, minecraft: str) -> None:
+        """Ask the loader's own source for its builds of this game version (one request)."""
+        run_in_background(
+            partial(list_loader_versions, key, minecraft),
+            on_result=partial(self._on_loader_builds, key, minecraft),
+            on_error=partial(self._on_loader_builds_failed, key, minecraft),
+        )
+
+    def _on_loader_builds(self, key: str, minecraft: str, builds) -> None:
+        if not widget_alive(self):
+            return
+        self._loader_builds[(key, minecraft)] = (list(builds or []), "")
+        if self._expanded_loader == key and self._current_minecraft() == minecraft:
+            self._fill_loader_body(key)
+
+    def _on_loader_builds_failed(self, key: str, minecraft: str, message: str) -> None:
+        if not widget_alive(self):
+            return
+        self._loader_builds[(key, minecraft)] = ([], str(message))
+        if self._expanded_loader == key and self._current_minecraft() == minecraft:
+            self._fill_loader_body(key)
+
+    def _loader_build_items(self, key: str, minecraft: str, builds) -> list[tuple]:
+        """(choice, title, stability, is_current, status) for one loader's expanded list.
+
+        Installed profiles of this loader come first (choosing one only moves the pointer); the
+        downloadable builds follow, and a build that is already installed is not offered twice.
+        """
+        version_id = self.resolved.version_id if self.resolved is not None else ""
+        installed = [
+            candidate
+            for candidate in switch_candidates(self.game_dir, version_id, SWITCH_LOADER)
+            if candidate.loader_id == key and candidate.minecraft == minecraft
+        ]
+        items: list[tuple] = []
+        for candidate in installed:
+            choice = replace(self._choice_for_identity(candidate), loader_id=key)
+            is_current = self._plan_is_current(choice)
+            items.append(
+                (
+                    choice,
+                    self._loader_build(candidate.loader) or candidate.version_id,
+                    "",
+                    is_current,
+                    tr(
+                        "instances.detail.modify.build.current"
+                        if is_current
+                        else "instances.detail.modify.status.installed"
+                    ),
+                )
+            )
+        labels = {candidate.loader for candidate in installed}
+        for build in builds:
+            label = f"{display_loader_name(key)} {build.version}"
+            if label in labels:
+                continue
+            choice = _SwitchChoice(
+                version_id="",
+                minecraft=minecraft,
+                loader=label,
+                loader_id=key,
+                installed=False,
+                meta=str(build.version),
+                loader_version=build,
+            )
+            items.append(
+                (
+                    choice,
+                    str(build.version),
+                    tr(
+                        "instances.detail.modify.build.stable"
+                        if getattr(build, "stable", True)
+                        else "instances.detail.modify.build.beta"
+                    ),
+                    False,
+                    tr("instances.detail.modify.build.download"),
+                )
+            )
+        return items
+
+    def _pick_loader_build(self, choice: _SwitchChoice, _checked: bool = False) -> None:
+        if self._switch_busy:
+            return
+        planned = self._planned_minecraft()
+        if not choice.installed and planned:
+            # A loader build is bound to its game version: staging it on the planned core (which may
+            # be a different Minecraft version) is what makes one plan out of the two choices.
+            choice = replace(choice, minecraft=planned)
+        self._set_plan(choice)
+
+    def remove_loader(self, key: str) -> None:
+        """``✕``: stage a pointer move to the loader-free profile of the same game version."""
+        if self._switch_busy or not self._modify_ready or self.resolved is None:
+            return
+        identity = profile_identity(self.game_dir, self.resolved.version_id)
+        target = self._remove_target
+        if target is None or identity.loader_id != key:
+            return
+        self._set_plan(replace(self._choice_for_identity(target), loader_id=""))
+
+    # ---------- 修改: the Minecraft version picker ----------
+
+    def _show_modify_overview(self) -> None:
+        self._collapse_loader_row()
+        self.modify_stack.setCurrentIndex(0)
+
+    def _clear_picker_body(self) -> None:
+        while self.picker_body_layout.count():
+            item = self.picker_body_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _set_picker_status(self, text: str) -> None:
+        self.picker_status.setText(text)
+        self.picker_status.setVisible(bool(text))
+
+    def _on_catalog_ready(self, generation: int, versions) -> None:
+        if not widget_alive(self) or generation != self._picker_generation:
+            return
+        if self._picker_kind != MODIFY_MC or self.modify_stack.currentIndex() != 1:
+            return
+        self._set_picker_status("")
+        self._fill_version_picker(list(versions or []))
+
+    def _on_catalog_failed(self, generation: int, message: str) -> None:
+        if not widget_alive(self) or generation != self._picker_generation:
+            return
+        self._set_picker_status(
+            tr("instances.detail.modify.loading_failed", str(message))
+        )
+
+    def _fill_version_picker(self, versions: list) -> None:
+        """Latest cards plus the versions page's four folds, with the installed state per row."""
+        self._picker_versions = list(versions)
+        self._picker_choices = {}
+        self._clear_picker_body()
+        layout = self.picker_body_layout
+        latest: dict = {}
+        for version in versions:
+            kind = str(getattr(version, "type", "") or "")
+            if kind in ("release", "snapshot") and kind not in latest:
+                latest[kind] = version
+        if latest:
+            caption = QLabel(tr("instances.detail.modify.latest"))
+            caption.setObjectName("hint")
+            layout.addWidget(caption)
+            holder = QWidget()
+            holder_layout = QHBoxLayout(holder)
+            holder_layout.setContentsMargins(0, 0, 0, 0)
+            holder_layout.setSpacing(8)
+            for kind in ("release", "snapshot"):
+                version = latest.get(kind)
+                if version is None:
+                    continue
+                card = VersionLatestCard(
+                    kind,
+                    tr(f"versions.latest.{kind}"),
+                    on_click=partial(
+                        self._pick_catalog_version, str(getattr(version, "id", ""))
+                    ),
+                )
+                card.set_version(
+                    str(getattr(version, "id", "")),
+                    kind,
+                    version_human_datetime(
+                        str(getattr(version, "release_time", "") or "")
+                    ),
+                    QPixmap(),
+                )
+                holder_layout.addWidget(card, 1)
+            layout.addWidget(holder)
+        buckets: dict[str, list] = {key: [] for key in VERSION_GROUP_ORDER}
+        for version in versions:
+            buckets[version_group_of(version)].append(version)
+        for key in VERSION_GROUP_ORDER:
+            entries = buckets[key]
+            expanded = bool(self._picker_group_state.get(key, False))
+            header = VersionGroupHeader(
+                key,
+                tr(VERSION_GROUP_TITLE_KEYS[key]),
+                len(entries),
+                expanded,
+                on_toggle=self._toggle_picker_group,
+            )
+            layout.addWidget(header)
+            if not expanded or not entries:
+                continue
+            limit = self._picker_limits.get(key, PICKER_BATCH)
+            for version in entries[:limit]:
+                choice = self._choice_for_catalog(version)
+                self._picker_choices[choice.version_id] = choice
+                row = _VersionChoiceRow(choice)
+                row.clicked.connect(partial(self._pick_choice, choice))
+                layout.addWidget(row)
+            if len(entries) > limit:
+                more = QPushButton(tr("versions.group.more", len(entries) - limit))
+                more.setObjectName("secondaryButton")
+                more.setAccessibleName(more.text())
+                more.clicked.connect(partial(self._load_more_picker, key))
+                layout.addWidget(more)
+        layout.addStretch(1)
+
+    def _toggle_picker_group(self, key: str) -> None:
+        self._picker_group_state[key] = not self._picker_group_state.get(key, False)
+        self._picker_limits.pop(key, None)
+        self._fill_version_picker(self._picker_versions)
+
+    def _load_more_picker(self, key: str) -> None:
+        self._picker_limits[key] = self._picker_limits.get(key, PICKER_BATCH) + PICKER_BATCH
+        self._fill_version_picker(self._picker_versions)
+
+    def _choice_for_catalog(self, version) -> _SwitchChoice:
+        """One manifest entry as a choice: installed profiles point, everything else downloads."""
+        version_id = str(getattr(version, "id", "") or "")
+        if version_json_path(instance_dir(self.game_dir, version_id)) is not None:
+            identity = profile_identity(self.game_dir, version_id)
+            return _SwitchChoice(
+                version_id=version_id,
+                minecraft=identity.minecraft or version_id,
+                loader=identity.loader,
+                loader_id=identity.loader_id,
+                installed=True,
+                meta=version_id,
+            )
+        category = version_category(
+            version_id, str(getattr(version, "type", "release") or "release")
+        )
+        type_label = tr(_VERSION_TYPE_LABELS.get(category, "versions.type.release"))
+        released = str(getattr(version, "release_time", "") or "")[:10]
+        return _SwitchChoice(
+            version_id=version_id,
+            minecraft=version_id,
+            installed=False,
+            meta=" · ".join(part for part in (type_label, released) if part),
+        )
+
+    def _pick_catalog_version(self, version_id: str, _checked: bool = False) -> None:
+        version = next(
+            (
+                item
+                for item in self._picker_versions
+                if str(getattr(item, "id", "")) == version_id
+            ),
+            None,
+        )
+        if version is None:
+            return
+        self._pick_choice(self._choice_for_catalog(version))
+
+    def _pick_choice(self, choice: _SwitchChoice, _checked: bool = False) -> None:
+        if self._switch_busy:
+            return
+        self._set_plan(choice)
 
     def _identity_text(self, version_id: str) -> str:
         """``1.21.11 · Fabric 0.19.3`` for one profile id (the sentence the dialogs read)."""
@@ -3859,125 +5112,121 @@ class InstanceDetail(QWidget):
             version_id=identity.version_id,
             minecraft=identity.minecraft,
             loader=identity.loader,
+            loader_id=identity.loader_id,
             installed=True,
             meta=identity.version_id,
         )
 
-    def _choose_switch_target(self, kind: str) -> None:
-        """Open the candidate list for one kind of switch, then ask for confirmation.
+    # ---------- 修改: the one primary button ----------
 
-        The list is complete before it is useful: installed profiles are local and shown at once, and
-        the downloadable half (the official catalog, or each loader's newest build) is requested in
-        the background while the dialog is already open. Nothing here downloads anything - a click
-        only records the choice.
-        """
-        if self._require_instance() is None or self.resolved is None or self._switch_busy:
-            return
-        is_loader = kind == SWITCH_LOADER
-        current = profile_identity(self.game_dir, self.resolved.version_id)
-        installed = [
-            self._choice_for_identity(identity)
-            for identity in switch_candidates(self.game_dir, self.resolved.version_id, kind)
-        ]
-        dialog = _VersionChoiceDialog(
-            self,
-            title=tr(
-                "instances.detail.modify.change_loader"
-                if is_loader
-                else "instances.detail.modify.change_version"
-            ),
-            hint=tr(
-                "instances.detail.modify.hint.loader"
-                if is_loader
-                else "instances.detail.modify.hint.version"
-            ),
-            choices=installed,
-            empty_text=tr(
-                "instances.detail.modify.empty.loader"
-                if is_loader
-                else "instances.detail.modify.empty.version"
-            ),
-            searchable=not is_loader,
-            loading_text=tr(
-                "instances.detail.modify.loading_loaders"
-                if is_loader
-                else "instances.detail.modify.loading_versions"
-            ),
-        )
-        if is_loader:
-            self._probe_loader_choices(dialog, current, installed)
+    def _on_modify_button(self) -> None:
+        """开始重置 with no plan, 开始修改 with one."""
+        if self._plan is None:
+            self.reset_core()
         else:
-            self._load_catalog_choices(dialog, current)
-        dialog.ask()
-        chosen = dialog.chosen
-        dialog.deleteLater()
-        if chosen is None:
+            self.apply_plan()
+
+    def apply_plan(self) -> None:
+        """Apply the staged plan through the existing switch flow (backup, install, pointer)."""
+        plan = self._plan
+        if plan is None or self._switch_busy or self.resolved is None:
             return
-        self._confirm_switch(chosen)
+        self._confirm_switch(plan)
 
-    def _load_catalog_choices(self, dialog: _VersionChoiceDialog, current) -> None:
-        """Fill the official half of the version chooser (cache now, network only when cold)."""
-        installed_ids = set(list_installed_versions(self.game_dir))
-        current_version_id = self.resolved.version_id if self.resolved is not None else ""
+    def reset_core(self) -> None:
+        """开始重置: re-install the core this instance already runs (PCL's Reset).
 
-        def add(versions: list) -> None:
-            if not widget_alive(dialog):
-                return
-            dialog.add_choices(
-                _catalog_choices(
-                    versions,
-                    installed_ids=installed_ids,
-                    current_version_id=current_version_id,
-                    current_minecraft=current.minecraft,
-                )
+        A reset never moves ``base_version``. It re-downloads and verifies the files the launch path
+        resolves: the vanilla core of the game version, and the loader build only when the loader's
+        source still offers exactly that build (otherwise the existing loader files are left alone
+        and the result says so). A failure therefore cannot point the instance somewhere else - the
+        page reloads, the pointer is unchanged, and the error stays on screen.
+        """
+        if self._switch_busy or not self._modify_ready or self.resolved is None:
+            return
+        identity = profile_identity(self.game_dir, self.resolved.version_id)
+        if not identity.minecraft:
+            set_app_status(self, tr("instances.detail.modify.reset.no_core"), "warning")
+            return
+        loader = identity.loader or tr("instances.detail.modify.vanilla")
+        name = f"{identity.minecraft} · {loader}"
+        accepted = inwindow_dialog.confirm(
+            self,
+            tr("instances.detail.modify.reset.confirm.title"),
+            tr("instances.detail.modify.reset.confirm.body", name),
+            accept_text=tr("instances.detail.modify.reset.start"),
+        )
+        if accepted is not inwindow_dialog.Outcome.ACCEPTED:
+            return
+        self._start_reset(identity)
+
+    def _start_reset(self, identity) -> None:
+        build = self._loader_build(identity.loader)
+
+        def make_worker(stop, bridge, cfg):
+            return partial(
+                _perform_reset,
+                identity.minecraft,
+                identity.loader_id,
+                build,
+                self.game_dir,
+                stop=stop,
+                report=bridge,
+                cache_dir=paths.launcher_dir() / "cache",
+                runtime_dir=paths.launcher_dir() / "runtime",
+                concurrency=cfg.max_concurrent_downloads,
             )
-            dialog.set_status_text("")
 
-        cached = _catalog_from_cache()
-        if cached is not None:
-            add(cached)
-            return
-
-        def on_error(message: str) -> None:
-            if widget_alive(dialog):
-                dialog.set_status_text(tr("instances.detail.modify.loading_failed", message))
-
-        run_in_background(fetch_catalog, on_result=add, on_error=on_error)
-
-    def _probe_loader_choices(
-        self, dialog: _VersionChoiceDialog, current, installed: list[_SwitchChoice]
-    ) -> None:
-        """Fill the downloadable half of the loader chooser (one background probe)."""
-
-        def on_result(payload) -> None:
-            if not widget_alive(dialog):
-                return
-            try:
-                options, failures = payload
-            except (TypeError, ValueError):
-                return
-            choices = _loader_choices(options, installed, current.minecraft)
-            dialog.add_choices(choices)
-            if failures and not options:
-                dialog.set_status_text(
-                    tr("instances.detail.modify.loaders_failed", failures[0])
-                )
-            elif choices:
-                dialog.set_status_text("")
-            elif not failures:
-                dialog.set_status_text(tr("instances.detail.modify.loaders_none"))
-
-        def on_error(message: str) -> None:
-            if widget_alive(dialog):
-                dialog.set_status_text(tr("instances.detail.modify.loaders_failed", message))
-
-        run_in_background(
-            partial(loader_install_options, current.minecraft),
-            on_result=on_result,
-            on_error=on_error,
+        self._begin_core_job(
+            tr("instances.detail.modify.reset.running", identity.minecraft),
+            make_worker,
+            identity=identity.minecraft,
+            on_result=self._on_reset_done,
+            on_error=self._on_reset_failed,
         )
 
-    def _confirm_switch(self, target) -> None:
+    def _on_reset_done(self, result) -> None:
+        task, self._switch_task = self._switch_task, None
+        if task is not None and task.is_running():
+            task.finish()
+        self.modify_error.setVisible(False)
+        self.reload()
+        self.changed.emit()
+        name = self._identity_text(self.resolved.version_id) if self.resolved else ""
+        key = (
+            "instances.detail.modify.reset.done_loader_kept"
+            if getattr(result, "loader_kept", False)
+            else "instances.detail.modify.reset.done"
+        )
+        self.modify_result.setText(tr(key, name))
+        self.modify_result.setVisible(True)
+        set_app_status(self, self.modify_result.text())
+
+    def _on_reset_failed(self, message: str) -> None:
+        task = self._switch_task
+        cancelled = bool(
+            (self._switch_stop is not None and self._switch_stop.is_set())
+            or downloader.is_user_cancelled()
+            or (task is not None and task.state == CANCELLED)
+        )
+        self.reload()
+        if cancelled:
+            text = tr("instances.detail.modify.cancelled")
+            self.modify_error.setText(text)
+            self.modify_error.setVisible(True)
+            if task is not None and task.state == CANCELLED:
+                set_app_status(self, tr("tasks.status.cancelled", task.title()))
+            else:
+                set_app_status(self, text)
+            return
+        if task is not None:
+            task.fail(message)
+        text = tr("instances.detail.modify.reset.failed", message)
+        self.modify_error.setText(text)
+        self.modify_error.setVisible(True)
+        set_app_status(self, text, "error")
+
+    def _confirm_switch(self, target) -> bool:
         """The second question: what the switch does, and whether to back the instance up first."""
         if self._require_instance() is None or self.resolved is None:
             return
@@ -4001,8 +5250,9 @@ class InstanceDetail(QWidget):
         wants_backup = dialog.wants_backup
         dialog.deleteLater()
         if outcome is not inwindow_dialog.Outcome.ACCEPTED:
-            return
+            return False
         self._start_switch(target, backup=wants_backup)
+        return True
 
     def _start_switch(self, target, *, backup: bool) -> None:
         """Run the install/switch (and the optional backup) in the background, never on the UI thread."""
@@ -4018,67 +5268,78 @@ class InstanceDetail(QWidget):
             )
         if not isinstance(target, _SwitchChoice):
             raise TypeError(f"unsupported switch target: {target!r}")
-        self._switch_busy = True
-        self._switch_cancelled = False
-        self.change_version_button.setEnabled(False)
-        self.change_loader_button.setEnabled(False)
-        self.modify_error.setVisible(False)
-        self._switch_stop = threading.Event()
-        self._switch_rate = RateTracker()
-        self._switch_bridge = ProgressBridge()
-        self._switch_bridge.progress.connect(self._on_switch_progress)
-        self.switch_state_label.setText(
+        backup_dir = (paths.launcher_dir() / "backups") if backup else None
+
+        def make_worker(stop, bridge, cfg):
+            return partial(
+                _perform_switch,
+                instance_id,
+                target,
+                self.game_dir,
+                backup_dir=backup_dir,
+                stop=stop,
+                report=bridge,
+                cache_dir=paths.launcher_dir() / "cache",
+                runtime_dir=paths.launcher_dir() / "runtime",
+                concurrency=cfg.max_concurrent_downloads,
+            )
+
+        self._begin_core_job(
             tr(
                 "instances.detail.modify.installing"
                 if target.needs_install
                 else "instances.detail.modify.switching",
                 target.label,
-            )
+            ),
+            make_worker,
+            identity=target.installer_identity(),
+            on_result=self._on_switched,
+            on_error=self._on_switch_failed,
         )
+
+    def _begin_core_job(self, state_text, make_worker, *, identity, on_result, on_error) -> bool:
+        """Start one core job (a switch or a reset): busy flag, inline progress, task-center row.
+
+        Both jobs share this because they must be indistinguishable to the user: one at a time, the
+        same progress row with 取消, the same row in the window's task list, and the same rollback
+        contract (the pointer is only written by the switch, after its own last check).
+        """
+        if self._switch_busy or self.resolved is None:
+            return False
+        self._switch_busy = True
+        self._switch_cancelled = False
+        self._switch_result_text = ""
+        self._set_modify_busy(True)
+        self.modify_error.setVisible(False)
+        self.modify_result.setVisible(False)
+        self._switch_stop = threading.Event()
+        self._switch_rate = RateTracker()
+        self._switch_bridge = ProgressBridge()
+        self._switch_bridge.progress.connect(self._on_switch_progress)
+        self.switch_state_label.setText(state_text)
         self.switch_state_label.setVisible(True)
         self.switch_progress_bar.setRange(0, 0)
         self.switch_progress_text.setVisible(False)
         self.switch_progress_row.setVisible(True)
         self.switch_progress_container.setVisible(True)
         self.switch_cancel_button.setEnabled(True)
-        backup_dir = (paths.launcher_dir() / "backups") if backup else None
         cfg, _ = config.load()
         center = task_center_of(self)
         self._switch_task = (
             center.add_task(
-                "tasks.title.install",
-                target.installer_identity(),
-                cancel=self._cancel_switch_job,
+                "tasks.title.install", identity, cancel=self._cancel_switch_job
             )
             if center is not None
             else None
         )
-        set_app_status(
-            self,
-            tr(
-                "instances.detail.modify.installing"
-                if target.needs_install
-                else "instances.detail.modify.switching",
-                target.label,
-            ),
-        )
+        set_app_status(self, state_text)
         run_in_background(
-            partial(
-                _perform_switch,
-                instance_id,
-                target,
-                self.game_dir,
-                backup_dir=backup_dir,
-                stop=self._switch_stop,
-                report=self._switch_bridge,
-                cache_dir=paths.launcher_dir() / "cache",
-                runtime_dir=paths.launcher_dir() / "runtime",
-                concurrency=cfg.max_concurrent_downloads,
-            ),
-            on_result=self._on_switched,
-            on_error=self._on_switch_failed,
+            make_worker(self._switch_stop, self._switch_bridge, cfg),
+            on_result=on_result,
+            on_error=on_error,
             on_finished=self._on_switch_finished,
         )
+        return True
 
     def _on_switch_progress(self, payload) -> None:
         """A progress tick from the worker: the inline row and the task list see the same numbers."""
@@ -4160,6 +5421,7 @@ class InstanceDetail(QWidget):
         if task is not None and task.is_running():
             task.finish()
         self.modify_error.setVisible(False)
+        self._plan = None
         self.reload()
         self.changed.emit()  # the card list shows the new profile immediately, no restart
         name = f"{target.minecraft} · {loader}"
@@ -4210,11 +5472,13 @@ class InstanceDetail(QWidget):
         self._switch_cancelled = False
         self.switch_progress_row.setVisible(False)
         self.switch_progress_container.setVisible(False)
-        self.switch_state_label.setVisible(False)
         self.switch_cancel_button.setEnabled(True)
-        has_instance = self.instance is not None and self.resolved is not None
-        self.change_version_button.setEnabled(has_instance)
-        self.change_loader_button.setEnabled(has_instance)
+        self._fill_modify()
+        if self._switch_result_text:
+            self.switch_state_label.setText(self._switch_result_text)
+            self.switch_state_label.setVisible(True)
+        else:
+            self.switch_state_label.setVisible(False)
 
     def _fill_settings(self) -> None:
         inst = self.instance
@@ -4263,17 +5527,34 @@ class InstanceDetail(QWidget):
         self.memory_spin.setEnabled(not follow)
 
     def _ensure_tab_data(self, index: int, force: bool = False) -> None:
-        if index not in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS):
+        """Load what the tab shows, or leave its placeholder up until the data arrives.
+
+        Every tab here is filled from data that is read, scanned or downloaded; a tab that is shown
+        before any of it exists used to paint an empty content area (the reported several-second
+        blank on 修改). The three lazy tabs therefore paint their placeholder first, and only the
+        diagnosis tab really blocks on work - which is why its work runs on a worker thread.
+        """
+        if index == TAB_MODIFY:
+            if force or not self._modify_ready:
+                self._fill_modify()
+            return
+        if index == TAB_EXPORT:
+            if force or not self._export_ready:
+                self._fill_export()
+            return
+        if index == TAB_DIAGNOSIS:
+            if force or not self._diagnosis_ready:
+                self.refresh_diagnosis()
+            return
+        if index not in (*_RESOURCE_TABS, TAB_SAVES):
             return
         if not force and index in self._loaded_tabs:
             return
         self._loaded_tabs.add(index)
         if index in _RESOURCE_TABS:
             self.reload_resources()
-        elif index == TAB_SAVES:
-            self.reload_saves()
         else:
-            self.refresh_diagnosis()
+            self.reload_saves()
 
     # ---------- overview actions ----------
 
@@ -4600,104 +5881,421 @@ class InstanceDetail(QWidget):
 
     # ---------- 导出为整合包: a standard pack Modrinth App / Prism / HMCL can import ----------
 
+    # ---------- 导出: state ----------
+
     def _pack_format(self) -> str:
         """The format the combo selects (the Modrinth one is the default and the fallback)."""
-        from launcher.modpack import FORMAT_MODRINTH
-
         return str(self.export_pack_format.currentData() or FORMAT_MODRINTH)
 
     def _on_export_format_changed(self, _index: int = 0) -> None:
         """A different format is a different pack: recount before the user commits."""
         self._fill_export()
 
+    def export_pack_name(self) -> str:
+        """The name the page will write into the pack (the field is authoritative)."""
+        return self.export_name_edit.text().strip()
+
+    def export_pack_version(self) -> str:
+        return self.export_version_edit.text().strip()
+
+    def _export_selection(self) -> frozenset[str]:
+        """The ticked content categories - exactly what the archive may carry."""
+        return frozenset(
+            key
+            for key, (check, _stats) in self.export_category_rows.items()
+            if check.isChecked()
+        )
+
+    def _embed_files(self, fmt: str) -> bool:
+        """打包资源文件 only means something for Modrinth (CurseForge has no URL list)."""
+        return fmt == FORMAT_MODRINTH and self.export_embed_check.isChecked()
+
+    def _export_preset(self):
+        """The saved 导出 settings for this instance, or None."""
+        if self.instance_id is None:
+            return None
+        cfg, _ = config.load()
+        return cfg.export_presets.get(self.instance_id)
+
+    def _store_export_preset(self, preset) -> None:
+        if self.instance_id is None:
+            return
+        cfg, _ = config.load()
+        cfg.export_presets[self.instance_id] = preset
+        config.save(cfg)
+
+    def _remember_export_folder(self, folder: Path) -> None:
+        """Remember where this instance's pack was written (PCL's ``configPackPath``)."""
+        from launcher.config import ExportPreset
+
+        self._export_dest = Path(folder)
+        self._export_dest_invalid = ""
+        preset = self._export_preset() or ExportPreset()
+        self._store_export_preset(preset.model_copy(update={"folder": str(folder)}))
+        self._sync_export_destination()
+
+    def _ensure_export_defaults(self) -> None:
+        """First fill for this instance: the name, version and categories start from the defaults.
+
+        Only the *destination folder* is restored automatically; the form itself waits for 读取配置.
+        That is what makes the two config buttons mean something, and it keeps a saved preset from
+        silently deciding what a later export contains.
+        """
+        if self._export_instance == self.instance_id:
+            return
+        self._export_instance = self.instance_id
+        self._export_dest = None
+        self._export_dest_invalid = ""
+        self._export_plan = None
+        display = ""
+        if self.instance is not None:
+            display = self.instance.name or self.instance.id
+        elif self.instance_id:
+            display = self.instance_id
+        self.export_name_edit.blockSignals(True)
+        self.export_version_edit.blockSignals(True)
+        try:
+            self.export_name_edit.setText(_safe_export_filename(display) or "pack")
+            self.export_version_edit.setText("1.0.0")
+        finally:
+            self.export_name_edit.blockSignals(False)
+            self.export_version_edit.blockSignals(False)
+        for key, (check, _stats) in self.export_category_rows.items():
+            check.blockSignals(True)
+            check.setChecked(key in DEFAULT_EXPORT_CATEGORIES)
+            check.blockSignals(False)
+        self.export_embed_check.blockSignals(True)
+        self.export_embed_check.setChecked(False)
+        self.export_embed_check.blockSignals(False)
+        preset = self._export_preset()
+        if preset is not None and preset.folder:
+            folder = Path(preset.folder)
+            if folder.is_dir():
+                self._export_dest = folder
+            else:
+                self._export_dest_invalid = preset.folder
+
+    def _sync_export_categories(self, plan) -> None:
+        """One line per category: how many files and how much space ticking it would add."""
+        stats = plan.category_stats()
+        for key, (check, stats_label) in self.export_category_rows.items():
+            stat = stats.get(key)
+            files = stat.files if stat is not None else 0
+            text = (
+                tr(
+                    "instances.detail.export.category.stat",
+                    files,
+                    human_size(stat.bytes if stat is not None else 0),
+                )
+                if files
+                else tr("instances.detail.export.category.empty")
+            )
+            stats_label.setText(text)
+            check.setAccessibleName(f"{check.text()} · {text}")
+
+    def _sync_export_advanced(self, fmt: str) -> None:
+        embeddable = fmt == FORMAT_MODRINTH
+        self.export_embed_check.setEnabled(embeddable)
+        self.export_embed_hint.setText(
+            tr(
+                "instances.detail.export.embed.hint"
+                if embeddable
+                else "instances.detail.export.embed.curseforge"
+            )
+        )
+
+    def _sync_export_note(self) -> None:
+        fmt = self._pack_format()
+        if self._embed_files(fmt):
+            key = "instances.detail.export.pack.note.embed"
+        elif fmt == FORMAT_CURSEFORGE:
+            key = "instances.detail.export.pack.note.curseforge"
+        else:
+            key = "instances.detail.export.pack.note"
+        self.export_pack_note.setText(tr(key))
+
+    def _sync_export_summary(self) -> None:
+        plan = self._export_plan
+        if plan is None:
+            self.export_pack_button.setEnabled(False)
+            return
+        selected = self._export_selection()
+        chosen = [entry for entry in plan.all_entries if entry.category in selected]
+        if not chosen:
+            self.export_pack_summary.setText(
+                tr("instances.detail.export.pack.summary.none")
+            )
+            self.export_pack_button.setEnabled(False)
+            self._sync_export_note()
+            return
+        self.export_pack_summary.setText(
+            tr(
+                "instances.detail.export.pack.summary.selected",
+                len(chosen),
+                human_size(sum(entry.size for entry in chosen)),
+            )
+        )
+        self.export_pack_button.setEnabled(True)
+        self._sync_export_note()
+
+    def _sync_export_destination(self) -> None:
+        dest = self._export_dest
+        if dest is not None and dest.is_dir():
+            self.export_destination.setText(
+                tr("instances.detail.export.destination", str(dest))
+            )
+            self.export_destination.setToolTip(str(dest))
+        else:
+            invalid = self._export_dest_invalid or (
+                str(self._export_dest) if self._export_dest is not None else ""
+            )
+            if invalid:
+                self.export_destination.setText(
+                    tr("instances.detail.export.destination.invalid", invalid)
+                )
+                self.export_destination.setToolTip(invalid)
+            else:
+                self.export_destination.setText(
+                    tr("instances.detail.export.destination.none")
+                )
+                self.export_destination.setToolTip("")
+
+    def _on_export_name_changed(self, _text: str = "") -> None:
+        self._sync_export_summary()
+
+    def _on_export_category_changed(self, _checked: bool = False) -> None:
+        self._sync_export_summary()
+
+    def _on_export_embed_changed(self, _checked: bool = False) -> None:
+        self._sync_export_note()
+
+    def choose_export_folder(self) -> None:
+        """更改位置…: pick the destination folder this instance's pack is written into."""
+        start = str(self._export_dest) if self._export_dest is not None else str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(
+            self, tr("instances.detail.export.change_dest"), start
+        )
+        if not chosen:
+            return
+        self._remember_export_folder(Path(chosen))
+
+    def _suggested_pack_name(self, fmt: str) -> str:
+        """``名称 版本.mrpack`` (PCL's file name rule: a space, and no version when it is empty)."""
+        suffix = ".mrpack" if fmt == FORMAT_MODRINTH else ".zip"
+        fallback = ""
+        if self.instance is not None:
+            fallback = self.instance.name or self.instance.id
+        name = self.export_pack_name() or fallback or (self.instance_id or "pack")
+        version = self.export_pack_version()
+        base = " ".join(
+            part for part in (_safe_export_filename(name), version) if part
+        )
+        return base + suffix
+
+    def _export_running(self) -> bool:
+        """True while *this instance* already has an export task (the page's own or another one)."""
+        task = self._pack_task
+        if task is not None and task.is_running():
+            return True
+        center = task_center_of(self)
+        if center is None or self.instance_id is None:
+            return False
+        expected = tr("tasks.title.export", self.instance_id)
+        for other in center.tasks():
+            if other is task or other.kind != "export" or not other.is_running():
+                continue
+            if other.title() == expected:
+                return True
+        return False
+
+    def _warn_export_running(self) -> None:
+        """PCL refuses a second export of the same instance instead of starting a duplicate."""
+        text = tr("instances.detail.export.busy")
+        set_app_status(self, text, "warning")
+        inwindow_dialog.information(
+            self, tr("instances.detail.export.busy.title"), text
+        )
+
+    # ---------- 导出: config ----------
+
+    def save_export_config(self) -> None:
+        """保存配置: store this form for this instance (name, version, categories, embed, folder)."""
+        from launcher.config import ExportPreset
+
+        if self.instance_id is None:
+            return
+        self._store_export_preset(
+            ExportPreset(
+                name=self.export_pack_name(),
+                version=self.export_pack_version(),
+                categories=sorted(self._export_selection()),
+                embed_files=self.export_embed_check.isChecked(),
+                folder=str(self._export_dest) if self._export_dest else "",
+            )
+        )
+        set_app_status(self, tr("instances.detail.export.config.saved"))
+
+    def load_export_config(self) -> None:
+        """读取配置: apply the stored form to this page (nothing is exported)."""
+        preset = self._export_preset()
+        if preset is None:
+            set_app_status(
+                self, tr("instances.detail.export.config.none"), "warning"
+            )
+            return
+        self.export_name_edit.setText(preset.name)
+        self.export_version_edit.setText(preset.version)
+        for key, (check, _stats) in self.export_category_rows.items():
+            check.blockSignals(True)
+            check.setChecked(key in set(preset.categories))
+            check.blockSignals(False)
+        self.export_embed_check.blockSignals(True)
+        self.export_embed_check.setChecked(preset.embed_files)
+        self.export_embed_check.blockSignals(False)
+        if preset.folder:
+            folder = Path(preset.folder)
+            self._export_dest = folder if folder.is_dir() else None
+            self._export_dest_invalid = "" if folder.is_dir() else preset.folder
+        self._sync_export_summary()
+        self._sync_export_destination()
+        set_app_status(self, tr("instances.detail.export.config.loaded"))
+
+    # ---------- 导出: filling ----------
+
     def _fill_export(self) -> None:
-        """Show what the selected format would carry: mods, overrides, file count and total size.
+        """Show the pack the current selection would write: category counts and the total.
 
         The scan is local (counts and sizes only), so this runs on the GUI thread without a network
         round trip or a pause - the same reason the page can afford to refresh it on every format
-        change. While an export runs the labels belong to the worker and are left alone.
+        change. It scans *all* categories at once so every checkbox can show its size even while it
+        is unticked; the summary only counts the ticked ones.
         """
-        from launcher.modpack import FORMAT_CURSEFORGE, plan_export
+        from launcher.modpack import plan_export
 
         if self.instance_id is None or self.resolved is None:
+            self._export_ready = False
+            self.export_loading.setText(tr("instances.msg.need_select"))
+            self.export_loading.setVisible(True)
             self.export_pack_summary.setText(tr("instances.detail.value.none"))
             self.export_pack_button.setEnabled(False)
             self.export_pack_format.setEnabled(False)
+            for widget in (
+                self.export_name_edit,
+                self.export_version_edit,
+                self.export_save_button,
+                self.export_load_button,
+                self.export_dest_button,
+            ):
+                widget.setEnabled(False)
             return
+        self._export_ready = True
+        self.export_loading.setVisible(False)
+        self._ensure_export_defaults()
+        fmt = self._pack_format()
+        busy = self._export_running()
+        self.export_pack_format.setEnabled(not busy)
+        for widget in (
+            self.export_name_edit,
+            self.export_version_edit,
+            self.export_save_button,
+            self.export_dest_button,
+        ):
+            widget.setEnabled(not busy)
+        self.export_load_button.setEnabled(not busy and self._export_preset() is not None)
         if self._pack_task is not None and self._pack_task.is_running():
             return
-        self.export_pack_format.setEnabled(True)
-        fmt = self._pack_format()
         try:
-            plan = plan_export(self.instance_id, self.game_dir, fmt=fmt)
+            plan = plan_export(
+                self.instance_id,
+                self.game_dir,
+                fmt=fmt,
+                categories=EXPORT_CATEGORIES,
+            )
         except Exception as exc:  # noqa: BLE001 - a broken instance must not break the page
+            self._export_plan = None
             self.export_pack_summary.setText(
                 tr("instances.detail.export.pack.summary.failed", str(exc))
             )
             self.export_pack_button.setEnabled(False)
             return
-        if not plan.entries:
-            self.export_pack_summary.setText(tr("instances.detail.export.pack.summary.none"))
-            self.export_pack_button.setEnabled(False)
-            return
-        self.export_pack_summary.setText(
-            tr(
-                "instances.detail.export.pack.summary",
-                plan.mod_count,
-                plan.mod_count,
-                plan.other_count,
-                human_size(plan.total_bytes),
-            )
-        )
-        self.export_pack_button.setEnabled(True)
-        self.export_pack_note.setText(
-            tr(
-                "instances.detail.export.pack.note.curseforge"
-                if fmt == FORMAT_CURSEFORGE
-                else "instances.detail.export.pack.note"
-            )
-        )
+        self._export_plan = plan
+        self._sync_export_categories(plan)
+        self._sync_export_advanced(fmt)
+        self._sync_export_summary()
+        self._sync_export_destination()
+
+    # ---------- 导出: running ----------
 
     def export_pack(self) -> None:
-        """导出为整合包: ask where with the native dialog, then hand the work to a task."""
-        from launcher.modpack import FORMAT_MODRINTH
-
+        """开始导出: write the pack where the remembered folder says, else ask once."""
         if self._require_instance() is None:
             return
-        fmt = self._pack_format()
-        suffix = ".mrpack" if fmt == FORMAT_MODRINTH else ".zip"
-        filter_key = (
-            "instances.detail.export.pack.filter.modrinth"
-            if fmt == FORMAT_MODRINTH
-            else "instances.detail.export.pack.filter.curseforge"
-        )
-        base = self.instance.name if self.instance is not None else (self.instance_id or "")
-        suggested = _safe_export_filename(base) + suffix
-        dest, _selected = QFileDialog.getSaveFileName(
-            self,
-            tr("instances.detail.export.pack.title"),
-            suggested,
-            tr(filter_key),
-        )
-        if not dest:
+        if self._export_running():
+            self._warn_export_running()
             return
-        path = Path(dest)
-        if path.suffix.lower() != suffix:
-            path = path.with_name(path.name + suffix)
-        self.export_pack_to(path, fmt=fmt)
+        if not self._export_selection():
+            self._sync_export_summary()
+            set_app_status(self, tr("instances.detail.export.pack.summary.none"), "warning")
+            return
+        fmt = self._pack_format()
+        dest: Path | None = None
+        if self._export_dest is not None and self._export_dest.is_dir():
+            dest = self._export_dest / self._suggested_pack_name(fmt)
+            if dest.exists():
+                accepted = inwindow_dialog.confirm(
+                    self,
+                    tr("instances.detail.export.overwrite.title"),
+                    tr("instances.detail.export.overwrite.body", str(dest)),
+                    accept_text=tr("instances.detail.export.overwrite.accept"),
+                )
+                if accepted is not inwindow_dialog.Outcome.ACCEPTED:
+                    return
+        else:
+            suffix = ".mrpack" if fmt == FORMAT_MODRINTH else ".zip"
+            filter_key = (
+                "instances.detail.export.pack.filter.modrinth"
+                if fmt == FORMAT_MODRINTH
+                else "instances.detail.export.pack.filter.curseforge"
+            )
+            chosen, _selected = QFileDialog.getSaveFileName(
+                self,
+                tr("instances.detail.export.pack.title"),
+                self._suggested_pack_name(fmt),
+                tr(filter_key),
+            )
+            if not chosen:
+                return
+            dest = Path(chosen)
+            if dest.suffix.lower() != suffix:
+                dest = dest.with_name(dest.name + suffix)
+        self._remember_export_folder(dest.parent)
+        self.export_pack_to(dest, fmt=fmt)
 
-    def export_pack_to(self, dest: Path, *, fmt: str | None = None) -> None:
+    def export_pack_to(
+        self,
+        dest: Path,
+        *,
+        fmt: str | None = None,
+        name: str | None = None,
+        version: str | None = None,
+        categories: frozenset[str] | None = None,
+        embed_files: bool | None = None,
+    ) -> None:
         """Start one pack export into ``dest``: worker thread, task row and inline progress."""
-        from launcher.modpack import FORMAT_CURSEFORGE, export_modpack
-
         instance_id = self.instance_id
         if instance_id is None or self.resolved is None:
             return
-        if self._pack_task is not None and self._pack_task.is_running():
+        if self._export_running():
+            self._warn_export_running()
             return  # one pack export at a time; the running row owns 取消
         chosen = fmt or self._pack_format()
+        selected = self._export_selection() if categories is None else categories
+        embed = self._embed_files(chosen) if embed_files is None else bool(embed_files)
+        pack_name = self.export_pack_name() if name is None else name
+        pack_version = self.export_pack_version() if version is None else version
         center = task_center_of(self)
         self._pack_fmt = chosen
+        self._pack_embed = embed
         self._pack_dest = Path(dest)
         self._pack_stop = threading.Event()
         self._pack_rate = RateTracker()
@@ -4715,6 +6313,7 @@ class InstanceDetail(QWidget):
         )
         self.export_pack_button.setEnabled(False)
         self.export_pack_format.setEnabled(False)
+        self.export_open_folder_visible = False
         self.export_pack_open_button.setVisible(False)
         self.export_pack_result.setVisible(False)
         self.export_pack_state.setText(
@@ -4739,6 +6338,10 @@ class InstanceDetail(QWidget):
                 self._pack_dest,
                 self.game_dir,
                 fmt=chosen,
+                name=pack_name,
+                version=pack_version,
+                categories=selected,
+                embed_files=embed,
                 on_progress=bridge,
                 should_stop=self._pack_stop.is_set,
             ),
@@ -4830,6 +6433,7 @@ class InstanceDetail(QWidget):
         self.export_pack_format.setEnabled(True)
         path = Path(result.path)
         self._pack_last = path
+        self._remember_export_folder(path.parent)
         self.export_pack_open_button.setVisible(True)
         lines = [
             str(path),
@@ -4839,6 +6443,8 @@ class InstanceDetail(QWidget):
                 result.overrides,
             ),
         ]
+        if getattr(result, "embedded", False):
+            lines.append(tr("instances.detail.export.pack.report.embedded"))
         if result.degraded:
             lines.append(tr("instances.detail.export.pack.offline"))
         self.export_pack_result.setText("\n".join(lines))

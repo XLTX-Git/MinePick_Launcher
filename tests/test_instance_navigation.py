@@ -310,11 +310,11 @@ def test_detail_sidebar_is_eleven_items_in_two_groups(app, monkeypatch, ws_tmp):
         detail.tabs[TAB_MODIFY].click()
         app.processEvents()
         assert detail.stack.currentIndex() == TAB_MODIFY
-        assert detail.modify_values["game_version"].text() == "1.21.11"
-        assert detail.modify_values["loader"].text() == "Fabric 0.19.3"
-        assert detail.modify_values["point_to"].text() == "fabric-loader-0.19.3-1.21.11"
-        assert detail.change_version_button.isEnabled()
-        assert detail.change_loader_button.isEnabled()
+        assert detail.modify_rows["minecraft"].value_text() == "1.21.11"
+        assert detail.modify_rows["fabric"].value_text() == "0.19.3"
+        assert detail.modify_summary_subtitle.text() == "1.21.11 · Fabric 0.19.3"
+        assert detail.modify_rows["minecraft"].edit_button.isEnabled()
+        assert detail.modify_rows["fabric"].change_button.isEnabled()
 
         # 导出 offers the zip and the standard modpack (format chooser + content summary), and
         # neither is a dead link: the pack section names what will be packed.
@@ -328,12 +328,13 @@ def test_detail_sidebar_is_eleven_items_in_two_groups(app, monkeypatch, ws_tmp):
         assert i18n.tr("instances.detail.export.pack.hint") in export_labels
         assert detail.export_button.text() == i18n.tr("instances.detail.export.button")
         assert detail.export_pack_button.text() == i18n.tr(
-            "instances.detail.export.pack.button"
+            "instances.detail.export.start"
         )
 
         # The diagnosis page owns the log viewer and shows the file contents directly.
         detail.tabs[TAB_DIAGNOSIS].click()
-        app.processEvents()
+        _settle(app, window)  # the analysis runs on a worker thread now
+        assert detail._diagnosis_ready
         assert detail.log_view.isVisible()
         assert "instance log line" in detail.log_view.toPlainText()
 
