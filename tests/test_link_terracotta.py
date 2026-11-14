@@ -332,6 +332,44 @@ def test_close_room_returns_to_waiting_but_keeps_the_process(fake, session_facto
     assert session.is_polling()
 
 
+def test_closing_our_own_room_also_ends_the_core_it_started(fake, session_factory) -> None:
+    """A core this launcher started must not outlive the room: it otherwise sits in the task manager
+    until the user kills it by hand, which is exactly what happened after 关闭大厅."""
+    fake.set_state("host-ok", index=2, room=ROOM, profiles=[])
+    session = session_factory(fake)
+    session._process._started_here = True
+    assert wait_until(lambda: session.state() is LinkState.HOST_READY)
+    ended: list[int] = []
+    from launcher.link import components
+
+    original = components.terminate_core_processes
+    components.terminate_core_processes = lambda: ended.append(1) or 1
+    try:
+        session.close_room()
+    finally:
+        components.terminate_core_processes = original
+    assert ended == [1], "closing our own room must end the core process"
+    assert session.state() is LinkState.IDLE
+
+
+def test_closing_a_room_on_a_borrowed_core_leaves_that_core_alone(fake, session_factory) -> None:
+    """Another launcher may be hosting on the same core; ending it would drop their room."""
+    fake.set_state("host-ok", index=2, room=ROOM, profiles=[])
+    session = session_factory(fake)
+    session._process._started_here = False
+    assert wait_until(lambda: session.state() is LinkState.HOST_READY)
+    ended: list[int] = []
+    from launcher.link import components
+
+    original = components.terminate_core_processes
+    components.terminate_core_processes = lambda: ended.append(1) or 1
+    try:
+        session.close_room()
+    finally:
+        components.terminate_core_processes = original
+    assert ended == [], "a core this launcher did not start is not ours to end"
+
+
 def test_cancel_returns_to_idle_and_resets(fake, session_factory) -> None:
     session = session_factory(fake)
     assert wait_until(lambda: session.state() is LinkState.IDLE)

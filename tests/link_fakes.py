@@ -234,12 +234,20 @@ class _MirrorHandler(BaseHTTPRequestHandler):
 class FakeCore:
     """Stand-in for :class:`launcher.link.terracotta.TerracottaProcess`."""
 
+    #: Set by a test that wants a core the launcher started itself; the default models attaching to a
+    #: core that was already up, which is the case that must survive 关闭大厅.
+    started_by_us = False
+
     def __init__(self, port: int | None = None) -> None:
         self.port = port
         self.ensure_calls = 0
         self.existing_calls = 0
         self.status_calls = 0
         self.running = port is not None
+        self._started_here = self.started_by_us
+
+    def started_here(self) -> bool:
+        return self._started_here
 
     def existing_port(self) -> int | None:
         self.existing_calls += 1

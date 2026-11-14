@@ -55,6 +55,7 @@ from pathlib import Path
 import httpx
 
 from launcher import paths
+from launcher.link import mirrors as mirror_module
 from launcher.link.components import (
     ComponentError,
     component_status,
@@ -108,7 +109,10 @@ def _stun_verdict_for(nat_type: NatType | None) -> StunVerdict:
     return StunVerdict.SYMMETRIC
 
 
-def _install_with_saved_mirror(progress: ProgressCallback) -> ComponentStatus:
+def _install_with_saved_mirror(
+    progress: ProgressCallback,
+    on_latency: mirror_module.LatencyCallback | None = None,
+) -> ComponentStatus:
     """Install the payload, preferring the mirror saved on 工具 › 联机 (``""`` = the race).
 
     Read at download time, not at construction time: the session is created once at startup and the
@@ -116,7 +120,7 @@ def _install_with_saved_mirror(progress: ProgressCallback) -> ComponentStatus:
     installed is therefore never a reason to download it again - :func:`launcher.link.components.install`
     returns the existing installation before it looks at any mirror.
     """
-    return install(progress, preferred=configured_key())
+    return install(progress, preferred=configured_key(), on_latency=on_latency)
 
 
 LOCK_DIRNAME = "terracotta"
@@ -273,6 +277,9 @@ class TerracottaProcess:
         self._sleep = sleep
         self._clock = clock
         self._port: int | None = None
+        #: True when ensure_running launched the bootstrapper, False when it attached to one that was
+        #: already up (another launcher, or an earlier session). Only a core we started is ours to end.
+        self._started_here = False
 
     def _lock(self) -> Path:
         return self._lock_path if self._lock_path is not None else terracotta_lock_path()
@@ -346,8 +353,13 @@ class TerracottaProcess:
                 port_file.unlink(missing_ok=True)
                 raise TerracottaError("tools.fail.start_timeout", "port file did not appear")
             self._port = port
+            self._started_here = True
             port_file.unlink(missing_ok=True)
             return port
+
+    def started_here(self) -> bool:
+        """Whether this launcher started the core it is talking to."""
+        return self._started_here
 
     def status(self) -> ProcessStatus:
         """A verified status (one ``/meta`` request); called from the self-check worker."""
@@ -790,8 +802,22 @@ class TerracottaLinkSession:
         self._leave_remote("cancel")
 
     def close_room(self) -> None:
-        """Close the room itself (``/state/ide``); the shared process keeps running."""
+        """Close the room, then end the core process if this launcher started it.
+
+        The core is shared on purpose - another launcher may be hosting its own room on the same
+        instance - so a core that was already running when we joined is left alone and 停用联机功能
+        remains the way to force it. But a core this launcher started and nobody else is using is ours
+        to end, and leaving it behind means an 8 MB process outlives the room the user just closed.
+        """
         self._leave_remote("close")
+        process = self._process
+        if process is not None and process.started_here():
+            try:
+                from launcher.link.components import terminate_core_processes
+
+                terminate_core_processes()
+            except Exception:
+                logger.debug("结束联机核心失败", exc_info=True)
 
     def _leave_remote(self, reason: str) -> None:
         with self._lock:
@@ -873,8 +899,16 @@ class TerracottaLinkSession:
         self._notify()
         return removed
 
-    def download_core(self, progress_cb: ProgressCallback) -> None:
-        """Install the payload on a worker thread; state moves to ``IDLE`` when it lands."""
+    def download_core(
+        self,
+        progress_cb: ProgressCallback,
+        on_latency: mirror_module.LatencyCallback | None = None,
+    ) -> None:
+        """Install the payload on a worker thread; state moves to ``IDLE`` when it lands.
+
+        ``on_latency`` receives every mirror probe's result (including the slower ones that finish
+        after the chosen mirror is already downloading), so the channel rows can fill in live.
+        """
         notify_ready = False
         with self._lock:
             if self._disposed:
@@ -889,7 +923,7 @@ class TerracottaLinkSession:
                 self._failure_key = ""
                 thread = threading.Thread(
                     target=self._download_worker,
-                    args=(progress_cb,),
+                    args=(progress_cb, on_latency),
                     name="terracotta-link-download",
                     daemon=True,
                 )
@@ -899,7 +933,11 @@ class TerracottaLinkSession:
             return
         thread.start()
 
-    def _download_worker(self, progress_cb: ProgressCallback) -> None:
+    def _download_worker(
+        self,
+        progress_cb: ProgressCallback,
+        on_latency: mirror_module.LatencyCallback | None = None,
+    ) -> None:
         def progress(done: int, total: int) -> None:
             if self._disposed:
                 return
@@ -908,8 +946,20 @@ class TerracottaLinkSession:
             except Exception:
                 logger.debug("下载进度回调失败", exc_info=True)
 
+        def latency(key: str, milliseconds: int | None) -> None:
+            if self._disposed or on_latency is None:
+                return
+            try:
+                on_latency(key, milliseconds)
+            except Exception:
+                logger.debug("镜像测速回调失败: %s", key, exc_info=True)
+
         try:
-            status = self._installer(progress)
+            status = (
+                self._installer(progress)
+                if on_latency is None
+                else self._installer(progress, on_latency=latency)
+            )
         except ComponentError as exc:
             logger.warning("联机核心安装失败: %s", exc.detail or exc.key)
             with self._lock:
