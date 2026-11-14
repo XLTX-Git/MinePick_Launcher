@@ -358,6 +358,35 @@ def test_download_retries_a_5xx_then_writes_the_file(monkeypatch, ws_tmp) -> Non
     assert len(calls) == 2
 
 
+def test_download_reports_progress_while_it_runs(ws_tmp) -> None:
+    """A CurseForge transfer reports bytes as they arrive, not once at the end.
+
+    The resource page shows every install as a task in the download list; without these callbacks a
+    CurseForge one sat at "0 B / …" for the whole transfer while Modrinth's moved.
+    """
+    body = b"x" * 5000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-length": str(len(body))})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    seen: list[tuple[int, int]] = []
+    cf_file = cf.CfFile(id=7, name="a.jar", url="https://x/a.jar", size=len(body))
+
+    path = cf.download_file(
+        cf_file,
+        ws_tmp,
+        client=client,
+        progress=lambda p: seen.append((p.done_bytes, p.total_bytes)),
+    )
+
+    assert path.read_bytes() == body
+    assert seen, "no progress was reported at all"
+    assert seen[0] == (0, len(body)), "the size must be announced before the first chunk"
+    assert seen[-1][0] == len(body), "the last report must carry the whole file"
+    assert all(total == len(body) for _done, total in seen)
+
+
 def test_download_can_write_one_exact_save_as_path(ws_tmp) -> None:
     """The resources page's save-as choice is honoured byte for byte, name and folder included."""
     client = httpx.Client(

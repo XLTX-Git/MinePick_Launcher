@@ -2437,7 +2437,9 @@ class _ContentTab(QWidget):
             if source == "curseforge":
                 from launcher.mods import curseforge as cf
 
-                path = cf.download_file(picked, Path(dest).parent, dest=dest)
+                path = cf.download_file(
+                    picked, Path(dest).parent, dest=dest, progress=_progress
+                )
                 return ModInfo(slug=slug, title=title or slug), path
             install = {
                 "mod": install_mod,

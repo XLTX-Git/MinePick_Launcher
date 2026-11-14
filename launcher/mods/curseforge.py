@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -44,6 +45,7 @@ from launcher.i18n import describe_network_error, tr_core
 from launcher.meta.manifest import _new_client
 from launcher.mods.loaders import ModsError
 from launcher.mods.models import ModSearchHit, SearchHits
+from launcher.net.downloader import DownloadProgress
 
 CURSEFORGE_API = "https://api.curseforge.com"
 #: Environment variable that overrides the stored and bundled keys. Blank means unset, so an
@@ -385,6 +387,7 @@ def download_file(
     *,
     client: httpx.Client | None = None,
     dest: Path | None = None,
+    progress: Callable[[DownloadProgress], None] | None = None,
 ) -> Path:
     """Download the file into the target directory; return the on-disk path.
 
@@ -411,9 +414,22 @@ def download_file(
                     "GET", cf_file.url, follow_redirects=True
                 ) as resp:
                     resp.raise_for_status()
+                    total = int(resp.headers.get("content-length") or 0)
+                    done = 0
+                    if progress is not None:
+                        # Announce the size before the first chunk: the task row shows "0 B / …"
+                        # from the start instead of waiting for the transfer to finish.
+                        progress(DownloadProgress(done_bytes=0, total_bytes=total, current=name))
                     with tmp.open("wb") as f:
                         for chunk in resp.iter_bytes(1 << 18):
                             f.write(chunk)
+                            done += len(chunk)
+                            if progress is not None:
+                                progress(
+                                    DownloadProgress(
+                                        done_bytes=done, total_bytes=total, current=name
+                                    )
+                                )
                 tmp.replace(target)
                 return target
             except httpx.HTTPStatusError as exc:
