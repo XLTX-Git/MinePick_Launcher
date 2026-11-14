@@ -161,9 +161,13 @@ def plan_tasks(
     version: VersionJson,
     game_dir: Path,
     platform: Platform,
-    asset_index: AssetIndex,
+    asset_index: AssetIndex | None = None,
 ) -> list[DownloadTask]:
-    """Generate all pending download tasks for this version (the downloader skips valid files that already exist)."""
+    """Generate all pending download tasks for this version (the downloader skips valid files that already exist).
+
+    ``asset_index`` may be None: a repair of an incomplete instance cannot always obtain the index, and
+    the client jar and libraries are still worth completing on their own.
+    """
     gp = paths.GamePaths(game_dir)
     tasks: list[DownloadTask] = []
     version_dir = gp.versions_dir / version.id
@@ -187,8 +191,8 @@ def plan_tasks(
     for resolved in resolve_libraries(version.libraries, platform):
         tasks.append(_library_task(resolved, gp.libraries_dir))
 
-    # Assets
-    for _name, obj in missing_assets(asset_index, gp.assets_dir / "objects"):
+    # Assets (skipped when the index could not be obtained)
+    for _name, obj in (missing_assets(asset_index, gp.assets_dir / "objects") if asset_index else ()):
         tasks.append(
             DownloadTask(
                 url=ASSET_BASE + obj.hash[:2] + "/" + obj.hash,

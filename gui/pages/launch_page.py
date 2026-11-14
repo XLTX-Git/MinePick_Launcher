@@ -955,14 +955,20 @@ class LaunchPage(QWidget):
     def _on_launch_error(self, message: str) -> None:
         text = tr("launch.msg.fail", message)
         set_app_status(self, text, "error")
-        show_fatal(self, text)  # fatal error dialog
         cfg, _ = config.load()
-        if not cfg.auto_crash_analysis:
-            return
-        from gui.dialogs.crash_dialog import context_for_launch, diagnose_after_exit
+        # One dialog, not two. This used to show the fatal box and then the crash diagnosis on top of
+        # it; the two cards stacked inside the same overlay and the upper one stopped taking clicks,
+        # so the only way out was to kill the launcher. The diagnosis already carries the error text,
+        # so it is the richer of the pair - and the fatal box is what shows when analysis is off or
+        # has nothing to say.
+        shown = None
+        if cfg.auto_crash_analysis:
+            from gui.dialogs.crash_dialog import context_for_launch, diagnose_after_exit
 
-        game_dir = cfg.game_dir or paths.default_game_dir()
-        context = context_for_launch(
-            version_id="", game_dir=game_dir, error_text=text, memory_gb=cfg.memory_gb
-        )
-        diagnose_after_exit(self.window(), context)
+            game_dir = cfg.game_dir or paths.default_game_dir()
+            context = context_for_launch(
+                version_id="", game_dir=game_dir, error_text=text, memory_gb=cfg.memory_gb
+            )
+            shown = diagnose_after_exit(self.window(), context)
+        if shown is None:
+            show_fatal(self, text)

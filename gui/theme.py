@@ -511,6 +511,11 @@ def resolve_theme(theme: str) -> str:
     return system_theme() if theme == "system" else theme
 
 
+def current_radius_lg() -> int:
+    """The large corner radius, in pixels, of the theme currently in force."""
+    return _last_radius_lg
+
+
 def radius_scale(radius: str | None) -> tuple[int, int, int]:
     return RADIUS_SCALES.get(radius or DEFAULT_RADIUS, RADIUS_SCALES[DEFAULT_RADIUS])
 
@@ -533,6 +538,10 @@ def current_theme() -> str:
 # style themselves - because the application stylesheet is not adopted for them on every
 # platform - read their colours from here, so colour still has exactly one source of truth.
 _last_tokens: dict[str, str] = {}
+#: RADIUS_LG in pixels for the theme currently applied. Widgets that have to clip themselves to the
+#: sheet's rounded shape (the progress bar) cannot read it from the tokens, because the radius is
+#: substituted into the sheet, not published as a colour.
+_last_radius_lg: int = 8
 
 
 def current_tokens() -> dict[str, str]:
@@ -631,7 +640,9 @@ def stylesheet_text(
     # longest placeholders first so __ACCENT__ never eats the prefixed variants
     for token in sorted(palette, key=len, reverse=True):
         text = text.replace(f"__{token}__", palette[token])
+    global _last_radius_lg
     extra_small, small, large = radius_scale(radius)
+    _last_radius_lg = large
     text = text.replace("__RADIUS_XS__", f"{extra_small}px")
     text = text.replace("__RADIUS_SM__", f"{small}px")
     text = text.replace("__RADIUS_LG__", f"{large}px")
@@ -654,7 +665,7 @@ def apply_theme(
     so without this guard a session that touches a few settings pays seconds per change - and the test
     suite, which drives those saves, spends minutes in it.
     """
-    global _last_applied, _last_tokens, _last_theme
+    global _last_applied, _last_tokens, _last_theme, _last_radius_lg
     app = QApplication.instance()
     if app is None:
         return

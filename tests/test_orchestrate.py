@@ -74,3 +74,32 @@ def test_resolve_launch_account_offline_locked(ws_tmp, monkeypatch):
     assert account.username == "Steve"
     assert account.type == "offline"
 
+def test_the_launch_call_only_passes_keywords_build_argv_accepts() -> None:
+    """The launch path broke silently once: orchestrate passed ``isolated=`` after the parameter had been
+    renamed to ``launch_dir=``, so every launch from the window died with a TypeError while these tests
+    stayed green - they only ever exercised the error paths.
+
+    Comparing the call site's keywords against the real signature catches that class of rename without
+    standing up a whole version, a Java install and a natives extraction just to reach one call.
+    """
+    import ast
+    import inspect
+    import pathlib
+
+    from launcher.launch.command import build_argv
+
+    source = pathlib.Path("launcher/launch/orchestrate.py").read_text(encoding="utf-8")
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "build_argv"
+    ]
+    assert calls, "orchestrate no longer calls build_argv - update this test"
+
+    accepted = set(inspect.signature(build_argv).parameters)
+    for call in calls:
+        used = {keyword.arg for keyword in call.keywords if keyword.arg}
+        unknown = used - accepted
+        assert not unknown, (
+            f"orchestrate passes {sorted(unknown)} to build_argv, which takes {sorted(accepted)}"
+        )

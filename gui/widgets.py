@@ -19,7 +19,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QRectF, Qt, Signal
+from PySide6.QtGui import QPainterPath, QRegion
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -1037,6 +1038,34 @@ class KeyboardFocusTracker(QObject):
 PROGRESS_TEXT_MIN_WIDTH = 44
 
 
+class _RoundedBar(QProgressBar):
+    """A progress bar whose fill is clipped to the frame's rounded left end.
+
+    Qt paints ``::chunk`` as a rectangle and does not clip it to the frame's border radius, so a square
+    fill covers the left arc and the control reads as square on that side even though the stylesheet
+    rounds it. The mask keeps the fill straight (the shape tests pin that) while the corner the user
+    actually sees stays round.
+    """
+
+    RADIUS = 4
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        path = QPainterPath()
+        path.addRoundedRect(
+            QRectF(0, 0, self.width(), self.height()),
+            self.RADIUS,
+            self.RADIUS,
+            Qt.SizeMode.AbsoluteSize,
+        )
+        # Square off the right half: the percentage label continues the control there.
+        square = QPainterPath()
+        square.addRect(
+            QRectF(self.width() - self.RADIUS, 0, self.RADIUS, self.height())
+        )
+        self.setMask(QRegion(path.united(square).toFillPolygon().toPolygon()))
+
+
 def build_download_progress(name: str) -> tuple[QWidget, QProgressBar, QLabel]:
     """A download progress row. Returns ``(row, bar, label)``.
 
@@ -1068,7 +1097,7 @@ def build_download_progress(name: str) -> tuple[QWidget, QProgressBar, QLabel]:
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
 
-    bar = QProgressBar()
+    bar = _RoundedBar()
     bar.setObjectName(name)
     # Qt's own text would land on the accent fill; the label carries it instead.
     bar.setTextVisible(False)

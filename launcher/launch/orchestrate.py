@@ -177,7 +177,7 @@ def prepare_launch(
         demo=demo,
         window_width=window_width,
         window_height=window_height,
-        isolated=isolated_effective,
+        launch_dir=launch_game_dir,
         language=language,
         assets_dir=shared_assets,
         extra_jvm_args=jvm_args,
