@@ -463,11 +463,14 @@ QListView#comboPopupList {
 }
 QComboBox QAbstractItemView::item,
 QListView#comboPopupList::item {
-    /* 30px rows, the height the adjacent field's content suggests. The previous 8px/26px pair made
-       every row 42px, so a three-item list stood 138px tall and read as a panel covering the page
-       rather than a menu of three entries. */
-    padding: 4px 12px;
-    min-height: 22px;
+    /* 31px rows. The height is chosen for alignment, not taste: measured against a 15px CJK label,
+       30px leaves an odd 17px of slack (9 above / 8 below, i.e. the text sits 0.5px low), while
+       31px leaves 18px (9/9) and centres exactly. The popup's text must also share the closed
+       field's left edge: Qt's item delegate adds a 2px focus-frame margin on top of the 12px field
+       padding, so 8px here puts the rendered text ink within 1px of the field's (measured: 0px light,
+       -1px dark, was 3-4px). */
+    padding: 4px 8px;
+    min-height: 23px;
     border-radius: 0;
 }
 /* The one highlighted row: ACCENT_SEL_ROW is a per-theme derivation of ACCENT_SEL (light uses it
@@ -641,21 +644,12 @@ QListWidget#versionList[keyboardFocus="true"] { border-color: __FOCUS_RING__; }
    above; the rule below exists for the focus contract the keyboard walkthrough reads, and the row
    paints the same ring from the same property. */
 
-QFrame#installBreadcrumb {
-    background: __BG_LIST__;
-    border: 1px solid __BORDER_TABLE__;
-    border-radius: __RADIUS_LG__;
-}
-QWidget#versionsPage QLabel#installFixedName {
-    color: __FG_TEXT__;
-    font-size: 15px;
-    font-weight: 600;
-    padding: 0 12px;
-}
+/* The install step's top line is one row on the page, not a card: back arrow, the version/loader
+   mark, and the name field. The old framed breadcrumb and its two labels were the card the brief
+   asked to remove, so their rules are gone rather than left dead. */
 QWidget#versionsPage QLabel#installNameHint { color: __FG_HINT__; font-size: 12px; }
 QWidget#versionsPage QLabel#installNameHint[error="true"] { color: __DANGER_FG__; }
 QWidget#versionsPage QLabel#installStepHint { color: __FG_HINT__; font-size: 12px; }
-QWidget#versionsPage QLabel#installFieldLabel { color: __FG_HINT__; font-size: 12px; }
 QWidget#versionsPage QLineEdit[invalid="true"] {
     border-color: __DANGER_FG__;
     color: __DANGER_FG__;
@@ -1744,6 +1738,18 @@ QPushButton#modifyResetButton:hover { background: __ACCENT_BUTTON_HOVER__; }
 QPushButton#modifyResetButton:pressed { background: __ACCENT_BUTTON_PRESS__; }
 QPushButton#modifyResetButton:disabled { background: __BG_DISABLED__; color: __FG_DISABLED__; }
 QPushButton#modifyResetButton[keyboardFocus="true"]:focus { border-color: __FOCUS_RING__; }
+
+/* 修改: Fabric API lives in mods/ as an ordinary jar, and the page warns in place when a Fabric
+   instance has none. The strip borrows the danger tokens the delete buttons already use - no new
+   colour is introduced for it. */
+QLabel#modifyWarning {
+    background: __DANGER_BG__;
+    color: __DANGER_FG__;
+    border: 1px solid __DANGER_BORDER__;
+    border-radius: __RADIUS_SM__;
+    padding: 8px 12px;
+    font-size: 12px;
+}
 
 QPlainTextEdit#instanceLogView {
     background: __BG_LIST_2__;

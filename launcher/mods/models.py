@@ -35,6 +35,11 @@ class LoaderVersion(BaseModel):
     stable: bool = True
     recommended: bool = False
     installer_url: str = ""
+    #: ISO publication stamp, when the source publishes one. Fabric's meta, Forge's promotions file
+    #: and NeoForge's maven metadata carry no per-build date, so this stays empty there - and the UI
+    #: then shows the version alone rather than inventing a date. A source that does know the date
+    #: fills it, and the same rows print it.
+    release_time: str = ""
 
 
 class ModFile(BaseModel):

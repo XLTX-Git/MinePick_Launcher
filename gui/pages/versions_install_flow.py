@@ -19,10 +19,11 @@
 
 PCL's download page (``PageDownloadInstall``) is a flow inside one page rather than a chain of
 dialogs, and this is that flow's second step: the version list is *replaced* (not covered) by a
-breadcrumb card carrying the editable instance name, one row per mod loader this launcher can
-actually install, and a single pill button that reads "download vanilla" until a loader is chosen.
-Nothing here opens a window: progress continues in the version list itself (one row's install button
-turns into a compact progress block) and a failure is reported where every other install failure is.
+one-row header carrying the editable instance name, one row per mod loader this launcher can
+actually install - with the loader's builds expanding inside that row - and a single pill button
+that reads "download vanilla" until a loader is chosen. Nothing here opens a window: progress
+continues in the version list itself (one row's install button turns into a compact progress block)
+and a failure is reported where every other install failure is.
 
 Why the loader list is derived instead of written down: a row may only offer to add a loader when the
 install path can really run that loader's installer, so the rows come from
@@ -37,14 +38,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtWidgets import (
     QAbstractButton,
-    QComboBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -53,7 +62,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui import i18n, paint_utils
+from gui import block_icons, i18n, paint_utils
 from launcher.install import install_version
 from launcher.instances import MAX_INSTANCE_NAME_LENGTH, unique_instance_name
 from launcher.mods.installer import install_loader
@@ -213,8 +222,217 @@ def loader_install_options(game_version: str) -> tuple[list[tuple[str, LoaderVer
     return options, failures
 
 
+class LoaderVersionItem(QAbstractButton):
+    """One build inside an expanded loader row: a marker, the version, and its publication line.
+
+    The row is a real button (Tab stop, Space/Enter) because choosing a build is the whole point of
+    the expansion. It is painted instead of composed for the same reason the loader rows are: the
+    list can hold dozens of builds and must not build a widget tree per entry.
+
+    Two shapes share the class. The newest build is the block at the top of the expansion: two lines,
+    "66.1.8" over "最新版本 | 发布于 2026/11/12 21:29". Every other build is one 32px line with the
+    date pushed to the right edge. A source without dates simply omits the date half; this class
+    never invents one.
+    """
+
+    HEIGHT = 32
+    LATEST_HEIGHT = 46
+    RADIUS = 6
+    MARKER = 13
+    PADDING = 12
+
+    def __init__(
+        self,
+        version: LoaderVersion,
+        *,
+        latest: bool = False,
+        meta: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.version = version
+        self.latest = latest
+        self.meta = meta
+        self._selected = False
+        self._hover = False
+        self.setObjectName("loaderVersionItem")
+        self.setFixedHeight(self.LATEST_HEIGHT if latest else self.HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        parts = [version.version, meta]
+        self.setAccessibleName(" · ".join(part for part in parts if part))
+        self.setToolTip(self.accessibleName())
+
+    # ---------- state ----------
+
+    def is_selected(self) -> bool:
+        return self._selected
+
+    def set_selected(self, selected: bool) -> None:
+        if self._selected == selected:
+            return
+        self._selected = selected
+        self.setAccessibleDescription(
+            tr("versions.install.loader.selected") if selected else ""
+        )
+        self.update()
+
+    def sizeHint(self) -> QSize:
+        return QSize(320, self.height())
+
+    # ---------- interaction ----------
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
+
+    # ---------- painting ----------
+
+    def paintEvent(self, event) -> None:
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        card = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
+        if self._selected:
+            painter.setPen(QPen(QColor(tokens.get("ACCENT", "#2f9e6f")), 1.0))
+            painter.setBrush(QColor(tokens.get("ACCENT_TINT", "#eef7f2")))
+            painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+        elif self._hover and self.isEnabled():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens.get("BG_HOVER", "#eef2f7")))
+            painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+        if self.hasFocus() and bool(self.property("keyboardFocus")):
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(tokens.get("FOCUS_RING", "#3b82f6")), 1.0))
+            painter.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        # The marker is the selection itself: an empty outlined square that fills with the accent and
+        # a check once this build is the one the row carries.
+        marker_x = self.PADDING
+        marker_y = (self.height() - self.MARKER) / 2.0
+        marker = QRectF(marker_x, marker_y, self.MARKER, self.MARKER)
+        painter.setBrush(
+            QColor(tokens.get("ACCENT", "#2f9e6f"))
+            if self._selected
+            else QColor(tokens.get("BG_LIST", "#ffffff"))
+        )
+        painter.setPen(
+            QPen(
+                QColor(
+                    tokens.get("ACCENT", "#2f9e6f")
+                    if self._selected
+                    else tokens.get("FG_HINT", "#4f6070")
+                ),
+                1.2,
+            )
+        )
+        painter.drawRoundedRect(marker, 3.0, 3.0)
+        if self._selected:
+            pen = QPen(QColor(tokens.get("FG_SELECTED", "#ffffff")))
+            pen.setWidthF(1.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPolyline(
+                QPolygonF(
+                    [
+                        QPointF(marker_x + 3.0, marker_y + 6.6),
+                        QPointF(marker_x + 5.4, marker_y + 9.0),
+                        QPointF(marker_x + 10.0, marker_y + 4.0),
+                    ]
+                )
+            )
+
+        text_left = marker_x + self.MARKER + 11
+        text_width = max(0.0, self.width() - text_left - self.PADDING)
+        title_font = QFont(self.font())
+        title_font.setPixelSize(14 if self.latest else 13)
+        title_font.setWeight(
+            QFont.Weight.DemiBold if self.latest else QFont.Weight.Normal
+        )
+        meta_font = QFont(self.font())
+        meta_font.setPixelSize(12)
+        title_metrics = QFontMetrics(title_font)
+        meta_metrics = QFontMetrics(meta_font)
+        title_color = QColor(
+            tokens.get("FG_TEXT", "#1f2a36")
+            if self.isEnabled()
+            else tokens.get("FG_DISABLED", "#8f949a")
+        )
+        meta_color = QColor(tokens.get("FG_HINT", "#4f6070"))
+
+        if self.latest:
+            painter.setFont(title_font)
+            painter.setPen(title_color)
+            painter.drawText(
+                QRectF(text_left, 5.0, text_width, 20.0),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                title_metrics.elidedText(
+                    self.version.version, Qt.TextElideMode.ElideRight, int(text_width)
+                ),
+            )
+            painter.setFont(meta_font)
+            painter.setPen(meta_color)
+            painter.drawText(
+                QRectF(text_left, 23.0, text_width, 18.0),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                meta_metrics.elidedText(
+                    self.meta, Qt.TextElideMode.ElideRight, int(text_width)
+                ),
+            )
+        else:
+            meta_width = min(
+                meta_metrics.horizontalAdvance(self.meta),
+                max(0.0, text_width * 0.55),
+            ) if self.meta else 0.0
+            version_width = max(0.0, text_width - meta_width - (8.0 if meta_width else 0.0))
+            painter.setFont(title_font)
+            painter.setPen(title_color)
+            painter.drawText(
+                QRectF(text_left, 0.0, version_width, self.height()),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                title_metrics.elidedText(
+                    self.version.version, Qt.TextElideMode.ElideRight, int(version_width)
+                ),
+            )
+            if meta_width:
+                painter.setFont(meta_font)
+                painter.setPen(meta_color)
+                painter.drawText(
+                    QRectF(
+                        text_left + version_width + 8.0,
+                        0.0,
+                        meta_width,
+                        self.height(),
+                    ),
+                    int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                    meta_metrics.elidedText(
+                        self.meta, Qt.TextElideMode.ElideRight, int(meta_width)
+                    ),
+                )
+        painter.end()
+
+
 class LoaderRow(QAbstractButton):
-    """One loader choice: a 56px card with the loader name (15/600), its state and a chevron.
+    """One loader choice's header: a 56px card with the loader name (15/600), its value and a chevron.
+
+    The header only opens and closes the build list that :class:`LoaderChoice` renders under it. The
+    value is the chosen build's version once there is one, else the row's state ("可以添加", "查询中…");
+    the chevron points up while the list is open.
 
     Painted rather than composed, for the reason the version rows are: a list of choices must not pay
     for three child widgets each, and the state text has to elide on one line (a QLabel either wraps
@@ -241,6 +459,8 @@ class LoaderRow(QAbstractButton):
         self._state = CHECKING
         self._detail = ""
         self._versions: list[LoaderVersion] = []
+        self._selected_version = ""
+        self._expanded = False
         self._hover = False
         self.set_status(CHECKING)
 
@@ -258,7 +478,28 @@ class LoaderRow(QAbstractButton):
         return list(self._versions)
 
     def status_text(self) -> str:
+        if self._selected_version:
+            return self._selected_version
         return tr(STATUS_KEYS[self._state])
+
+    def set_selected_version(self, version: str) -> None:
+        """Show the picked build on the closed row instead of the "available" state text."""
+        self._selected_version = str(version or "")
+        name = display_loader_name(self.loader)
+        text = self.status_text()
+        self.setAccessibleName(f"{name} · {text}")
+        self.update()
+
+    def selected_version(self) -> str:
+        return self._selected_version
+
+    def set_expanded(self, expanded: bool) -> None:
+        """The chevron turns up while the builds are open under the row."""
+        self._expanded = expanded
+        self.update()
+
+    def is_expanded(self) -> bool:
+        return self._expanded
 
     def set_status(
         self,
@@ -274,6 +515,7 @@ class LoaderRow(QAbstractButton):
             self._versions = list(versions)
         if state != CAN_ADD:
             self._versions = []
+            self._selected_version = ""
         self.setCheckable(state == CAN_ADD)
         self.setEnabled(state in (CAN_ADD, FETCH_FAILED))
         if state != CAN_ADD and self.isChecked():
@@ -384,7 +626,7 @@ class LoaderRow(QAbstractButton):
         )
 
         # A drawn chevron: the UI font has no guaranteed U+203A, and a missing glyph would be a tofu
-        # box in the middle of the row.
+        # box in the middle of the row. It points up while this row's builds are open below it.
         pen = QPen(QColor(tokens.get("FG_HINT", "#4f6070")))
         pen.setWidthF(1.6)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -392,16 +634,206 @@ class LoaderRow(QAbstractButton):
         painter.setPen(pen)
         middle = self.HEIGHT / 2.0
         inset = self.CHEVRON * 0.28
-        painter.drawPolyline(
-            QPolygonF(
-                [
-                    QPointF(chevron_left + inset, middle - inset * 1.6),
-                    QPointF(chevron_left + self.CHEVRON - inset, middle),
-                    QPointF(chevron_left + inset, middle + inset * 1.6),
-                ]
+        if self._expanded:
+            painter.drawPolyline(
+                QPolygonF(
+                    [
+                        QPointF(chevron_left + inset, middle + inset * 1.6),
+                        QPointF(chevron_left + self.CHEVRON / 2.0, middle - inset),
+                        QPointF(chevron_left + self.CHEVRON - inset, middle + inset * 1.6),
+                    ]
+                )
             )
-        )
+        else:
+            painter.drawPolyline(
+                QPolygonF(
+                    [
+                        QPointF(chevron_left + inset, middle - inset * 1.6),
+                        QPointF(chevron_left + self.CHEVRON - inset, middle),
+                        QPointF(chevron_left + inset, middle + inset * 1.6),
+                    ]
+                )
+            )
         painter.end()
+
+
+class LoaderChoice(QWidget):
+    """One loader row and the build list it opens *inside itself*.
+
+    This is the PCL shape: clicking the row expands its builds under the header instead of revealing
+    a dropdown at the bottom of the page. One row is open at a time (the step enforces that), the
+    chosen build collapses the row, and clicking the header again closes the list without touching
+    the choice.
+
+    The "newest" build is presented separately at the top with its publication line; the rest of the
+    source's list follows under an "全部版本 (N)" caption. Dates are printed only when the source
+    supplies one - the three loader sources this launcher reads do not, so the rows show the version
+    alone rather than a made-up date.
+    """
+
+    version_chosen = Signal(object)
+    version_cleared = Signal()
+
+    def __init__(self, loader: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.loader = loader
+        self.setObjectName("loaderChoice")
+        self.header = LoaderRow(loader)
+        self._versions: list[LoaderVersion] = []
+        self._expanded = False
+        self._selected: LoaderVersion | None = None
+        self._items: list[LoaderVersionItem] = []
+        self.body = QWidget()
+        self.body.setObjectName("loaderChoiceBody")
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(28, 0, 0, 8)
+        self.body_layout.setSpacing(2)
+        self.body.setVisible(False)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self.header)
+        outer.addWidget(self.body)
+
+    # ---------- data ----------
+
+    def versions(self) -> list[LoaderVersion]:
+        return list(self._versions)
+
+    def selected_version(self) -> LoaderVersion | None:
+        return self._selected
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def items(self) -> list[LoaderVersionItem]:
+        """The built rows (empty while the list is closed or has not been rebuilt yet)."""
+        return list(self._items)
+
+    def set_versions(self, versions: list[LoaderVersion]) -> None:
+        """Replace the offered builds and rebuild the body when it is open."""
+        self._versions = list(versions)
+        if self._selected is not None and self._selected.version not in {
+            version.version for version in self._versions
+        }:
+            self.clear_selection(notify=False)
+        if self._expanded:
+            self._rebuild()
+
+    def clear_selection(self, *, notify: bool = True) -> None:
+        if self._selected is None:
+            return
+        self._selected = None
+        self.header.setChecked(False)
+        self.header.set_selected_version("")
+        for item in self._items:
+            item.set_selected(False)
+        if notify:
+            self.version_cleared.emit()
+
+    # ---------- expansion ----------
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._expanded = expanded
+        self.header.set_expanded(expanded)
+        self.body.setVisible(expanded)
+        if expanded:
+            self._rebuild()
+
+    def _clear_body(self) -> None:
+        self._items = []
+        while self.body_layout.count():
+            item = self.body_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _rebuild(self) -> None:
+        self._clear_body()
+        if not self._versions:
+            label = QLabel(tr("versions.install.loader.no_version"))
+            label.setObjectName("installStepHint")
+            label.setWordWrap(True)
+            self.body_layout.addWidget(label)
+            return
+        newest = self._versions[0]
+        latest_meta = tr("versions.install.loader.latest")
+        published = _published_text(getattr(newest, "release_time", ""))
+        if published:
+            latest_meta += " | " + tr("versions.latest.published", published)
+        latest_item = LoaderVersionItem(newest, latest=True, meta=latest_meta)
+        latest_item.clicked.connect(partial(self._choose, newest))
+        self._items.append(latest_item)
+        self.body_layout.addWidget(latest_item)
+
+        rest = self._versions[1:]
+        if rest:
+            caption = QLabel(tr("versions.install.loader.all", len(self._versions)))
+            caption.setObjectName("installStepHint")
+            self.body_layout.addWidget(caption)
+            for version in rest:
+                item = LoaderVersionItem(
+                    version,
+                    meta=_published_text(getattr(version, "release_time", "")),
+                )
+                item.clicked.connect(partial(self._choose, version))
+                self._items.append(item)
+                self.body_layout.addWidget(item)
+        self._sync_items()
+
+    def _choose(self, version: LoaderVersion) -> None:
+        if self._selected is not None and self._selected.version == version.version:
+            # Clicking the chosen build again is the way back to "download the vanilla version"; the
+            # row header only opens and closes the list, as PCL's does.
+            self.clear_selection()
+            return
+        self._selected = version
+        self.header.setChecked(True)
+        self.header.set_selected_version(version.version)
+        self._sync_items()
+        self.version_chosen.emit(version)
+
+    def _sync_items(self) -> None:
+        for item in self._items:
+            item.set_selected(
+                self._selected is not None
+                and item.version.version == self._selected.version
+            )
+
+    def selected_title(self) -> str:
+        return self._selected.version if self._selected is not None else ""
+
+
+def _published_text(release_time: str) -> str:
+    """A loader build's publication stamp, or "" when the source has none.
+
+    The sources this launcher reads publish no per-build dates, so this is deliberately allowed to
+    return nothing: the row then shows the version number alone instead of a fabricated date.
+    """
+    text = (release_time or "").strip()
+    if len(text) < 10:
+        return text
+    from PySide6.QtCore import QDate, QDateTime
+
+    if len(text) < 16:
+        # A date without a time means the source only published a day: printing 00:00 would invent
+        # a time the source never gave.
+        date = QDate.fromString(text[:10], "yyyy-MM-dd")
+        return f"{date.year()}/{date.month()}/{date.day()}" if date.isValid() else text
+    stamp = QDateTime.fromString(text, Qt.DateFormat.ISODate)
+    if stamp.isValid():
+        stamp = stamp.toLocalTime()
+        date, time = stamp.date(), stamp.time()
+        return (
+            f"{date.year()}/{date.month()}/{date.day()} "
+            f"{time.hour():02d}:{time.minute():02d}"
+        )
+    date = QDate.fromString(text[:10], "yyyy-MM-dd")
+    if date.isValid():
+        return f"{date.year()}/{date.month()}/{date.day()}"
+    return text
 
 
 class _NameField(QLineEdit):
@@ -415,10 +847,10 @@ class _NameField(QLineEdit):
 
 
 class InstallStep(QWidget):
-    """Second step of the versions page: breadcrumb card, one row per loader, one pill button.
+    """Second step of the versions page: a one-row header, one loader row, one pill button.
 
     The step owns no install logic at all. It reports ``start_requested`` (the pill), ``back_requested``
-    (the breadcrumb arrow) and ``retry_requested(loader)`` (a row whose state is "could not fetch"),
+    (the header's back arrow) and ``retry_requested(loader)`` (a row whose state is "could not fetch"),
     and the page decides what those mean. That keeps the install flow in exactly one place while this
     module stays a piece of interface that a test can drive without a window.
     """
@@ -437,22 +869,30 @@ class InstallStep(QWidget):
         self._default_name = ""
         self._taken: frozenset[str] = frozenset()
         self._loader_versions: dict[str, list[LoaderVersion]] = {}
+        self._game_dir: Path | None = None
+        self._cache_root: Path | None = None
+        self._fallback_icon: QPixmap | None = None
 
-        self.breadcrumb = QFrame()
-        self.breadcrumb.setObjectName("installBreadcrumb")
-        self.back_button = QPushButton("← " + tr("versions.install.back"))
-        # The site's one back-button shape (#backButton: 4px 8px padding, transparent, left aligned),
-        # not the larger outlined secondary button. The breadcrumb card already supplies the frame.
+        # The top line is one row, not a card: back arrow, the loader mark, and the name field filling
+        # the rest. PCL's install page has exactly this shape, and the previous label + framed card
+        # only added two lines of chrome to a flow that is one decision away from downloading.
+        self.breadcrumb = QWidget()
+        self.breadcrumb.setObjectName("installHeader")
+        self.back_button = QPushButton()
         self.back_button.setObjectName("backButton")
+        self.back_button.setFlat(True)
+        self.back_button.setFixedSize(32, 32)
+        self.back_button.setIconSize(QSize(20, 20))
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.setAccessibleName(tr("versions.install.back"))
+        self.back_button.setToolTip(tr("versions.install.back"))
         self.back_button.clicked.connect(self.back_requested.emit)
+        self._back_icon = QIcon()
         self.icon_label = QLabel()
         self.icon_label.setFixedSize(32, 32)
-        self.icon_label.setObjectName("installBreadcrumbIcon")
-        self.name_label = QLabel(tr("versions.install.name.label"))
-        self.name_label.setObjectName("installFieldLabel")
+        self.icon_label.setObjectName("installHeaderIcon")
         self.name_edit = _NameField()
+        self.name_edit.setFixedHeight(36)
         self.name_edit.setMaxLength(MAX_INSTANCE_NAME_LENGTH)
         self.name_edit.setAccessibleName(tr("versions.install.name.label"))
         self.name_edit.textChanged.connect(lambda _text: self._refresh_name_state())
@@ -462,54 +902,35 @@ class InstallStep(QWidget):
         self.name_hint.setWordWrap(True)
         self.name_hint.setVisible(False)
 
-        name_column = QVBoxLayout()
-        name_column.setSpacing(4)
-        name_column.addWidget(self.name_label)
-        name_column.addWidget(self.name_edit)
-        name_column.addWidget(self.name_hint)
-        breadcrumb_layout = QHBoxLayout(self.breadcrumb)
-        breadcrumb_layout.setContentsMargins(12, 10, 12, 10)
-        breadcrumb_layout.setSpacing(12)
-        breadcrumb_layout.addWidget(self.back_button)
-        breadcrumb_layout.addWidget(self.icon_label)
-        breadcrumb_layout.addLayout(name_column, 1)
+        header_layout = QHBoxLayout(self.breadcrumb)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(12)
+        header_layout.addWidget(self.back_button)
+        header_layout.addWidget(self.icon_label)
+        header_layout.addWidget(self.name_edit, 1)
 
         self.hint = QLabel(tr("versions.install.hint"))
         self.hint.setObjectName("installStepHint")
         self.hint.setWordWrap(True)
 
         self.rows: dict[str, LoaderRow] = {}
+        self.choices: dict[str, LoaderChoice] = {}
         rows_layout = QVBoxLayout()
         rows_layout.setSpacing(8)
         for loader in LOADER_ROWS:
-            row = LoaderRow(loader)
-            row.clicked.connect(lambda _checked=False, item=row: self._on_row_clicked(item))
-            self.rows[loader] = row
-            rows_layout.addWidget(row)
-
-        # The loader build choice appears only once a loader is picked, under the rows: one closed
-        # dropdown per loader would widen every row, and the list can be dozens of builds long.
-        self.version_choice = QWidget()
-        choice_layout = QVBoxLayout(self.version_choice)
-        choice_layout.setContentsMargins(0, 4, 0, 0)
-        choice_layout.setSpacing(4)
-        self.loader_version_label = QLabel(tr("versions.install.loader.version"))
-        self.loader_version_label.setObjectName("installFieldLabel")
-        self.loader_version_combo = QComboBox()
-        self.loader_version_combo.setAccessibleName(tr("versions.install.loader.version"))
-        self.loader_version_combo.setMinimumHeight(36)
-        # The closed field stays modest: an unfiltered loader build string must not raise the page's
-        # minimum width, so the combo elides instead of asking for its longest item's width.
-        self.loader_version_combo.setMinimumWidth(220)
-        self.loader_version_combo.setMaximumWidth(420)
-        self.loader_version_combo.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
-        )
-        self.loader_version_combo.setMinimumContentsLength(12)
-        self.loader_version_combo.currentIndexChanged.connect(self._on_loader_version_changed)
-        choice_layout.addWidget(self.loader_version_label)
-        choice_layout.addWidget(self.loader_version_combo)
-        self.version_choice.setVisible(False)
+            choice = LoaderChoice(loader)
+            choice.header.clicked.connect(
+                lambda _checked=False, item=choice: self._on_row_clicked(item)
+            )
+            choice.version_chosen.connect(
+                lambda version, key=loader: self._on_version_chosen(key, version)
+            )
+            choice.version_cleared.connect(
+                lambda key=loader: self._on_version_cleared(key)
+            )
+            self.rows[loader] = choice.header
+            self.choices[loader] = choice
+            rows_layout.addWidget(choice)
 
         self.start_button = QPushButton(tr("versions.install.vanilla"))
         self.start_button.setObjectName("installPrimary")
@@ -529,43 +950,44 @@ class InstallStep(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.addWidget(self.breadcrumb)
+        layout.addWidget(self.name_hint)
         layout.addWidget(self.hint)
         layout.addLayout(rows_layout)
-        layout.addWidget(self.version_choice)
         layout.addStretch(1)
         layout.addLayout(button_row)
+        self._refresh_back_icon()
+        self._refresh_header_icon()
 
     # ---------- data ----------
 
     def prepare(
         self,
         version_id: str,
-        icon: QPixmap | None,
+        icon: QPixmap | None = None,
         *,
         name: str,
         taken: set[str] | frozenset[str] = frozenset(),
+        game_dir: Path | None = None,
+        cache_root: Path | None = None,
     ) -> None:
-        """Fill the step for ``version_id``: name, icon and a fresh round of loader checks."""
+        """Fill the step for ``version_id``: name, grass mark and a fresh round of loader checks."""
         self.version_id = version_id
         self._default_name = (name or version_id).strip() or version_id
         self._taken = frozenset(taken)
+        self._game_dir = Path(game_dir) if game_dir is not None else None
+        self._cache_root = Path(cache_root) if cache_root is not None else None
+        self._fallback_icon = icon
         self._loader_versions = {}
-        if icon is not None and not icon.isNull():
-            self.icon_label.setPixmap(
-                icon.scaled(
-                    32,
-                    32,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
-        else:
-            self.icon_label.clear()
         self.name_edit.setText(self._default_name)
         for row in self.rows.values():
             row.setChecked(False)
+            row.set_selected_version("")
             row.set_status(CHECKING)
-        self._refresh_loader_choice()
+        for choice in self.choices.values():
+            choice.clear_selection(notify=False)
+            choice.set_versions([])
+            choice.set_expanded(False)
+        self._refresh_header_icon()
         self._refresh_name_state()
         self._update_start_button()
 
@@ -624,12 +1046,16 @@ class InstallStep(QWidget):
         if row is None:
             return
         row.set_status(state, detail, versions=versions)
+        choice = self.choices.get(loader)
+        if choice is not None:
+            choice.set_versions(list(versions or []))
+            if state != CAN_ADD:
+                choice.set_expanded(False)
         if versions is not None:
             self._loader_versions[loader] = list(versions)
         elif state != CAN_ADD:
             self._loader_versions.pop(loader, None)
-        if self.selected_loader() == loader:
-            self._refresh_loader_choice()
+        self._refresh_header_icon()
         self._update_start_button()
 
     def loader_versions(self, loader: str) -> list[LoaderVersion]:
@@ -645,14 +1071,14 @@ class InstallStep(QWidget):
         return row.status_text() if row is not None else ""
 
     def selected_loader_version(self) -> LoaderVersion | None:
-        """The build picked in the dropdown for the checked loader (None = no loader chosen)."""
+        """The build chosen inside the checked loader's row (None = no loader chosen)."""
         loader = self.selected_loader()
         if loader is None:
             return None
+        chosen = self.choices[loader].selected_version()
+        if chosen is not None:
+            return chosen
         versions = self._loader_versions.get(loader, [])
-        index = self.loader_version_combo.currentIndex()
-        if 0 <= index < len(versions):
-            return versions[index]
         return versions[0] if versions else None
 
     def selected_loader(self) -> str | None:
@@ -668,42 +1094,136 @@ class InstallStep(QWidget):
 
     # ---------- private ----------
 
-    def _on_row_clicked(self, row: LoaderRow) -> None:
+    def _on_row_clicked(self, choice: LoaderChoice) -> None:
+        """Open this row's builds in place; a second click closes them without changing the choice.
+
+        Opening another row closes the previous one, so the page never grows two build lists: the
+        summary and the pill keep their place while the user compares loaders.
+        """
+        row = choice.header
+        # The header is a checkable button (space/enter activate it), but only a build row decides
+        # the selection: undo the toggle the click just performed before opening/closing the list.
+        row.setChecked(choice.selected_version() is not None)
         if row.state() == FETCH_FAILED:
             self.retry_requested.emit(row.loader)
             return
-        if row.isChecked():
-            for other in self.rows.values():
-                if other is not row and other.isChecked():
-                    other.setChecked(False)
-        self._refresh_loader_choice()
-        self._update_start_button()
-        self.loader_changed.emit(self.selected_loader() or "")
+        if row.state() != CAN_ADD:
+            return
+        if choice.is_expanded():
+            choice.set_expanded(False)
+            return
+        self._collapse_choices()
+        choice.set_expanded(True)
 
-    def _on_loader_version_changed(self, _index: int) -> None:
-        """A different build of the same loader changes the default instance name."""
-        if self.selected_loader() is not None:
-            self.loader_changed.emit(self.selected_loader() or "")
+    def _collapse_choices(self) -> None:
+        for choice in self.choices.values():
+            if choice.is_expanded():
+                choice.set_expanded(False)
+
+    def _on_version_chosen(self, loader: str, version: LoaderVersion) -> None:
+        """A build was picked: it becomes the row's answer and every other loader lets go."""
+        for key, choice in self.choices.items():
+            if key == loader:
+                continue
+            choice.clear_selection(notify=False)
+            choice.set_expanded(False)
+        self.choices[loader].set_expanded(False)
+        self._refresh_header_icon()
+        self._update_start_button()
+        self.loader_changed.emit(loader)
+
+    def _on_version_cleared(self, loader: str) -> None:
+        """The chosen build was clicked again: the flow is back to the vanilla download."""
+        self._refresh_header_icon()
+        self._update_start_button()
+        self.loader_changed.emit("")
 
     def _refresh_loader_choice(self) -> None:
-        """Rebuild the build dropdown for the checked loader and show it only when it has entries."""
-        loader = self.selected_loader()
-        versions = self._loader_versions.get(loader, []) if loader else []
-        combo = self.loader_version_combo
-        combo.blockSignals(True)
+        """Push the probed builds into their rows (the rows build their own lists on demand)."""
+        for loader, choice in self.choices.items():
+            choice.set_versions(self._loader_versions.get(loader, []))
+        self._refresh_header_icon()
+        self._update_start_button()
+
+    # ---------- the top line ----------
+
+    @staticmethod
+    def _back_pixmap(color: str, size: int = 20) -> QPixmap:
+        """A left arrow for the icon-only back button (drawn, so no font glyph can go missing)."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor(color))
+        pen.setWidthF(1.7)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(size * 0.72, size * 0.5), QPointF(size * 0.28, size * 0.5))
+        painter.drawLine(QPointF(size * 0.28, size * 0.5), QPointF(size * 0.46, size * 0.32))
+        painter.drawLine(QPointF(size * 0.28, size * 0.5), QPointF(size * 0.46, size * 0.68))
+        painter.end()
+        return pixmap
+
+    def _refresh_back_icon(self) -> None:
+        if not hasattr(self, "back_button"):
+            return
+        tokens = _tokens()
+        self._back_icon = QIcon(
+            self._back_pixmap(tokens.get("FG_HINT", "#4f6070"))
+        )
+        self.back_button.setIcon(self._back_icon)
+
+    def _refresh_header_icon(self) -> None:
+        """Grass for a vanilla install, the chosen loader's own mark once one is selected."""
+        if not hasattr(self, "icon_label") or not hasattr(self, "rows"):
+            return  # a style event during construction, before the page exists
+        tokens = _tokens()
+        accent = tokens.get("ACCENT", "#2f9e6f")
+        loader = self.selected_loader() or ""
+        pixmap: QPixmap | None = None
         try:
-            combo.clear()
-            for version in versions:
-                label = version.version
-                if version.game_version:
-                    label += " · " + version.game_version
-                if version.recommended:
-                    label += " · " + tr("versions.install.loader.recommended")
-                combo.addItem(label, version.version)
-            combo.setCurrentIndex(0)
-        finally:
-            combo.blockSignals(False)
-        self.version_choice.setVisible(bool(versions))
+            if loader:
+                logo_dir = (
+                    self._cache_root.parent / "loader-logos"
+                    if self._cache_root is not None
+                    else None
+                )
+                pixmap = block_icons.loader_pixmap(
+                    loader, accent, 32, logo_cache_dir=logo_dir
+                )
+            else:
+                pixmap = block_icons.rule_icon_pixmap(
+                    "grass", 32, game_dir=self._game_dir, cache_root=self._cache_root
+                )
+        except Exception:  # noqa: BLE001 - a missing texture must not break the step
+            pixmap = None
+        fallback = self._fallback_icon
+        if (pixmap is None or pixmap.isNull()) and fallback is not None and not fallback.isNull():
+            pixmap = fallback
+        if pixmap is None or pixmap.isNull():
+            self.icon_label.clear()
+            return
+        self.icon_label.setPixmap(
+            pixmap.scaled(
+                32,
+                32,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def changeEvent(self, event) -> None:
+        """Repaint the drawn marks when the theme changes (their colours are tokens, not QSS)."""
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.PaletteChange):
+            self._refresh_back_icon()
+            self._refresh_header_icon()
+            for row in getattr(self, "rows", {}).values():
+                row.update()
+            for choice in getattr(self, "choices", {}).values():
+                for item in choice.items():
+                    item.update()
 
     def _update_start_button(self) -> None:
         loader = self.selected_loader()

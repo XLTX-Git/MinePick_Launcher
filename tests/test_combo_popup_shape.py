@@ -40,7 +40,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -581,3 +581,116 @@ def test_create_app_installs_the_popup_hooks():
     assert "from gui import popup_shape" in source
     assert "popup_shape.install(app)" in source
     assert "popup_shape.install_combo_popup_style(app)" in source
+
+
+# ---------------------------------------------------------------------------
+# The selected row's highlight and its text share one line (the settings page report)
+# ---------------------------------------------------------------------------
+
+
+def _render_widget(widget: QWidget) -> QImage:
+    """Render at logical size: the measurements below are in layout pixels, not device pixels."""
+    image = QImage(widget.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    widget.render(image)
+    return image
+
+
+def _bbox(image: QImage, rect: QRect, colour: QColor, *, tolerance: int = 2) -> QRect:
+    """Bounding box of pixels within ``tolerance`` of ``colour`` inside ``rect``."""
+    left = top = 10**9
+    right = bottom = -1
+    for y in range(max(0, rect.top()), min(image.height(), rect.bottom() + 1)):
+        for x in range(max(0, rect.left()), min(image.width(), rect.right() + 1)):
+            pixel = image.pixelColor(x, y)
+            if (
+                abs(pixel.red() - colour.red()) <= tolerance
+                and abs(pixel.green() - colour.green()) <= tolerance
+                and abs(pixel.blue() - colour.blue()) <= tolerance
+            ):
+                left = min(left, x)
+                right = max(right, x)
+                top = min(top, y)
+                bottom = max(bottom, y)
+    return QRect(left, top, right - left + 1, bottom - top + 1) if right >= 0 else QRect()
+
+
+def _ink_bbox(image: QImage, rect: QRect, background: QColor, *, threshold: int = 100) -> QRect:
+    """Bounding box of pixels that are clearly not the background (text ink incl. antialiasing)."""
+    left = top = 10**9
+    right = bottom = -1
+    for y in range(max(0, rect.top()), min(image.height(), rect.bottom() + 1)):
+        for x in range(max(0, rect.left()), min(image.width(), rect.right() + 1)):
+            pixel = image.pixelColor(x, y)
+            distance = (
+                abs(pixel.red() - background.red())
+                + abs(pixel.green() - background.green())
+                + abs(pixel.blue() - background.blue())
+            )
+            if distance > threshold:
+                left = min(left, x)
+                right = max(right, x)
+                top = min(top, y)
+                bottom = max(bottom, y)
+    return QRect(left, top, right - left + 1, bottom - top + 1) if right >= 0 else QRect()
+
+
+def _popup_alignment(app, theme_name: str) -> tuple[int, int]:
+    """Measure the open settings dropdown: (highlight/text centre bias, text-left offset)."""
+    from gui import theme
+    from gui.pages.settings_page import SettingsPage
+
+    theme.apply_theme(theme_name, None, None, "default")
+    page = SettingsPage()
+    page.resize(1000, 700)
+    page.show()
+    for _ in range(6):
+        app.processEvents()
+    combo = page.source_assets_combo
+    combo.setCurrentIndex(1)  # 自动 / the same row as the report
+    for _ in range(4):
+        app.processEvents()
+
+    tokens = theme.current_tokens()
+    highlight_colour = QColor(tokens["ACCENT_SEL_ROW"])
+    field_colour = QColor(tokens["BG_LIST"])
+    combo.showPopup()
+    for _ in range(8):
+        app.processEvents()
+    popup = combo.view().window()
+    view = combo.view()
+    image = _render_widget(popup)
+    item_rect = view.visualRect(combo.model().index(combo.currentIndex(), 0))
+    row = item_rect.translated(view.viewport().mapTo(popup, QPoint(0, 0)))
+    highlight = _bbox(image, row.adjusted(-2, -2, 2, 2), highlight_colour)
+    ink = _ink_bbox(image, highlight, highlight_colour)
+    field_image = _render_widget(combo)
+    field_ink = _ink_bbox(
+        field_image,
+        QRect(2, 2, combo.width() - 30, combo.height() - 4),
+        field_colour,
+    )
+    combo.hidePopup()
+    page.deleteLater()
+    assert highlight.isValid() and ink.isValid() and field_ink.isValid()
+    bias = abs((ink.top() - highlight.top()) - (highlight.bottom() - ink.bottom()))
+    return bias, abs(ink.left() - field_ink.left())
+
+
+def test_the_selected_row_centres_its_text_and_shares_the_fields_left_edge(app, shaper):
+    """The report measured a highlight whose text sat low and a text column 3-4px right of the field.
+
+    Both are pinned from pixels, in both themes, on the real settings page (资源文件 -> 自动). The
+    QSS row is 31px with 9px side padding for exactly these two numbers: 30px rows leave an odd
+    amount of slack (text 0.5px low) and Qt's 2px focus-frame margin made the 12px padding render
+    3-4px right of the closed field's text.
+    """
+    for theme_name in ("light", "dark"):
+        bias, left = _popup_alignment(app, theme_name)
+        assert bias <= 2, (
+            f"{theme_name}: the highlight and the text are {bias / 2:.1f}px apart vertically "
+            f"(above + below difference {bias}px)"
+        )
+        assert left <= 1, (
+            f"{theme_name}: the popup's text starts {left}px away from the closed field's text"
+        )

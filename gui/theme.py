@@ -665,7 +665,7 @@ def apply_theme(
     so without this guard a session that touches a few settings pays seconds per change - and the test
     suite, which drives those saves, spends minutes in it.
     """
-    global _last_applied, _last_tokens, _last_theme, _last_radius_lg
+    global _last_applied, _last_tokens, _last_theme
     app = QApplication.instance()
     if app is None:
         return

@@ -1570,6 +1570,8 @@ class VersionsPage(QWidget):
             # two instances of one version are a normal setup, not a reinstall.
             name=unique_instance_name(version_id, taken),
             taken=taken,
+            game_dir=self._game_dir(),
+            cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
         )
         self.stack.setCurrentWidget(self.step)
         self.step.name_edit.setFocus()

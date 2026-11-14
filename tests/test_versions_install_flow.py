@@ -219,12 +219,13 @@ def test_back_returns_to_the_same_filter_and_scroll_position(page, app) -> None:
 
 
 def test_back_button_uses_the_site_back_shape(page, app) -> None:
-    """The breadcrumb back button is the shared #backButton, not a full outlined secondary button."""
+    """The top line's back control is the shared #backButton, now as a pure icon."""
     step = _open_step(page, app, "rel-12")
     button = step.back_button
     assert button.objectName() == "backButton"
-    assert button.text().startswith("← ")
-    assert button.height() <= 30, f"the back button is {button.height()}px tall"
+    assert button.text() == "", "the back control is an icon, not a word"
+    assert not button.icon().isNull(), "the icon-only button must actually carry its arrow"
+    assert button.width() == button.height() == 32
 
 
 # ---------- the instance name ----------
@@ -311,6 +312,150 @@ def test_only_loaders_the_install_path_supports_get_a_row(page, app) -> None:
     )
 
 
+def test_the_build_list_expands_inside_the_row(page, app, monkeypatch) -> None:
+    """PCL's shape: the builds open under the row, and the bottom dropdown is gone for good."""
+    from PySide6.QtWidgets import QComboBox
+
+    from gui.pages import versions_install_flow
+    from launcher.mods.models import LoaderVersion
+
+    builds = [
+        LoaderVersion(loader="forge", version="66.1.8", game_version="rel-1"),
+        LoaderVersion(loader="forge", version="66.1.5", game_version="rel-1"),
+        LoaderVersion(loader="forge", version="66.1.0", game_version="rel-1"),
+    ]
+    monkeypatch.setattr(
+        versions_install_flow,
+        "probe_loader",
+        lambda loader, version_id: builds if loader == "forge" else [],
+    )
+    step = _open_step(page, app, "rel-1")
+
+    # No bottom selector survives: not a widget, not a combo anywhere in the step.
+    assert not hasattr(step, "loader_version_combo")
+    assert not hasattr(step, "version_choice")
+    assert step.findChildren(QComboBox) == []
+
+    row = step.rows["forge"]
+    assert not step.choices["forge"].is_expanded()
+    row.click()
+    app.processEvents()
+
+    choice = step.choices["forge"]
+    assert choice.is_expanded()
+    assert choice.body.isVisibleTo(step)
+    assert row.is_expanded()
+    assert [item.version.version for item in choice.items()] == ["66.1.8", "66.1.5", "66.1.0"]
+    # The newest build is the two-line block at the top; the rest follow under the count caption.
+    assert choice.items()[0].latest
+    assert choice.items()[0].height() == versions_install_flow.LoaderVersionItem.LATEST_HEIGHT
+    assert not choice.items()[1].latest
+    captions = [
+        choice.body_layout.itemAt(index).widget().text()
+        for index in range(choice.body_layout.count())
+        if hasattr(choice.body_layout.itemAt(index).widget(), "text")
+    ]
+    assert versions_install_flow.tr("versions.install.loader.latest") in choice.items()[0].meta
+    assert i18n_text("versions.install.loader.all", 3) in captions
+    # The list is inside the row's own widget, above the hint/button rhythm, not at the page bottom.
+    assert choice.parent() is step
+    assert choice.geometry().top() < step.start_button.geometry().top()
+
+
+def i18n_text(key: str, *args) -> str:
+    from gui import i18n
+
+    return i18n.tr(key, *args)
+
+
+def test_clicking_the_header_closes_the_list_without_changing_the_choice(page, app) -> None:
+    step = _open_step(page, app, "rel-2")
+    step.rows["fabric"].click()
+    step.choices["fabric"].items()[0].click()
+    app.processEvents()
+    assert step.selected_loader() == "fabric"
+    chosen = step.selected_loader_version()
+    assert step.rows["fabric"].selected_version() == chosen.version
+
+    step.rows["fabric"].click()  # reopen
+    app.processEvents()
+    assert step.choices["fabric"].is_expanded()
+    step.rows["fabric"].click()  # and close again: the choice is not touched
+    app.processEvents()
+    assert not step.choices["fabric"].is_expanded()
+    assert step.selected_loader() == "fabric"
+    assert step.selected_loader_version().version == chosen.version
+    assert step.rows["fabric"].selected_version() == chosen.version
+
+
+def test_opening_another_loader_closes_the_previous_one(page, app) -> None:
+    step = _open_step(page, app, "rel-3")
+    step.rows["forge"].click()
+    app.processEvents()
+    assert step.choices["forge"].is_expanded()
+    step.rows["neoforge"].click()
+    app.processEvents()
+    assert step.choices["neoforge"].is_expanded()
+    assert not step.choices["forge"].is_expanded()
+    step.rows["fabric"].click()
+    app.processEvents()
+    assert step.choices["fabric"].is_expanded()
+    assert not step.choices["neoforge"].is_expanded()
+
+
+def test_a_build_date_is_shown_only_when_the_source_has_one() -> None:
+    from gui.pages import versions_install_flow
+
+    assert versions_install_flow._published_text("") == ""
+    assert versions_install_flow._published_text("2026-11-12T21:29:00+08:00") == (
+        "2026/11/12 21:29"
+    )
+    assert versions_install_flow._published_text("2026-11-12") == "2026/11/12"
+    # A malformed value is printed as the source sent it, never replaced by an invented date.
+    assert versions_install_flow._published_text("not-a-date") == "not-a-date"
+
+
+def test_the_top_line_is_one_row_without_a_label_or_a_card(page, app) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    from gui import i18n
+
+    step = _open_step(page, app, "rel-4")
+    # The label and the framed card are gone; the row is back arrow + mark + field.
+    assert not hasattr(step, "name_label")
+    object_names = {label.objectName() for label in step.findChildren(QLabel)}
+    assert "installFieldLabel" not in object_names
+    assert "installFixedName" not in object_names
+    assert "installHeaderIcon" in object_names
+    assert step.breadcrumb.objectName() == "installHeader"
+    assert step.name_edit.height() == 36
+    assert step.icon_label.width() == step.icon_label.height() == 32
+    assert step.name_edit.accessibleName() == i18n.tr("versions.install.name.label")
+    # Geometry: the row is the field plus at most 24px, not a card with its own padding.
+    step.resize(900, 600)
+    app.processEvents()
+    assert step.breadcrumb.sizeHint().height() <= step.name_edit.height() + 24
+    assert step.breadcrumb.height() <= step.name_edit.height() + 24
+    # The field takes the remaining width (the back icon and the mark are the only fixed columns).
+    assert step.name_edit.width() > 700
+
+
+def test_the_header_mark_follows_the_loader(page, app) -> None:
+    step = _open_step(page, app, "rel-5")
+    before = step.icon_label.pixmap().cacheKey()
+    step.rows["fabric"].click()
+    step.choices["fabric"].items()[0].click()
+    app.processEvents()
+    after = step.icon_label.pixmap().cacheKey()
+    assert not step.icon_label.pixmap().isNull()
+    assert after != before, "the grass block must turn into the chosen loader's mark"
+    # Deselecting brings the vanilla mark back.
+    step.rows["fabric"].click()
+    step.choices["fabric"].items()[0].click()
+    app.processEvents()
+    assert step.icon_label.pixmap().cacheKey() == before
+
+
 def test_no_version_and_a_failed_fetch_are_two_different_states(page, app, monkeypatch) -> None:
     from gui import i18n
     from gui.pages import versions_install_flow
@@ -358,16 +503,28 @@ def test_the_pill_downloads_vanilla_until_a_loader_is_chosen(page, app) -> None:
     assert step.start_button.isEnabled(), "the vanilla download is a real option, not a fallback"
     assert step.start_button.height() == 48
 
+    # Opening a row is not choosing: the build inside it is.
     step.rows["forge"].click()
+    app.processEvents()
+    assert step.choices["forge"].is_expanded()
+    assert step.selected_loader() is None
+    step.choices["forge"].items()[0].click()
     app.processEvents()
     assert step.selected_loader() == "forge"
     assert step.start_button.text() == i18n.tr("versions.install.start")
+    assert not step.choices["forge"].is_expanded(), "choosing a build closes the row"
 
     step.rows["fabric"].click()
     app.processEvents()
+    step.choices["fabric"].items()[0].click()
+    app.processEvents()
     assert step.selected_loader() == "fabric", "one loader at a time"
+    assert not step.rows["forge"].isChecked()
 
-    step.rows["fabric"].click()  # the same row again: back to vanilla
+    # Clicking the chosen build again is the way back to the vanilla download.
+    step.rows["fabric"].click()
+    app.processEvents()
+    step.choices["fabric"].items()[0].click()
     app.processEvents()
     assert step.selected_loader() is None
     assert step.start_button.text() == i18n.tr("versions.install.vanilla")
@@ -662,6 +819,7 @@ def test_a_chosen_loader_reaches_the_installer_and_names_its_new_instance(
 
     step = _open_step(page, app, "rel-5")
     step.rows["fabric"].click()
+    step.choices["fabric"].items()[0].click()
     step.name_edit.setText("my pack")
     app.processEvents()
     step.start_button.click()
@@ -718,11 +876,12 @@ def test_the_selected_loader_build_is_the_one_installed(page, app, monkeypatch) 
 
     step = _open_step(page, app, "rel-6")
     step.rows["fabric"].click()
-    assert step.loader_version_combo.count() == 2
-    assert step.selected_loader_version().version == "0.16.9"
-    step.loader_version_combo.setCurrentIndex(1)
+    app.processEvents()
+    assert len(step.choices["fabric"].items()) == 2
+    step.choices["fabric"].items()[1].click()
     app.processEvents()
     assert step.selected_loader_version().version == "0.15.0"
+    assert step.rows["fabric"].selected_version() == "0.15.0"
     # The default instance name follows the chosen build, so two builds cannot collide.
     assert step.instance_name() == "rel-6_fabric_0.15.0"
 

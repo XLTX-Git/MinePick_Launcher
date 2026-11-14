@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 WDNDXLTX
+﻿# SPDX-FileCopyrightText: 2026 WDNDXLTX
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # This file is part of MinePick Launcher.
@@ -56,7 +56,7 @@ LIGHT_SHEET = RESOURCES / "style_light.qss"
 #: The pinned digest of gui/resources/style_light.qss. It is a witness, not a convenience: a
 #: stylesheet edit is the one way to change the light theme without touching a token value, so every
 #: deliberate light-sheet change must update this digest in the same commit.
-LIGHT_SHEET_SHA256 = "81952e8176c851a3e069c11a0e34ca72bd235028a47486fdb3a279ad98c1bd87"
+LIGHT_SHEET_SHA256 = "7de72f527c70ff2806d053a1d4b43e7ada43ffe3cf6a5d63ccd6571e4a50d208"
 
 #: A card's fill has to be at least this far from the surface behind it to read as a separate sheet.
 CARD_FLOOR = 1.8
