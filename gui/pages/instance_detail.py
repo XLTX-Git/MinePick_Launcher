@@ -27,6 +27,7 @@ dropped by the owner guard instead of dereferencing a freed C++ object.
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import threading
 import time
@@ -177,7 +178,19 @@ from launcher.modpack import (
 from launcher.mods import identity
 from launcher.mods.loaders import display_loader_name, list_loader_versions
 from launcher.mods.local import install_mod_file, scan_mods, set_mod_enabled
-from launcher.mods.modrinth import delete_installed_content, resolve_content_dir
+from launcher.mods.modrinth import (
+    delete_installed_content,
+    resolve_content_dir,
+)
+from launcher.mods.modrinth import (
+    fetch_versions as fetch_modrinth_versions,
+)
+from launcher.mods.modrinth import (
+    install_mod as install_modrinth_project,
+)
+from launcher.mods.modrinth import (
+    pick_file as pick_modrinth_file,
+)
 from launcher.mods.zh_names import zh_name
 from launcher.net import downloader, http_cache
 from launcher.net.downloader import DownloadCancelled
@@ -994,6 +1007,47 @@ def _delete_content_file(resolved, subdir: str, name: str) -> int:
     return 1
 
 
+#: A Fabric API jar's name, as Modrinth and CurseForge write it: ``fabric-api-0.92.6+1.20.1.jar``.
+#: The task's own rule also accepts the underscore spelling older builds/files used.
+FABRIC_API_PATTERN = re.compile(r"fabric[-_]api[-_](?P<version>.+)\.jar$", re.IGNORECASE)
+
+
+def fabric_api_jar(mods_dir: Path) -> Path | None:
+    """The Fabric API jar in ``mods_dir``, or None - the one fact the 修改 row is built from.
+
+    Case-insensitive because a modpack may carry ``Fabric-API-....jar``; both spellings are accepted.
+    The first match in name order is returned: two copies cannot both be loaded, and picking one
+    deterministically keeps the row stable across reloads.
+    """
+    try:
+        if not mods_dir.is_dir():
+            return None
+        candidates = [
+            entry
+            for entry in mods_dir.iterdir()
+            if entry.is_file()
+            and entry.name.casefold().endswith(".jar")
+            and (
+                entry.name.casefold().startswith("fabric-api")
+                or entry.name.casefold().startswith("fabric_api")
+            )
+        ]
+    except OSError:
+        return None
+    return min(candidates, key=lambda entry: entry.name.casefold()) if candidates else None
+
+
+def fabric_api_version(filename: str) -> str:
+    """``fabric-api-0.92.6+1.20.1.jar`` -> ``0.92.6+1.20.1``; the filename when it does not parse."""
+    name = Path(filename).name
+    match = FABRIC_API_PATTERN.search(name)
+    if match is not None:
+        version = match.group("version").strip()
+        if version:
+            return version
+    return name
+
+
 class _IconChooserDialog(inwindow_dialog.InWindowDialog):
     """The instance-icon picker: eight rule tiles, then 恢复自动 and 从文件选择….
 
@@ -1207,6 +1261,12 @@ class _SwitchChoice:
 #: LiteLoader, Cleanroom and the rest of PCL's list are deliberately absent.
 MODIFY_MC = "minecraft"
 MODIFY_LOADERS: tuple[str, ...] = ("fabric", "forge", "neoforge")
+#: Fabric API is not a loader component in this launcher: it is an ordinary jar in ``mods/``, so it
+#: gets a row of its own after Fabric instead of being folded into the loader choice. The key is
+#: deliberately outside ``MODIFY_LOADERS``: a plan stages loader switches, and this jar's actions are
+#: immediate (see the 修改 methods below).
+MODIFY_FABRIC_API = "fabric_api"
+MODIFY_ROW_ORDER: tuple[str, ...] = (MODIFY_MC, "fabric", MODIFY_FABRIC_API, "forge", "neoforge")
 #: Loader id -> the proper noun the row shows. Loader names are names, not translated words.
 LOADER_TITLES: dict[str, str] = {
     "fabric": "Fabric",
@@ -2200,6 +2260,15 @@ class InstanceDetail(QWidget):
         self._remove_target = None
         self._modify_ready = False
         self._expanded_loader: str | None = None
+        #: Fabric API (a jar in mods/, not a loader): the file the row currently shows, the fetched
+        #: Modrinth versions, and the one background job's state. These actions are immediate and
+        #: never staged into ``_plan``.
+        self._fabric_api_jar: Path | None = None
+        self._fabric_api_versions: list = []
+        self._fabric_api_failure = ""
+        self._fabric_api_loading = False
+        self._fabric_api_busy = False
+        self._fabric_api_generation = 0
         #: Loader builds by (loader, minecraft), and - under the same key - whether that loader has
         #: any build for that game version at all (True / False / None while a probe is running).
         self._loader_builds: dict[tuple[str, str], tuple[list, str]] = {}
@@ -3427,6 +3496,15 @@ class InstanceDetail(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
+        # A Fabric instance without Fabric API is the state in which "the mods do not work" is the
+        # next thing the user will report. The strip is above the card, in the page's own column, and
+        # is shown only for that exact state (see _refresh_fabric_api).
+        self.modify_warning = QLabel(tr("instances.detail.fabric_api.warning"))
+        self.modify_warning.setObjectName("modifyWarning")
+        self.modify_warning.setWordWrap(True)
+        self.modify_warning.setVisible(False)
+        layout.addWidget(self.modify_warning)
+
         self.modify_stack = QStackedWidget()
         self.modify_stack.setObjectName("instanceModifyStack")
         # 0 = overview, 1 = version picker. The order is also the default the page opens on.
@@ -3483,11 +3561,20 @@ class InstanceDetail(QWidget):
         rows_layout.setContentsMargins(0, 0, 0, 0)
         rows_layout.setSpacing(0)
         self.modify_rows: dict[str, _ComponentRow] = {}
-        for index, key in enumerate((MODIFY_MC, *MODIFY_LOADERS)):
-            title = "Minecraft" if key == MODIFY_MC else LOADER_TITLES[key]
+        self._fabric_api_separator_before: QFrame | None = None
+        self._fabric_api_separator_after: QFrame | None = None
+        for index, key in enumerate(MODIFY_ROW_ORDER):
+            title = "Minecraft" if key == MODIFY_MC else (
+                "Fabric API" if key == MODIFY_FABRIC_API else LOADER_TITLES[key]
+            )
             row = _ComponentRow(key, title)
             if index:
-                rows_layout.addWidget(self._modify_separator())
+                separator = self._modify_separator()
+                rows_layout.addWidget(separator)
+                if key == MODIFY_FABRIC_API:
+                    self._fabric_api_separator_before = separator
+                elif MODIFY_ROW_ORDER[index - 1] == MODIFY_FABRIC_API:
+                    self._fabric_api_separator_after = separator
             rows_layout.addWidget(row)
             self.modify_rows[key] = row
         card_layout.addWidget(self.modify_rows_container)
@@ -3499,6 +3586,9 @@ class InstanceDetail(QWidget):
                 partial(self.toggle_loader_row, loader_key)
             )
             row.remove_button.clicked.connect(partial(self.remove_loader, loader_key))
+        fabric_api_row = self.modify_rows[MODIFY_FABRIC_API]
+        fabric_api_row.change_button.clicked.connect(self.toggle_fabric_api_row)
+        fabric_api_row.remove_button.clicked.connect(self.remove_fabric_api)
 
         self.modify_hint = QLabel(tr("instances.detail.modify.hint"))
         self.modify_hint.setObjectName("hint")
@@ -4164,6 +4254,7 @@ class InstanceDetail(QWidget):
             self._plan = None
             self._loader_builds.clear()
             self._loader_availability.clear()
+            self._reset_fabric_api_state()
             self._show_modify_overview()
             # The finished archive's path belongs to the instance that was shown a moment ago.
             self._forget_exported_pack()
@@ -4449,6 +4540,7 @@ class InstanceDetail(QWidget):
         self.modify_rows_container.setVisible(ready)
         self.modify_hint.setVisible(ready)
         self._collapse_loader_row()
+        self._collapse_fabric_api_row()
         for row in self.modify_rows.values():
             row.clear_body()
             row.set_expanded(False)
@@ -4457,6 +4549,8 @@ class InstanceDetail(QWidget):
             self.modify_summary_title.setText(tr("instances.detail.value.none"))
             self.modify_summary_subtitle.setText("")
             self._remove_target = None
+            self._reset_fabric_api_state()
+            self.modify_warning.setVisible(False)
             for row in self.modify_rows.values():
                 row.set_value(tr("instances.detail.value.none"), muted=True)
                 row.set_actions()
@@ -4542,10 +4636,11 @@ class InstanceDetail(QWidget):
                 row.set_value(tr("instances.detail.modify.no_versions"), muted=True)
                 row.set_actions()
             else:
-                row.set_value(tr("instances.detail.modify.not_added"), muted=True)
+                row.set_value(tr("instances.detail.modify.can_add"), muted=True)
                 row.set_actions(change=True)
         self._sync_modify_summary()
         self._set_modify_busy(self._switch_busy)
+        self._render_fabric_api_row()
         self._refresh_loader_availability(planned_minecraft)
 
     def _sync_modify_summary(self) -> None:
@@ -4941,6 +5036,304 @@ class InstanceDetail(QWidget):
         if target is None or identity.loader_id != key:
             return
         self._set_plan(replace(self._choice_for_identity(target), loader_id=""))
+
+    # ---------- 修改: Fabric API (a jar in mods/, not a loader) ----------
+
+    def _reset_fabric_api_state(self) -> None:
+        """Forget the jar and the fetched list (a new instance, or no instance at all)."""
+        self._fabric_api_generation += 1
+        self._fabric_api_jar = None
+        self._fabric_api_versions = []
+        self._fabric_api_failure = ""
+        self._fabric_api_loading = False
+        self._fabric_api_busy = False
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is not None:
+            row.setVisible(False)
+        for separator in (
+            self._fabric_api_separator_before,
+            self._fabric_api_separator_after,
+        ):
+            if separator is not None:
+                separator.setVisible(False)
+        if hasattr(self, "modify_warning"):
+            self.modify_warning.setVisible(False)
+
+    def _fabric_api_relevant(self) -> bool:
+        """Only a Fabric instance gets the row: Fabric API means nothing to Forge or vanilla."""
+        return self._identity is not None and self._identity.loader_id == "fabric"
+
+    def _fabric_api_jar_path(self) -> Path | None:
+        if self.resolved is None:
+            return None
+        return fabric_api_jar(self.resolved.mods_dir)
+
+    def _render_fabric_api_row(self) -> None:
+        """Show the Fabric API row (and its warning) for the current, not the staged, loader.
+
+        The row is about a jar that exists on disk right now. A staged plan that would switch this
+        instance to Fabric has not created anything yet, so it must not make the row appear; after
+        开始修改 the page re-reads the instance and the row follows. Nothing here calls
+        ``_sync_modify_summary`` or ``_sync_modify_button``: this row is outside the plan.
+        """
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is None:
+            return
+        relevant = self._fabric_api_relevant() and self.instance is not None
+        row.setVisible(relevant)
+        for separator in (
+            self._fabric_api_separator_before,
+            self._fabric_api_separator_after,
+        ):
+            if separator is not None:
+                separator.setVisible(relevant)
+        if not relevant:
+            self._collapse_fabric_api_row()
+            self._fabric_api_jar = None
+            if hasattr(self, "modify_warning"):
+                self.modify_warning.setVisible(False)
+            return
+        jar = self._fabric_api_jar_path()
+        self._fabric_api_jar = jar
+        if jar is not None:
+            row.set_value(
+                fabric_api_version(jar.name),
+                tooltip=jar.name,
+            )
+            row.set_actions(remove=True)
+            row.set_remove_name(
+                tr("instances.detail.fabric_api.remove")
+            )
+        else:
+            row.set_value(tr("instances.detail.modify.can_add"), muted=True)
+            row.set_actions(change=True)
+        self.modify_warning.setVisible(jar is None)
+        if self._fabric_api_busy:
+            row.set_busy(True)
+
+    def toggle_fabric_api_row(self) -> None:
+        """``›`` opens the Modrinth builds under the row, exactly like a loader's build list."""
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is None or not self._modify_ready or self._switch_busy or self._fabric_api_busy:
+            return
+        if not self._fabric_api_relevant():
+            return
+        if row.is_expanded():
+            self._collapse_fabric_api_row()
+            return
+        self._collapse_loader_row()
+        self._collapse_fabric_api_row()
+        row.set_expanded(True)
+        self._probe_fabric_api_versions()
+
+    def _collapse_fabric_api_row(self) -> None:
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is not None and row.is_expanded():
+            row.set_expanded(False)
+            row.clear_body()
+
+    def _probe_fabric_api_versions(self) -> None:
+        """Ask Modrinth for the ``fabric-api`` builds of this instance's game version."""
+        if self._fabric_api_loading or self._fabric_api_busy:
+            return
+        game_version = self._current_minecraft()
+        if not game_version:
+            return
+        self._fabric_api_generation += 1
+        generation = self._fabric_api_generation
+        self._fabric_api_loading = True
+        self._fabric_api_failure = ""
+        self._fill_fabric_api_body()
+        run_in_background(
+            partial(
+                fetch_modrinth_versions,
+                "fabric-api",
+                game_version=game_version,
+            ),
+            on_result=partial(self._on_fabric_api_versions, generation),
+            on_error=partial(self._on_fabric_api_failed, generation),
+        )
+
+    def _on_fabric_api_versions(self, generation: int, versions) -> None:
+        if not widget_alive(self) or generation != self._fabric_api_generation:
+            return
+        self._fabric_api_loading = False
+        self._fabric_api_versions = list(versions or [])
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is not None and row.is_expanded():
+            self._fill_fabric_api_body()
+
+    def _on_fabric_api_failed(self, generation: int, message: str) -> None:
+        if not widget_alive(self) or generation != self._fabric_api_generation:
+            return
+        self._fabric_api_loading = False
+        self._fabric_api_failure = str(message)
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is not None and row.is_expanded():
+            self._fill_fabric_api_body()
+
+    def _fill_fabric_api_body(self) -> None:
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is None:
+            return
+        row.clear_body()
+        if self._fabric_api_busy:
+            label = QLabel(tr("instances.detail.fabric_api.downloading"))
+            label.setObjectName("hint")
+            label.setWordWrap(True)
+            row.body_layout.addWidget(label)
+            return
+        if self._fabric_api_loading:
+            label = QLabel(tr("instances.detail.fabric_api.loading"))
+            label.setObjectName("hint")
+            label.setWordWrap(True)
+            row.body_layout.addWidget(label)
+            return
+        if self._fabric_api_failure:
+            label = QLabel(
+                tr("instances.detail.fabric_api.failed", self._fabric_api_failure)
+            )
+            label.setObjectName("hint")
+            label.setWordWrap(True)
+            row.body_layout.addWidget(label)
+            retry = QPushButton(tr("instances.detail.fabric_api.retry"))
+            retry.setObjectName("secondaryButton")
+            retry.setAccessibleName(retry.text())
+            retry.clicked.connect(self._probe_fabric_api_versions)
+            row.body_layout.addWidget(retry)
+            return
+        if not self._fabric_api_versions:
+            label = QLabel(
+                tr(
+                    "instances.detail.fabric_api.none",
+                    self._current_minecraft() or "?",
+                )
+            )
+            label.setObjectName("hint")
+            label.setWordWrap(True)
+            row.body_layout.addWidget(label)
+            return
+        caption = QLabel(tr("instances.detail.fabric_api.versions"))
+        caption.setObjectName("hint")
+        row.body_layout.addWidget(caption)
+        for version in self._fabric_api_versions:
+            date = str(getattr(version, "date_published", "") or "")[:10]
+            choice = _SwitchChoice(
+                version_id="",
+                minecraft=self._current_minecraft(),
+                loader="Fabric API",
+                loader_id="fabric",
+                installed=False,
+                meta=str(getattr(version, "version_number", "") or ""),
+            )
+            item = _LoaderBuildRow(
+                choice,
+                title=str(getattr(version, "version_number", "") or "?"),
+                stability="",
+                current=False,
+                status=date,
+            )
+            item.clicked.connect(
+                partial(self._install_fabric_api_version, version)
+            )
+            row.body_layout.addWidget(item)
+
+    def _install_fabric_api_version(self, version, _checked: bool = False) -> None:
+        """Download one Fabric API build straight into the instance's mods folder.
+
+        This is deliberately **not** part of the staged 修改 plan: a jar in ``mods/`` is ordinary
+        content, and PCL's plan exists for loader/core switches. The download starts now, the row is
+        the only thing refreshed at the end, and 开始重置 / 开始修改 keep describing the core.
+        """
+        if (
+            self._fabric_api_busy
+            or self._switch_busy
+            or not self._modify_ready
+            or self.resolved is None
+        ):
+            return
+        file = pick_modrinth_file(version)
+        if file is None or not file.url:
+            set_app_status(self, tr("instances.detail.fabric_api.failed", ""), "error")
+            return
+        destination = self.resolved.mods_dir / file.filename
+        self._fabric_api_busy = True
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is not None:
+            row.set_busy(True)
+        self._fill_fabric_api_body()
+        run_in_background(
+            partial(
+                install_modrinth_project,
+                "fabric-api",
+                game_dir=self.game_dir,
+                game_version=self._current_minecraft(),
+                mod_version=version,
+                dest=destination,
+            ),
+            on_result=partial(self._on_fabric_api_installed, version),
+            on_error=self._on_fabric_api_install_failed,
+        )
+
+    def _on_fabric_api_installed(self, version, _info) -> None:
+        if not widget_alive(self):
+            return
+        self._fabric_api_busy = False
+        self._collapse_fabric_api_row()
+        self._render_fabric_api_row()
+        set_app_status(
+            self,
+            tr(
+                "instances.detail.fabric_api.downloaded",
+                str(getattr(version, "version_number", "") or ""),
+            ),
+        )
+
+    def _on_fabric_api_install_failed(self, message: str) -> None:
+        if not widget_alive(self):
+            return
+        self._fabric_api_busy = False
+        self._fabric_api_failure = str(message)
+        row = self.modify_rows.get(MODIFY_FABRIC_API)
+        if row is not None:
+            row.set_busy(False)
+        self._fill_fabric_api_body()
+        set_app_status(
+            self, tr("instances.detail.fabric_api.failed", str(message)), "error"
+        )
+
+    def remove_fabric_api(self) -> None:
+        """``✕``: delete the jar immediately. Destructive, so the safe button is the default."""
+        if self._fabric_api_busy or not self._modify_ready or self.resolved is None:
+            return
+        jar = self._fabric_api_jar or self._fabric_api_jar_path()
+        if jar is None:
+            self._render_fabric_api_row()
+            return
+        outcome = inwindow_dialog.confirm(
+            self,
+            tr("instances.detail.fabric_api.remove.title"),
+            tr("instances.detail.fabric_api.remove.body", jar.name),
+            accept_text=tr("instances.detail.fabric_api.remove"),
+            reject_text=tr("dialog.cancel"),
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="critical",
+        )
+        if outcome is not inwindow_dialog.Outcome.ACCEPTED:
+            return
+        try:
+            jar.unlink()
+        except OSError as exc:
+            set_app_status(
+                self,
+                tr("instances.detail.fabric_api.delete_failed", str(exc)),
+                "error",
+            )
+            self._render_fabric_api_row()
+            return
+        self._collapse_fabric_api_row()
+        self._render_fabric_api_row()
+        set_app_status(self, tr("instances.detail.fabric_api.deleted"))
 
     # ---------- 修改: the Minecraft version picker ----------
 

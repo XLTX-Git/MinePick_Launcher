@@ -186,6 +186,7 @@ def install(
     preferred: str = "",
     cache_path_override: Path | None = None,
     timeout: float = DOWNLOAD_TIMEOUT,
+    on_latency: mirror_module.LatencyCallback | None = None,
 ) -> Path:
     """Download, verify and install only the CLI; raise :class:`ComponentError` on failure.
 
@@ -214,6 +215,7 @@ def install(
             mirrors=mirrors,
             preferred=preferred_key,
             path=cache_path_override if cache_path_override is not None else cache_path(),
+            on_latency=on_latency,
         )
         ordered = [mirror] + [item for item in mirrors if item.key != mirror.key]
         try:

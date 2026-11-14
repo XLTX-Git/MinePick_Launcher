@@ -46,7 +46,7 @@ from launcher.instances import (
     Instance,
     instance_dir,
 )
-from launcher.mods.models import LoaderVersion
+from launcher.mods.models import LoaderVersion, ModFile, ModVersion
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -228,13 +228,29 @@ def _row(detail, key: str):
 
 def test_the_rows_show_the_current_core_and_the_incompatible_loaders(window):
     _built, _game, detail = window
-    assert [key for key in detail.modify_rows] == ["minecraft", *MODIFY_LOADERS]
+    assert [key for key in detail.modify_rows] == [
+        "minecraft",
+        "fabric",
+        "fabric_api",
+        "forge",
+        "neoforge",
+    ]
     assert _row(detail, "minecraft").value_text() == "1.21.11"
     assert _row(detail, "fabric").value_text() == "0.19.3"
     assert detail.modify_summary_subtitle.text() == "1.21.11 · Fabric 0.19.3"
     # The loaded loader offers both actions; the two others explain why they cannot be used.
     assert _row(detail, "fabric").change_button.isVisibleTo(detail)
     assert _row(detail, "fabric").remove_button.isVisibleTo(detail)
+    # Fabric API is a mods/ jar, not a loader component: this fixture has none, so the row offers
+    # to add it while the page carries the red warning.
+    assert _row(detail, "fabric_api").isVisibleTo(detail)
+    assert _row(detail, "fabric_api").value_text() == i18n.tr(
+        "instances.detail.modify.can_add"
+    )
+    assert detail.modify_warning.isVisibleTo(detail)
+    assert detail.modify_warning.text() == i18n.tr(
+        "instances.detail.fabric_api.warning"
+    )
     for other in ("forge", "neoforge"):
         assert _row(detail, other).value_text() == i18n.tr(
             "instances.detail.modify.incompatible", "Fabric"
@@ -254,10 +270,13 @@ def test_a_vanilla_instance_offers_all_three_loaders(app, window, monkeypatch):
     _settle(app, built)
     for key in MODIFY_LOADERS:
         assert _row(detail, key).value_text() == i18n.tr(
-            "instances.detail.modify.not_added"
+            "instances.detail.modify.can_add"
         )
         assert _row(detail, key).change_button.isVisibleTo(detail)
         assert not _row(detail, key).remove_button.isVisibleTo(detail)
+    # A vanilla instance has no Fabric API row and no warning: Fabric API means nothing there.
+    assert not _row(detail, "fabric_api").isVisibleTo(detail)
+    assert not detail.modify_warning.isVisibleTo(detail)
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +296,7 @@ def test_removing_the_loader_stages_a_plan_and_touches_nothing(app, window, monk
     assert detail.reset_button.text() == i18n.tr("instances.detail.modify.start.modify")
     for key in MODIFY_LOADERS:
         assert _row(detail, key).value_text() == i18n.tr(
-            "instances.detail.modify.not_added"
+            "instances.detail.modify.can_add"
         )
         assert _row(detail, key).change_button.isVisibleTo(detail)
 
@@ -296,7 +315,7 @@ def test_applying_the_plan_runs_the_switch_and_clears_it(app, window, monkeypatc
     assert detail.reset_button.text() == i18n.tr("instances.detail.modify.reset.start")
     assert detail.modify_summary_subtitle.text() == "1.21.11 · 原版"
     assert _row(detail, "fabric").value_text() == i18n.tr(
-        "instances.detail.modify.not_added"
+        "instances.detail.modify.can_add"
     )
     assert _row(detail, "fabric").change_button.isVisibleTo(detail)
     stored = json.loads(_sidecar(game, "红石包"))
@@ -577,3 +596,137 @@ def test_the_switch_shows_up_in_the_window_task_list(app, window, monkeypatch):
     )
     tasks = built.tasks.tasks()
     assert [task.state for task in tasks if task.kind == "version"] == [DONE]
+
+
+# ---------------------------------------------------------------------------
+# 7. Fabric API: a mods/ jar with immediate actions (never a staged plan)
+# ---------------------------------------------------------------------------
+
+
+def _write_fabric_api(detail, name: str = "fabric-api-0.92.6+1.21.11.jar") -> Path:
+    target = detail.resolved.mods_dir / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"PK\x03\x04fabric-api")
+    detail._render_fabric_api_row()
+    return target
+
+
+def test_the_fabric_api_row_shows_the_jar_version_and_removes_with_the_safe_default(
+    app, window, monkeypatch
+):
+    _built, _game, detail = window
+    summary = detail.modify_summary_subtitle.text()
+    button = detail.reset_button.text()
+    jar = _write_fabric_api(detail)
+
+    row = _row(detail, "fabric_api")
+    assert row.value_text() == "0.92.6+1.21.11"
+    assert row.remove_button.isVisibleTo(detail)
+    assert not row.change_button.isVisibleTo(detail)
+    assert not detail.modify_warning.isVisibleTo(detail)
+
+    calls: list[dict] = []
+
+    def reject(*args, **kwargs):
+        calls.append(kwargs)
+        return inwindow_dialog.Outcome.REJECTED
+
+    monkeypatch.setattr(instance_detail.inwindow_dialog, "confirm", reject)
+    detail.remove_fabric_api()
+    app.processEvents()
+    assert jar.is_file(), "the cancel answer must leave the jar alone"
+    assert calls and calls[0]["default"] is inwindow_dialog.Outcome.REJECTED
+    assert calls[0]["severity"] == "critical"
+
+    monkeypatch.setattr(
+        instance_detail.inwindow_dialog,
+        "confirm",
+        lambda *a, **kw: inwindow_dialog.Outcome.ACCEPTED,
+    )
+    detail.remove_fabric_api()
+    app.processEvents()
+    assert not jar.exists()
+    assert _row(detail, "fabric_api").value_text() == i18n.tr(
+        "instances.detail.modify.can_add"
+    )
+    assert detail.modify_warning.isVisibleTo(detail)
+    # The jar row is outside the plan: neither the summary nor the primary button moved.
+    assert detail.modify_summary_subtitle.text() == summary
+    assert detail.reset_button.text() == button
+    assert detail.planned_target() is None
+
+
+def test_fabric_api_expands_modrinth_versions_and_installs_into_mods_without_a_plan(
+    app, window, monkeypatch
+):
+    _built, _game, detail = window
+    summary = detail.modify_summary_subtitle.text()
+    button = detail.reset_button.text()
+    version = ModVersion(
+        version_id="abc123",
+        version_number="0.100.0+1.21.11",
+        loaders=["fabric"],
+        game_versions=["1.21.11"],
+        date_published="2026-02-01T10:00:00Z",
+        files=[
+            ModFile(
+                filename="fabric-api-0.100.0+1.21.11.jar",
+                url="https://example.invalid/fabric-api.jar",
+                primary=True,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        instance_detail, "fetch_modrinth_versions", lambda *a, **kw: [version]
+    )
+    written: list[Path] = []
+
+    def fake_install(slug, *, game_dir, game_version, mod_version, dest):
+        written.append(Path(dest))
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_bytes(b"PK\x03\x04")
+        return object()
+
+    monkeypatch.setattr(instance_detail, "install_modrinth_project", fake_install)
+
+    detail.toggle_fabric_api_row()
+    assert _pump(app, lambda: bool(detail._fabric_api_versions))
+    row = _row(detail, "fabric_api")
+    assert row.is_expanded()
+    assert row.body_layout.count() >= 2  # the caption plus one version row
+
+    detail._install_fabric_api_version(version)
+    assert _pump(app, lambda: not detail._fabric_api_busy and bool(written))
+    assert written == [detail.resolved.mods_dir / "fabric-api-0.100.0+1.21.11.jar"]
+    assert written[0].is_file()
+    assert not row.is_expanded()
+    assert _row(detail, "fabric_api").value_text() == "0.100.0+1.21.11"
+    assert not detail.modify_warning.isVisibleTo(detail)
+    # Immediate action: no staged plan, same summary, same primary button.
+    assert detail.planned_target() is None
+    assert detail.modify_summary_subtitle.text() == summary
+    assert detail.reset_button.text() == button
+
+
+def test_a_non_fabric_instance_has_no_fabric_api_row(app, window):
+    built, _game, _detail = window
+    page = built.pages["instances"]
+    assert page.open_instance("1.21.11")
+    _settle(app, built)
+    detail = page.detail
+    detail.tabs[TAB_MODIFY].click()
+    _settle(app, built)
+    assert not _row(detail, "fabric_api").isVisibleTo(detail)
+    assert not detail.modify_warning.isVisibleTo(detail)
+
+
+def test_the_jar_helper_accepts_case_and_underscore(ws_tmp) -> None:
+    root = ws_tmp / "mods-helper"
+    root.mkdir()
+    (root / "Fabric_API-0.1.0.jar").write_bytes(b"x")
+    found = instance_detail.fabric_api_jar(root)
+    assert found is not None and found.name == "Fabric_API-0.1.0.jar"
+    assert instance_detail.fabric_api_version(found.name) == "0.1.0"
+    assert instance_detail.fabric_api_version("fabric-api.jar") == "fabric-api.jar"
+    (root / "Fabric_API-0.1.0.jar").unlink()
+    assert instance_detail.fabric_api_jar(root) is None

@@ -151,8 +151,16 @@ class LinkSession(Protocol):
     def close_room(self) -> None:
         """Close the room and return to ``IDLE``."""
 
-    def download_core(self, progress_cb: ProgressCallback) -> None:
-        """Download the Terracotta core, reporting 0..1000 through ``progress_cb``."""
+    def download_core(
+        self,
+        progress_cb: ProgressCallback,
+        on_latency=None,
+    ) -> None:
+        """Download the Terracotta core, reporting 0..1000 through ``progress_cb``.
+
+        ``on_latency(key, ms)`` (optional) receives every mirror probe's result, including the ones
+        that arrive after the winner started downloading; ``None`` means the probe timed out.
+        """
 
     def remove_core(self) -> int:
         """Delete the downloaded core and return the bytes removed.
@@ -296,7 +304,7 @@ class FakeLinkSession:
     def close_room(self) -> None:
         self._reset(LinkState.IDLE)
 
-    def download_core(self, progress_cb: ProgressCallback) -> None:
+    def download_core(self, progress_cb: ProgressCallback, on_latency=None) -> None:
         if self._state is not LinkState.NOT_DOWNLOADED:
             return
         for value in (0, 500, 1000):
