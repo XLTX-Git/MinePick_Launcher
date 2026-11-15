@@ -761,6 +761,9 @@ QFrame#pageCard QPlainTextEdit {
 
 /* The step between the 20px page title and the 12px hint: one section heading inside a card. */
 QLabel#sectionTitle { font-size: 15px; font-weight: 600; color: __FG_TEXT__; }
+/* A group inside 特别鸣谢, one weight step under the card title: same colour, 1px smaller, so
+   the heading names a section of the card instead of competing with its own title. */
+QLabel#creditsGroupTitle { font-size: 14px; font-weight: 600; color: __FG_HINT__; }
 /* A form row's own label (no QFormLayout to pass it on): 13px, same colour as body text. */
 QLabel#formLabel { font-size: 13px; color: __FG_TEXT__; }
 

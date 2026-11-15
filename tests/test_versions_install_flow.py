@@ -194,7 +194,7 @@ def _open_step(page, app, version_id: str):
 def test_back_returns_to_the_same_filter_and_scroll_position(page, app) -> None:
     list_widget = page.list
     # Four fold headers plus the 25 release rows the fixture opened.
-    assert list_widget.count() == 29
+    assert list_widget.count() == 29 + page.shortcut_count()
     page.list.setCurrentRow(7)
     app.processEvents()
     scroll_range = list_widget.verticalScrollBar().maximum()
@@ -213,7 +213,8 @@ def test_back_returns_to_the_same_filter_and_scroll_position(page, app) -> None:
 
     assert page.stack.currentWidget() is page._list_step
     assert page.list is list_widget, "the list itself must survive the step"
-    assert page.list.count() == 29
+    # 29 version rows plus the two latest shortcuts that head the list.
+    assert page.list.count() == 29 + page.shortcut_count()
     assert page.list.verticalScrollBar().value() == kept_scroll
     assert page.list.currentRow() == kept_row
 

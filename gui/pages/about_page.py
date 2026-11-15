@@ -340,7 +340,9 @@ class AboutPage(QWidget):
 
         for group_key, entries in notices.groups():
             heading = QLabel(tr(group_key))
-            heading.setObjectName("sectionTitle")
+            # One step below the card's own title: 依赖项 / 其他 are sub-headings inside 特别鸣谢, and at
+            # the same 15/600 they read as sibling cards rather than as groups within one.
+            heading.setObjectName("creditsGroupTitle")
             layout.addWidget(heading)
             for entry in entries:
                 layout.addWidget(self._credit_row(entry))

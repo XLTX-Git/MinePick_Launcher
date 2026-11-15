@@ -1642,13 +1642,11 @@ class _ContentTab(QWidget):
         # left on tabs without a loader, so the whole second row jumped sideways when you changed tabs.
         self._form_grid.addWidget(self.game_version_label, 1, 0)
         self._form_grid.addWidget(self.game_version_edit, 1, 1)
-        # A floor under both fields: sized purely from their labels ("1.20.1", "Fabric") they came out
-        # half the width the row had before, which read as a layout accident rather than a design.
-        self.game_version_edit.setMinimumWidth(190)
+        # Widths are settled once for all four fields of the grid (see _unify_field_widths): the two
+        # rows share columns, so a field sized on its own label alone made the columns mismatch.
         if self.loader_label is not None:
             self._form_grid.addWidget(self.loader_label, 1, 2)
             self._form_grid.addWidget(self.loader_combo, 1, 3)
-            self.loader_combo.setMinimumWidth(190)
         self._form_grid.addWidget(self.slug_edit, 1, 4)
         self._form_grid.addWidget(self.query_button, 1, 5)
         # A hidden slug field must not shrink the action column: both buttons keep the width of the
@@ -2730,6 +2728,9 @@ class ResourcesPage(QWidget):
             tab._form_grid.addWidget(combo, 0, 1)
             self.source_combos.append(combo)
         self.source_combo = self.source_combos[0]  # canonical reference
+        self._unify_field_widths()
+
+
         for tab in (self.mods_tab, self.modpacks_tab, self.resourcepacks_tab, self.shaderpacks_tab):
             tab._update_slug_visibility()
 
@@ -2751,6 +2752,30 @@ class ResourcesPage(QWidget):
         # was hidden; re-read the source list before the first request of this visit.
         self._sync_source_combos()
         self._on_tab_changed(self.tabs.currentIndex())
+
+    def _unify_field_widths(self) -> None:
+        """Give all four filter fields one width.
+
+        The two rows share the same grid columns, so 资源来源 sits directly above MC 版本 and 排序 above
+        加载器. Sizing each field from its own label made the upper and lower fields of a column differ by
+        a few pixels - visible as a ragged edge. One width, taken from the widest of the four, keeps both
+        columns identical; it is a *minimum*, because a fixed size makes QComboBox size its popup from the
+        closed field and grow a scrollbar on a three-item list.
+        """
+        fields: list[QComboBox] = []
+        for tab in (self.mods_tab, self.modpacks_tab, self.resourcepacks_tab, self.shaderpacks_tab):
+            for name in ("sort_combo", "game_version_edit", "loader_combo"):
+                widget = getattr(tab, name, None)
+                if isinstance(widget, QComboBox):
+                    fields.append(widget)
+        fields.extend(self.source_combos)
+        if not fields:
+            return
+        for combo in fields:
+            combo.ensurePolished()
+        width = max(combo.sizeHint().width() for combo in fields) + 16
+        for combo in fields:
+            combo.setMinimumWidth(width)
 
     def _populate_source_combo(self, combo: QComboBox) -> None:
         """Rebuild one source dropdown from the sources that are usable right now.

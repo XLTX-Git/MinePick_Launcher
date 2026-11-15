@@ -1131,29 +1131,10 @@ class VersionsPage(QWidget):
         top.addWidget(self.search_edit, 1)
         top.addWidget(self.refresh_button)
 
-        # Two stacked full-row shortcuts (the brief's "one line each"): a block, the version number and
-        # the kind plus its publication stamp. Clicking one opens the same install step a row's button
-        # opens; there is no second install path.
-        latest_column = QVBoxLayout()
-        latest_column.setSpacing(8)
-        for kind, key in (
-            ("release", "versions.latest.release"),
-            ("snapshot", "versions.latest.snapshot"),
-        ):
-            card = _LatestCard(
-                kind,
-                tr(key),
-                on_click=lambda _checked=False, k=kind: self._install_latest(k),
-                parent=self._list_step,
-            )
-            self.latest_cards[kind] = card
-            latest_column.addWidget(card)
-
         layout = QVBoxLayout(self._list_step)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.addLayout(top)
-        layout.addLayout(latest_column)
         layout.addWidget(self.result_count)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.info_label)
@@ -1283,6 +1264,11 @@ class VersionsPage(QWidget):
         game_dir = self._game_dir()
         cache_root = block_textures.texture_cache_root(paths.launcher_dir())
         for kind in ("release", "snapshot"):
+            # The cards only exist once the fold view has been built; a manifest arriving before that
+            # (or a search mode list) has nothing to fill yet.
+            card = self.latest_cards.get(kind)
+            if card is None:
+                continue
             version_id = (latest.get(kind) or "").strip()
             version = self._manifest_version(version_id)
             if version is None:
@@ -1294,13 +1280,13 @@ class VersionsPage(QWidget):
                     else QPixmap()
                 )
                 self._latest_icons[version_id] = icon
-                self.latest_cards[kind].set_version(version_id, kind, "", icon)
+                card.set_version(version_id, kind, "", icon)
                 continue
             icon = self._row_icon(
                 version.id, version.type, version.id in self._installed, game_dir, cache_root
             )
             self._latest_icons[version.id] = icon
-            self.latest_cards[kind].set_version(
+            card.set_version(
                 version.id,
                 version.type,
                 human_datetime(version.release_time),
@@ -1885,6 +1871,9 @@ class VersionsPage(QWidget):
                     pending.append(self._new_load_more_item(None))
             else:
                 self._search_total = 0
+                # The two shortcuts head the list; a search replaces the whole view, so they are only
+                # built in the fold view.
+                pending.extend(self._new_latest_items())
                 for key in _GROUP_ORDER:
                     pending.append(self._new_header_item(key))
                     if key not in self._expanded:
@@ -1910,6 +1899,8 @@ class VersionsPage(QWidget):
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
 
+        if self.latest_cards:
+            self._update_latest_cards()
         ids = self.version_ids()
         # Never select a row on the user's behalf: an automatic selection would make the bottom action
         # bar look usable the moment a fold opens (or a search returns hits), which is exactly the
@@ -1927,6 +1918,41 @@ class VersionsPage(QWidget):
         # The page may still be inside its first layout pass here; re-apply the viewport width once
         # the widget hierarchy has settled (see _VersionList).
         QTimer.singleShot(0, self.list, self.list.sync_item_widths)
+
+    def shortcut_count(self) -> int:
+        """How many non-version items sit at the head of the list (the two latest shortcuts).
+
+        They are part of the list, not a block above it, so anything that counts rows has to add them -
+        and a test that hard-codes the number would silently pass if a shortcut ever disappeared.
+        """
+        return len(self.latest_cards)
+
+    def _new_latest_items(self) -> list[tuple[QListWidgetItem, QWidget]]:
+        """The two latest-version shortcuts as the list's first items, so they scroll with it.
+
+        They used to live in a column above the list and stayed pinned while the versions scrolled under
+        them - the list is the one scrolling surface, and a fixed block above it reads as a second, frozen
+        list. Clicking a card still opens the same install step a row's button opens.
+        """
+        pending: list[tuple[QListWidgetItem, QWidget]] = []
+        self.latest_cards = {}
+        for kind, key in (
+            ("release", "versions.latest.release"),
+            ("snapshot", "versions.latest.snapshot"),
+        ):
+            card = _LatestCard(
+                kind,
+                tr(key),
+                on_click=lambda _checked=False, k=kind: self._install_latest(k),
+                parent=self.list,
+            )
+            self.latest_cards[kind] = card
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, _LatestCard.HEIGHT + 8))
+            item.setFlags(Qt.ItemFlag.NoItemFlags)  # decorative wrapper; the card is the control
+            self.list.addItem(item)
+            pending.append((item, card))
+        return pending
 
     def _new_row_item(
         self,

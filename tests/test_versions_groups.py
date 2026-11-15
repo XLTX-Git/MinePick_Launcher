@@ -166,7 +166,7 @@ def test_every_fold_starts_closed_and_no_row_is_built(page) -> None:
     from gui.pages import versions_page
 
     assert page.expanded_groups() == []
-    assert page.list.count() == 4, "a closed page is four header items and nothing else"
+    assert page.list.count() == 4 + page.shortcut_count(), "a closed page is four header items and nothing else"
     assert page.rows == []
     assert page.findChildren(versions_page._VersionRow) == []
     headers = page.group_headers()
@@ -190,7 +190,7 @@ def test_opening_a_fold_builds_fifty_rows_and_load_more_adds_fifty(page) -> None
     assert page.is_group_expanded("snapshot")
     assert len(page.rows) == 50, "only the first batch is built"
     # four headers + 50 rows + one "load more" item
-    assert page.list.count() == 4 + 50 + 1
+    assert page.list.count() == 4 + page.shortcut_count() + 50 + 1
     assert len(page.version_ids()) == 50
     assert page.rows[0].version_id == "snap-55"  # newest first
     assert page.rows[0].highlight == ""
@@ -199,7 +199,7 @@ def test_opening_a_fold_builds_fifty_rows_and_load_more_adds_fifty(page) -> None
     assert page._selected_id() == "snap-30"
     page.load_more("snapshot")
     assert len(page.rows) == 55
-    assert page.list.count() == 4 + 55
+    assert page.list.count() == 4 + page.shortcut_count() + 55
     assert page.version_ids()[-1] == "snap-01"
     assert page._selected_id() == "snap-30", "a batch must not move the selection"
 
@@ -210,7 +210,7 @@ def test_opening_a_fold_builds_fifty_rows_and_load_more_adds_fifty(page) -> None
 
     page.collapse_group("snapshot")
     assert page.rows == []
-    assert page.list.count() == 4
+    assert page.list.count() == 4 + page.shortcut_count()
 
     # Space on the focused header is the keyboard path to the same fold.
     from PySide6.QtCore import Qt
@@ -283,7 +283,7 @@ def test_clearing_the_search_returns_to_the_fold_view(page) -> None:
 
     assert page.result_count.isVisible() is False
     # Clearing the box returns to the fold view; the folds the search opened are closed again.
-    assert page.list.count() == 4
+    assert page.list.count() == 4 + page.shortcut_count()
     assert page.group_headers().keys() == {"release", "snapshot", "legacy", "april"}
     assert page.expanded_groups() == []
     assert page.rows == []
@@ -388,7 +388,7 @@ def test_no_selection_hides_the_bottom_actions_and_keeps_the_hint(page) -> None:
     # Opening a fold must not select its first row on the user's behalf: the bar stays away.
     page.group_headers()["release"].click()
     assert page._selected_id() is None
-    assert page.list.count() == 4 + 3
+    assert page.list.count() == 4 + page.shortcut_count() + 3
     _assert_actions_hidden(page)
 
     # A real selection brings the four actions back; collapsing that fold takes them away again.
