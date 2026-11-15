@@ -87,7 +87,7 @@ log = logging.getLogger(__name__)
 PROGRESS_MAX = 1000
 #: The 8px step of the page's 4/8 spacing ladder. The banner's vertical padding uses it, so the bar
 #: is one text line + 8px above and below (or the 35px self-check button + 16px, whichever is taller).
-BANNER_VERTICAL_PADDING = 8
+BANNER_VERTICAL_PADDING = 6
 #: The six reviewed layouts, in the order of the design mock-up. ``FAILED`` borrows the last page.
 SCREEN_STATES: tuple[LinkState, ...] = (
     LinkState.NOT_DOWNLOADED,
@@ -320,6 +320,8 @@ class ToolsPage(QWidget):
     session_changed = Signal()
     #: The progress callback is itself a signal so a real downloader may report from a worker.
     download_progress = Signal(object)
+    #: ``(mirror key, latency in ms or None)`` from the 测速 worker.
+    channel_probe = Signal(str, object)
     #: One mirror probe answered: (key, latency in ms or None = timed out). The mirror race calls its
     #: listener from a daemon thread, so this signal is the hop back to the GUI thread.
     channel_latency = Signal(str, object)
@@ -408,10 +410,10 @@ class ToolsPage(QWidget):
 
         tab_page = QWidget()
         tab_layout = QVBoxLayout(tab_page)
-        # No 4px top inset: the tab bar's 2px underline already separates it from the banner, and the
-        # card's own padding supplies the rest. This is one of the 16px reclaimed for the taller
-        # buttons (see card_layout above); the page must fit 610px without a scrollbar.
-        tab_layout.setContentsMargins(0, 0, 0, 0)
+        # A 4px top inset: the banner used to start flush under the tab bar and read as part of it.
+        # The banner's own vertical padding came down by the same 2px per side, so the page still fits
+        # 610px without a scrollbar.
+        tab_layout.setContentsMargins(0, 4, 0, 0)
         # 4px, not 8: the banner and the two cards already own their inner gaps; this one only
         # separates the banner block from the state card. Together with the footer's 4px top it
         # reclaims the last 8px the taller buttons took, so 988x599 also fits without scrolling.
@@ -673,8 +675,20 @@ class ToolsPage(QWidget):
         self.channels_arrow.setPixmap(_chevron_icon(False))
         channels_layout.addWidget(channels_label)
         channels_layout.addStretch(1)
+        # Measuring lives here because this is where the numbers are shown: the rows used to stay 未测
+        # until a download happened to race the mirrors, with no way to ask for a measurement.
+        self.channels_measure_button = QPushButton(tr("tools.onboard.channels.measure"))
+        self.channels_measure_button.setObjectName("secondaryButton")
+        self.channels_measure_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.channels_measure_button.setAccessibleName(tr("tools.onboard.channels.measure"))
+        self.channels_measure_button.clicked.connect(self._measure_channels)
+        channels_layout.addWidget(self.channels_measure_button)
         channels_layout.addWidget(self.channels_arrow)
         self.channels_button.toggled.connect(self._on_channels_toggled)
+        # One signal per probe result: the measurement runs on a worker and every row updates as its
+        # own answer arrives, so a slow mirror never delays the other two.
+        self.channel_probe.connect(self._on_channel_probe)
+        self._measuring_channels = False
         layout.addWidget(self.channels_button)
 
         self.channels_detail = self._build_channels()
@@ -1573,6 +1587,51 @@ class ToolsPage(QWidget):
             return
         self._selected_channel = key if key in self.channel_buttons else ""
         _save_mirror_choice(self._selected_channel)
+
+    def _measure_channels(self) -> None:
+        """Time all three mirrors now, updating each row as its answer arrives.
+
+        The rows above are a cache of the last race a download ran; until this existed a person who had
+        never downloaded had no way to get a number, and the section read 未测 forever.
+        """
+        if self._measuring_channels:
+            return
+        self._measuring_channels = True
+        self.channels_measure_button.setEnabled(False)
+        self.channels_measure_button.setText(tr("tools.onboard.channels.measuring"))
+
+        def arrived(key: str, latency: int | None) -> None:
+            self.channel_probe.emit(key, latency)
+
+        def work():
+            from launcher.link import mirrors as mirrors_module
+
+            return mirrors_module.measure_hosts(on_latency=arrived)
+
+        def done(_report) -> None:
+            # No re-read from disk here: the callbacks above already painted every row with what this
+            # measurement found. Reading the cache again would replace a fresh number with whatever
+            # happened to be stored, which is exactly the state the button was added to escape.
+            self._measuring_channels = False
+            self.channels_measure_button.setEnabled(True)
+            self.channels_measure_button.setText(tr("tools.onboard.channels.measure"))
+
+        def failed(_message: str) -> None:
+            self._measuring_channels = False
+            self.channels_measure_button.setEnabled(True)
+            self.channels_measure_button.setText(tr("tools.onboard.channels.measure"))
+
+        run_in_background(work, on_result=done, on_error=failed)
+
+    def _on_channel_probe(self, key: str, latency: object) -> None:
+        """One mirror answered (or gave up): paint that row without waiting for the others."""
+        label = self.channel_speed_labels.get(key)
+        if label is None:
+            return
+        if isinstance(latency, int):
+            label.setText(tr("tools.onboard.channels.latency", latency))
+        else:
+            label.setText(tr("tools.onboard.channels.timeout"))
 
     def _refresh_channel_speeds(self) -> None:
         """Show the last measured latency per mirror: 超时 for a failed probe, else 未测."""

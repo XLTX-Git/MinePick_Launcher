@@ -449,3 +449,53 @@ def choose_mirror(
                 path,
             )
     return winner
+
+def measure_hosts(
+    mirrors: Sequence[Mirror] = MIRRORS,
+    *,
+    timeout: float = 4.0,
+    on_latency: LatencyCallback | None = None,
+    path: Path | None = None,
+) -> MirrorReport:
+    """Time a request to each mirror's host and record it; the page's 测速 button calls this.
+
+    This measures the *host*, not a specific file: the page cannot know which core build will be
+    downloaded, and a fabricated asset path would measure a 404 as fast. A host round trip is what the
+    rows claim to show, and it is honest about being a rough number.
+
+    ``chosen`` is deliberately left empty - a host that answers quickly is not necessarily the fastest
+    for a 20 MB file, so the next real download still races instead of trusting this.
+    """
+    results: dict[str, int] = {}
+    failed: set[str] = set()
+    lock = threading.Lock()
+
+    def probe(mirror: Mirror) -> None:
+        started = time.monotonic()
+        value: int | None
+        try:
+            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(timeout)) as client:
+                response = client.head(mirror.base_url)
+                ok = response.status_code < 400
+            value = max(1, round((time.monotonic() - started) * 1000)) if ok else None
+        except (httpx.HTTPError, OSError):
+            value = None
+        with lock:
+            if value is None:
+                failed.add(mirror.key)
+            else:
+                results[mirror.key] = value
+        _notify_latency(on_latency, mirror.key, value)
+
+    threads = [
+        threading.Thread(target=probe, args=(mirror,), name=f"mirror-host-{mirror.key}", daemon=True)
+        for mirror in mirrors
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout + 2.0)
+
+    report = MirrorReport(latency_ms=dict(results), measured_at=time.time(), failed=tuple(sorted(failed)))
+    _write_report(report, path)
+    return report

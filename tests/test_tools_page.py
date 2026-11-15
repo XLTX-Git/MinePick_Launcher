@@ -662,18 +662,20 @@ def test_the_page_has_no_self_check_column(app) -> None:
         _close(app, page)
 
 
-def test_banner_height_is_the_button_plus_the_8px_padding(app) -> None:
-    """The green bar is one line plus 8px above and below, not a thick empty block.
+def test_banner_height_is_the_button_plus_its_padding(app) -> None:
+    """The green bar is one line plus 6px above and below, not a thick empty block.
 
-    The floor is the self-check button: 35px + 8 + 8. A shorter bar would squash the button, which
-    is exactly what the old fixed 26px height did. 56px is the ceiling from the user's report.
+    The floor is the self-check button: 35px + 6 + 6, so the padding comes from the module constant
+    rather than a literal. A shorter bar would squash the button, which is exactly what the old fixed
+    26px height did; 56px stays the ceiling from the user's report.
     """
+    from gui.pages.tools_page import BANNER_VERTICAL_PADDING
     page = _show(app, FakeLinkSession(state=LinkState.IDLE))
     try:
         banner = page.findChild(QFrame, "toolsBanner")
         text = page.findChild(QLabel, "toolsBannerText")
         assert banner is not None and text is not None
-        assert banner.height() >= page.self_check_button.height() + 16, (
+        assert banner.height() >= page.self_check_button.height() + 2 * BANNER_VERTICAL_PADDING, (
             f"banner {banner.height()}px < self-check button "
             f"{page.self_check_button.height()}px + 16px"
         )
@@ -1382,4 +1384,34 @@ def test_language_switch_rebuilds_the_tools_entry_and_page(app, monkeypatch, ws_
         window.deleteLater()
         app.processEvents()
 
+def test_measuring_channels_fills_every_row_and_says_so(app, monkeypatch) -> None:
+    """测速 had to exist: the rows only ever showed a cache that a download happened to write."""
+    from launcher.link import mirrors as mirrors_module
 
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        calls: list[str] = []
+
+        def fake_measure(*, on_latency=None, **kwargs):
+            for key, value in (("cnb", 20), ("gitee", 40), ("github", None)):
+                calls.append(key)
+                if on_latency is not None:
+                    on_latency(key, value)
+            return mirrors_module.MirrorReport(latency_ms={"cnb": 20, "gitee": 40}, failed=("github",))
+
+        monkeypatch.setattr(mirrors_module, "measure_hosts", fake_measure)
+        page.channels_measure_button.click()
+        # The rows already read 未测 before the click, so wait for the *answer*, not for non-empty text.
+        for _ in range(200):
+            app.processEvents()
+            if "20" in page.channel_speed_labels["cnb"].text():
+                break
+            time.sleep(0.01)
+        labels = {key: label.text() for key, label in page.channel_speed_labels.items()}
+        assert "20" in labels["cnb"]
+        assert "40" in labels["gitee"]
+        assert labels["github"] == i18n.tr("tools.onboard.channels.timeout")
+        assert calls == ["cnb", "gitee", "github"]
+        assert page.channels_measure_button.isEnabled()
+    finally:
+        _close(app, page)
