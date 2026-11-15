@@ -58,6 +58,7 @@ from PySide6.QtWidgets import (
 
 from gui import i18n, inwindow_dialog, paint_utils, theme
 from gui.errors import show_fatal
+from gui.image_retry import IconRetrier
 from gui.tasks import CANCELLED, KIND_TITLE_KEYS, Task, format_size, task_center_of
 from gui.widgets import (
     EmptyState,
@@ -1508,6 +1509,9 @@ class _ContentTab(QWidget):
         self._rows: list[_ResourceRow] = []
         self._icon_cache: dict[str, QPixmap] = {}
         self._icon_pending: set[str] = set()
+        #: A failed download is retried while this page lives (backoff, bounded); the tile stops being
+        #: blank the moment the network comes back instead of waiting for the list to be rebuilt.
+        self._icon_retry = IconRetrier(self, self._request_icon_url)
         self._hit: ModSearchHit | None = None
         self._current: ModInfo | None = None
         self._current_slug = ""
@@ -1632,10 +1636,10 @@ class _ContentTab(QWidget):
         self._form_grid.addWidget(self.sort_combo, 0, 3)
         self._form_grid.addWidget(self.search_edit, 0, 4)
         self._form_grid.addWidget(self.search_button, 0, 5)
-        # The game-version pair takes the first field column when the tab has no loader row. It used to
-        # sit under "排序" unconditionally, which left the whole left half of the second row empty on
-        # 整合包 / 资源包 / 光影 and read as "the row is not aligned".
-        version_column = 2 if self.loader_label is not None else 0
+        # The game-version pair keeps columns 2/3 on every tab, so switching 模组 → 整合包 only removes the
+        # loader field: the version field does not move. It used to slide into column 0 when there was no
+        # loader, which made the whole second row jump sideways as you changed tabs.
+        version_column = 2
         if self.loader_label is not None:
             self._form_grid.addWidget(self.loader_label, 1, 0)
             self._form_grid.addWidget(self.loader_combo, 1, 1)
@@ -1843,18 +1847,28 @@ class _ContentTab(QWidget):
                 self._icon_cache[url] = pixmap
                 row.set_icon(pixmap)
                 return
+        self._request_icon_url(url)
+
+    def _request_icon_url(self, url: str) -> None:
+        """Start one download for ``url`` unless it is already in flight (the retry path calls this)."""
         if url in self._icon_pending:
             return
         self._icon_pending.add(url)
         run_in_background(
             lambda: _fetch_icon_bytes(url),
             on_result=lambda data: self._on_icon_ready(url, data),
-            on_error=lambda _message: self._icon_pending.discard(url),
+            on_error=lambda _message: self._on_icon_failed(url),
             on_finished=lambda: self._icon_pending.discard(url),
         )
 
+    def _on_icon_failed(self, url: str) -> None:
+        """Clear the in-flight mark and schedule another try, so the tile is not blank forever."""
+        self._icon_pending.discard(url)
+        self._icon_retry.failed(url)
+
     def _on_icon_ready(self, url: str, data: object) -> None:
         self._icon_pending.discard(url)
+        self._icon_retry.succeeded(url)
         if not isinstance(data, (bytes, bytearray)):
             return
         pixmap = QPixmap()

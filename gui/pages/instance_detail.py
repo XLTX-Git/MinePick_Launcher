@@ -80,6 +80,7 @@ from gui.accessibility_launch import (
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
+from gui.image_retry import IconRetrier
 from gui.pages.export_selection import ExportCategoryCheck, ExportFilePanel
 from gui.pages.instance_files import (
     backup_save,
@@ -1203,6 +1204,8 @@ CHOICE_ROW_HEIGHT = 56
 CHOICE_ROW_PADDING = 16
 CHOICE_ROW_RADIUS = 8
 CHOICE_ROW_CHEVRON = 12
+#: The block icon the picker paints at the left of a row (the versions page uses the same size).
+CHOICE_ROW_ICON = 24
 #: The picker's list scrolls instead of growing the card past the window.
 CHOICE_LIST_MAX_HEIGHT = 320
 #: Catalog rows built at a time. The official manifest holds ~900 versions; building one widget per
@@ -1770,6 +1773,55 @@ def fetch_catalog() -> list:
     return _CATALOG_CACHE
 
 
+def _version_block_pixmap(
+    version_id: str, version_type: str, *, installed: bool, game_dir: Path
+) -> QPixmap:
+    """The block the versions page would draw for this version, or an empty pixmap.
+
+    Same function the versions page uses, so a row here and the same row there cannot disagree about
+    what 26.3 looks like. Only an installed version can read its own texture from the game folder;
+    everything else falls back to the drawn block.
+    """
+    from gui import block_icons
+    from launcher.meta import block_textures
+
+    try:
+        category = block_textures.icon_category(version_id, version_type)
+        block = block_textures.block_name_for_category(category)
+        return block_icons.block_pixmap(
+            block,
+            CHOICE_ROW_ICON,
+            game_dir=game_dir if installed else None,
+            version_id=version_id,
+            cache_root=block_textures.texture_cache_root(paths.launcher_dir()),
+        )
+    except Exception:  # noqa: BLE001 - an icon is decoration; a failure must not empty the row
+        return QPixmap()
+
+
+class _FitStack(QStackedWidget):
+    """A stack whose height is the page on screen, not the tallest page it holds.
+
+    ``QStackedWidget.sizeHint()`` is the maximum over every page, and the detail page puts this stack
+    straight inside a ``QScrollArea``: a short tab therefore inherited the tall tab's height and could
+    be scrolled far past its own content, into empty space. Reporting the current page keeps the
+    scrollbar's range exactly as long as what is on screen.
+    """
+
+    def sizeHint(self) -> QSize:
+        page = self.currentWidget()
+        if page is None:
+            return super().sizeHint()
+        hint = page.sizeHint()
+        return QSize(hint.width(), hint.height())
+
+    def minimumSizeHint(self) -> QSize:
+        page = self.currentWidget()
+        if page is None:
+            return super().minimumSizeHint()
+        return page.minimumSizeHint()
+
+
 class _VersionChoiceRow(QAbstractButton):
     """One version the instance can be pointed at: its identity, its state and its profile id.
 
@@ -1792,9 +1844,17 @@ class _VersionChoiceRow(QAbstractButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._hover = False
+        #: The block standing for this version's type, when one could be drawn. Painted at the row's
+        #: left edge; the text starts to its right.
+        self._icon: QPixmap | None = None
         self.setAccessibleName(f"{self.label_text()} · {self.status_text()}")
         self.setAccessibleDescription(self.meta_text())
         self.setToolTip(self.meta_text())
+
+    def set_block_icon(self, pixmap: QPixmap | None) -> None:
+        """Give the row the same block the versions page would show for this version."""
+        self._icon = pixmap if pixmap is not None and not pixmap.isNull() else None
+        self.update()
 
     def label_text(self) -> str:
         """``1.21.11 · Fabric 0.19.3`` - what the instance would run, in one line."""
@@ -1848,6 +1908,16 @@ class _VersionChoiceRow(QAbstractButton):
 
         chevron_left = self.width() - CHOICE_ROW_PADDING - CHOICE_ROW_CHEVRON
         text_left = CHOICE_ROW_PADDING
+        if self._icon is not None:
+            icon_size = CHOICE_ROW_ICON
+            painter.drawPixmap(
+                CHOICE_ROW_PADDING,
+                (CHOICE_ROW_HEIGHT - icon_size) // 2,
+                icon_size,
+                icon_size,
+                self._icon,
+            )
+            text_left = CHOICE_ROW_PADDING + icon_size + 10
         title_font = QFont(self.font())
         title_font.setPixelSize(15)
         title_font.setWeight(QFont.Weight.DemiBold)
@@ -2328,6 +2398,8 @@ class InstanceDetail(QWidget):
         #: only saves decoding the same image again when a list is refilled.
         self._icon_pixmaps: dict[str, QPixmap] = {}
         self._icon_pending: set[str] = set()
+        #: Same retry contract as the mods page: a cold icon that failed comes back on its own.
+        self._icon_retry = IconRetrier(self, self._request_remote_icon)
         self.identity_ready.connect(self._on_identity_ready)
 
         self.tab_group = QButtonGroup(self)
@@ -2354,7 +2426,7 @@ class InstanceDetail(QWidget):
         content_layout.setSpacing(PAGE_HEADER_GAP)
         content_layout.addWidget(self._build_header())
 
-        self.stack = QStackedWidget()
+        self.stack = _FitStack()
         self.stack.setObjectName("instanceContentStack")
         for builder in (
             self._build_overview,
@@ -2517,6 +2589,8 @@ class InstanceDetail(QWidget):
             # overview, and the sidebar's checked row is untouched either way.
             self._show_modify_overview()
         self.stack.setCurrentIndex(index)
+        # The stack's size hint follows the current page now; Qt does not re-ask on its own.
+        self.stack.updateGeometry()
         self._sync_sidebar()
         self._ensure_tab_data(index)
 
@@ -5458,7 +5532,15 @@ class InstanceDetail(QWidget):
                     version_human_datetime(
                         str(getattr(version, "release_time", "") or "")
                     ),
-                    QPixmap(),
+                    _version_block_pixmap(
+                        str(getattr(version, "id", "")),
+                        str(getattr(version, "type", "") or kind),
+                        installed=version_json_path(
+                            instance_dir(self.game_dir, str(getattr(version, "id", "")))
+                        )
+                        is not None,
+                        game_dir=self.game_dir,
+                    ),
                 )
                 holder_layout.addWidget(card, 1)
             layout.addWidget(holder)
@@ -5483,6 +5565,14 @@ class InstanceDetail(QWidget):
                 choice = self._choice_for_catalog(version)
                 self._picker_choices[choice.version_id] = choice
                 row = _VersionChoiceRow(choice)
+                row.set_block_icon(
+                    _version_block_pixmap(
+                        choice.version_id,
+                        str(getattr(version, "type", "") or "release"),
+                        installed=choice.installed,
+                        game_dir=self.game_dir,
+                    )
+                )
                 row.clicked.connect(partial(self._pick_choice, choice))
                 layout.addWidget(row)
             if len(entries) > limit:
@@ -7505,14 +7595,20 @@ class InstanceDetail(QWidget):
         run_in_background(
             lambda: http_cache.fetch_icon_bytes(url),
             on_result=lambda data, url=url: self._on_icon_ready(url, data),
-            on_error=lambda _message, url=url: self._icon_pending.discard(url),
+            on_error=lambda _message, url=url: self._on_icon_failed(url),
             on_finished=lambda url=url: self._icon_pending.discard(url),
         )
+
+    def _on_icon_failed(self, url: str) -> None:
+        """Clear the in-flight mark and try again later; a failed icon must not stay a cube forever."""
+        self._icon_pending.discard(url)
+        self._icon_retry.failed(url)
 
     def _on_icon_ready(self, url: str, data: object) -> None:
         """One download arrived: repaint the rows that asked for that URL, and only those rows."""
         try:
             self._icon_pending.discard(url)
+            self._icon_retry.succeeded(url)
         except RuntimeError:  # the page was torn down while the worker ran
             return
         if not isinstance(data, (bytes, bytearray)):
