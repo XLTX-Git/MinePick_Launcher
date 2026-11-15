@@ -121,6 +121,9 @@ class LookupRequest:
     kind: str
     game_version: str = ""
     loader: str = ""
+    #: The file on disk, when the caller has one. A path turns the lookup into a hash match first -
+    #: the only identification that survives a rename and cannot hit the wrong project.
+    path: str = ""
 
 
 #: The master switch. It lives in this process (the settings page writes it from the user's choice);
@@ -485,6 +488,93 @@ def _query(
     return _identity_from_hit(kind, hit, project, latest)
 
 
+def file_sha1(path: Path) -> str:
+    """The SHA-1 of a file on disk, in 64 KB chunks.
+
+    Modrinth's ``/version_file/{hash}`` is the only identification that cannot be wrong: a jar renamed
+    to something meaningless still hashes to the file the author uploaded. That is the difference the
+    "updatable" badge needs.
+    """
+    digest = hashlib.sha1()
+    with Path(path).open("rb") as handle:
+        while chunk := handle.read(1 << 16):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _version_from_hash(client: httpx.Client, sha1: str) -> dict | None:
+    """The Modrinth version this exact file is, or None when the file is not from Modrinth."""
+    try:
+        payload = _request_json(client, f"/version_file/{sha1}", {"algorithm": "sha1"})
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return None
+        raise
+    return payload if isinstance(payload, dict) else None
+
+
+def lookup_by_hash(
+    path: Path,
+    kind: str,
+    *,
+    game_version: str = "",
+    loader: str = "",
+    client: httpx.Client | None = None,
+    ttl: float = CACHE_TTL,
+    now: float | None = None,
+) -> Identity | None:
+    """Identify a file by its content hash; ``None`` when it is not a Modrinth file.
+
+    This is the honest half of identification. The name-based :func:`lookup` searches and matches a hit
+    by name, so two projects can share a name and a renamed file loses its identity entirely. A hash
+    match cannot be wrong: Modrinth's answer is the version whose file bytes are these bytes.
+
+    A hit is cached under the hash, so the same file in twenty instances is looked up once. A 404 (a
+    file from CurseForge, or hand-made) is not cached as an answer - it is simply "not a Modrinth file",
+    and the caller falls back to :func:`lookup`.
+    """
+    if kind not in KINDS or not is_enabled():
+        return None
+    try:
+        sha1 = file_sha1(path)
+    except OSError:
+        return None
+    if not sha1:
+        return None
+    key = _cache_key(kind, f"sha1:{sha1}", "", game_version, loader)
+    found, cached, fetched = _read_cache(kind, key)
+    stamp = time.time() if now is None else float(now)
+    if found and stamp - fetched <= ttl:
+        return cached
+
+    own = client is None
+    active = client or _client()
+    try:
+        version = _version_from_hash(active, sha1)
+        if version is None:
+            return None
+        project_id = str(version.get("project_id") or "").strip()
+        if not project_id:
+            return None
+        project = _request_json(active, f"/project/{project_id}")
+        if not isinstance(project, dict):
+            return None
+        latest = (
+            _latest_version(active, str(project.get("slug") or ""), game_version, loader)
+            if game_version and project.get("slug")
+            else ""
+        )
+        identity = _identity_from_hit(kind, {}, project, latest)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, UnicodeError) as exc:
+        LOGGER.debug("哈希识别失败: %s (%s)", path, exc, exc_info=True)
+        return cached if found else None
+    finally:
+        if own:
+            active.close()
+    _write_cache(kind, key, identity)
+    return identity
+
+
 def lookup(
     name: str,
     modid: str,
@@ -580,6 +670,19 @@ class LookupQueue:
 
     @staticmethod
     def _default_worker(request: LookupRequest) -> Identity | None:
+        if request.path:
+            try:
+                by_hash = lookup_by_hash(
+                    Path(request.path),
+                    request.kind,
+                    game_version=request.game_version,
+                    loader=request.loader,
+                )
+            except Exception:
+                LOGGER.debug("哈希识别异常: %s", request.path, exc_info=True)
+                by_hash = None
+            if by_hash is not None:
+                return by_hash
         return lookup(
             request.name,
             request.modid,

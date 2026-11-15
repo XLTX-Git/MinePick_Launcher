@@ -26,6 +26,7 @@ happened to return. The cache lives under a temporary launcher data directory, w
 from __future__ import annotations
 
 import itertools
+import pathlib
 import threading
 import time
 
@@ -400,3 +401,89 @@ def test_forget_cached_icon_removes_exactly_that_entry(monkeypatch, ws_tmp):
     assert http_cache.cached_icon_bytes(url) is None
     assert http_cache.cached_icon_bytes(other) is not None, "another URL's icon must survive"
     assert identity.forget_cached_icon(url) is False, "forgetting a missing entry is not an error"
+
+# ---------------------------------------------------------------------------------------------
+# Hash identification: the only one that cannot be wrong
+# ---------------------------------------------------------------------------------------------
+
+
+def _jar(ws_tmp, payload: bytes = b"PK\x03\x04not-really-a-jar") -> pathlib.Path:
+    target = ws_tmp / "some-renamed-thing.jar"
+    target.write_bytes(payload)
+    return target
+
+
+def test_a_file_is_identified_by_its_content_not_its_name(ws_tmp, monkeypatch) -> None:
+    """A renamed jar still hashes to the file the author uploaded, so the update badge is right."""
+    from launcher.mods import identity
+
+    path = _jar(ws_tmp)
+    sha1 = identity.file_sha1(path)
+    assert len(sha1) == 40
+
+    seen: list[str] = []
+
+    def fake_version(client, value):
+        seen.append(value)
+        return {"project_id": "PROJECT", "version_number": "1.2.3"}
+
+    monkeypatch.setattr(identity, "_version_from_hash", fake_version)
+    monkeypatch.setattr(
+        identity,
+        "_request_json",
+        lambda client, path_, params=None: {
+            "slug": "sodium",
+            "title": "Sodium",
+            "description": "Renderer",
+            "icon_url": "https://cdn.example/icon.png",
+            "categories": [],
+        },
+    )
+    monkeypatch.setattr(identity, "_latest_version", lambda *a, **k: "1.2.4")
+
+    found = identity.lookup_by_hash(
+        path, "mod", game_version="1.21.11", loader="fabric", client=object()
+    )
+
+    assert seen == [sha1], "the hash of the bytes on disk is what gets asked about"
+    assert found is not None
+    assert found.slug == "sodium"
+    assert found.latest_version == "1.2.4"
+
+
+def test_a_file_that_is_not_from_modrinth_answers_none(ws_tmp, monkeypatch) -> None:
+    from launcher.mods import identity
+
+    monkeypatch.setattr(identity, "_version_from_hash", lambda client, sha1: None)
+    assert identity.lookup_by_hash(_jar(ws_tmp), "mod", client=object()) is None
+
+
+def test_the_queue_tries_the_hash_before_the_name(ws_tmp, monkeypatch) -> None:
+    """When the row knows its file, a hash hit ends the lookup - no search, no name matching."""
+    from launcher.mods import identity
+
+    path = _jar(ws_tmp)
+    hit = identity.Identity(kind="mod", slug="sodium", title="Sodium", description="")
+    monkeypatch.setattr(identity, "lookup_by_hash", lambda *a, **k: hit)
+    called: list[str] = []
+    monkeypatch.setattr(identity, "lookup", lambda *a, **k: called.append("name") or None)
+
+    request = identity.LookupRequest(
+        key="mod:a.jar", name="a", modid="sodium", kind="mod", path=str(path)
+    )
+    assert identity.LookupQueue._default_worker(request) is hit
+    assert called == [], "a hash hit must not fall through to the name search"
+
+
+def test_a_hash_miss_falls_back_to_the_name_lookup(ws_tmp, monkeypatch) -> None:
+    from launcher.mods import identity
+
+    path = _jar(ws_tmp)
+    fallback = identity.Identity(kind="mod", slug="other", title="Other", description="")
+    monkeypatch.setattr(identity, "lookup_by_hash", lambda *a, **k: None)
+    monkeypatch.setattr(identity, "lookup", lambda *a, **k: fallback)
+
+    request = identity.LookupRequest(
+        key="mod:b.jar", name="b", modid="", kind="mod", path=str(path)
+    )
+    assert identity.LookupQueue._default_worker(request) is fallback

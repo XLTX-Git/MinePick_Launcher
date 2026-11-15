@@ -7103,7 +7103,14 @@ class InstanceDetail(QWidget):
         yield from self.saves_rows
 
     def _request_identity(
-        self, key: str, *, name: str, modid: str, kind: str, loader: str = ""
+        self,
+        key: str,
+        *,
+        name: str,
+        modid: str,
+        kind: str,
+        loader: str = "",
+        path: Path | str | None = None,
     ) -> None:
         """Queue one lookup unless it is already known or already queued (and the switch is on)."""
         if not online_identity_enabled() or not identity.is_enabled() or self.resolved is None:
@@ -7117,6 +7124,9 @@ class InstanceDetail(QWidget):
             kind=kind,
             game_version=self._game_version(),
             loader=loader,
+            # The file itself, when the row knows it: a hash match names the project exactly, where the
+            # search below can match the wrong project or none at all after a rename.
+            path=str(path) if path else "",
         )
         self._identity_pending.add(key)
         if not self._identity_queue.submit(request, self._identity_arrived):
@@ -7345,6 +7355,7 @@ class InstanceDetail(QWidget):
                 modid=mod.mod_id,
                 kind="mod",
                 loader=mod.loader,
+                path=getattr(mod, "path", None),
             )
         return row
 
@@ -7539,7 +7550,9 @@ class InstanceDetail(QWidget):
             row.apply(detail=tr("instances.detail.identity.off"))
         else:
             query = identity.pack_search_name(item.name)
-            self._request_identity(row.key, name=query, modid="", kind=kind)
+            self._request_identity(
+                row.key, name=query, modid="", kind=kind, path=item.path
+            )
         return row
 
     def delete_selected_content(self, subdir: str) -> None:
