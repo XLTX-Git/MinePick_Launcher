@@ -193,20 +193,26 @@ def test_a_saved_choice_skips_the_race(monkeypatch, ws_tmp) -> None:
 def test_all_three_channels_are_measured_after_the_winner_is_returned(
     monkeypatch, ws_tmp
 ) -> None:
-    """The download starts on the first answer; the two slow probes still report afterwards."""
+    """The winner is returned at once; the other two rows fill in afterwards, in the cache too.
+
+    The probes are injected rather than served over loopback: three real sockets with sub-second
+    budgets made this test fail under load for reasons that had nothing to do with the race.
+    """
     _data_dir(monkeypatch, ws_tmp)
-    fast = FakeMirror(b"x")
-    mid = FakeMirror(b"x", delay=0.25)
-    slow = FakeMirror(b"x", delay=0.45)
     mirrors = (
-        mirror_module.Mirror("cnb", "CNB", fast.base_url),
-        mirror_module.Mirror("gitee", "Gitee", mid.base_url),
-        mirror_module.Mirror("github", "GitHub", slow.base_url),
+        mirror_module.Mirror("cnb", "CNB", "http://cnb.invalid/"),
+        mirror_module.Mirror("gitee", "Gitee", "http://gitee.invalid/"),
+        mirror_module.Mirror("github", "GitHub", "http://github.invalid/"),
     )
+    delays = {"cnb": 0.0, "gitee": 0.2, "github": 0.4}
     seen: list[tuple[str, int | None]] = []
     after_return: list[str] = []
     returned = threading.Event()
     lock = threading.Lock()
+
+    def probe(mirror, _version, _asset, _timeout):
+        time.sleep(delays[mirror.key])
+        return 10 + int(delays[mirror.key] * 100)
 
     def on_latency(key: str, latency: int | None) -> None:
         with lock:
@@ -215,42 +221,41 @@ def test_all_three_channels_are_measured_after_the_winner_is_returned(
                 after_return.append(key)
 
     report_path = ws_tmp / "mirror-pick.json"
-    try:
-        started = time.monotonic()
-        chosen = mirror_module.choose_mirror(
-            version="0.4.2",
-            asset="asset.tar.gz",
-            mirrors=mirrors,
-            path=report_path,
-            timeout=2.0,
-            on_latency=on_latency,
-        )
-        elapsed = time.monotonic() - started
-        returned.set()
-        # The winner is returned without waiting for the two delayed probes.
-        assert chosen.key == "cnb"
-        assert elapsed < 0.2, f"the race blocked for {elapsed:.2f}s on the slow mirrors"
-        assert wait_until(lambda: len(seen) == 3, timeout=5.0), seen
-        assert {key for key, _latency in seen} == {"cnb", "gitee", "github"}
-        assert all(latency is not None for _key, latency in seen)
-        assert set(after_return) == {"gitee", "github"}, after_return
-        assert wait_until(
-            lambda: set(mirror_module.read_report(report_path).latency_ms)
-            == {"cnb", "gitee", "github"},
-            timeout=5.0,
-        ), mirror_module.read_report(report_path).latency_ms
-        report = mirror_module.read_report(report_path)
-        assert report.chosen == "cnb"
-    finally:
-        for server in (fast, mid, slow):
-            server.stop()
+    started = time.monotonic()
+    chosen = mirror_module.choose_mirror(
+        version="0.4.2",
+        asset="asset.tar.gz",
+        mirrors=mirrors,
+        path=report_path,
+        timeout=2.0,
+        on_latency=on_latency,
+        probe=probe,
+    )
+    elapsed = time.monotonic() - started
+    returned.set()
+
+    assert chosen.key == "cnb"
+    assert elapsed < 0.2, f"the race blocked for {elapsed:.2f}s on the slow mirrors"
+    assert wait_until(lambda: len(seen) == 3, timeout=5.0), seen
+    assert {key for key, _latency in seen} == {"cnb", "gitee", "github"}
+    assert all(latency is not None for _key, latency in seen)
+    assert set(after_return) == {"gitee", "github"}, after_return
+    assert wait_until(
+        lambda: set(mirror_module.read_report(report_path).latency_ms)
+        == {"cnb", "gitee", "github"},
+        timeout=5.0,
+    ), mirror_module.read_report(report_path).latency_ms
+    assert mirror_module.read_report(report_path).chosen == "cnb"
 
 
 def test_a_probe_that_never_answers_is_timed_out_not_unmeasured(monkeypatch, ws_tmp) -> None:
     """``None`` is delivered for a failed probe, and the cache records it as failed (超时)."""
     _data_dir(monkeypatch, ws_tmp)
     fast = FakeMirror(b"x")
-    dead = FakeMirror(b"x", delay=0.6)
+    # The probe budget has to survive a busy machine: 0.15 s was tight enough that an earlier test
+    # leaving a server thread running could push the *fast* mirror over it, which turned this into
+    # "every probe failed" and failed the assertion for the wrong reason.
+    dead = FakeMirror(b"x", delay=2.0)
     mirrors = (
         mirror_module.Mirror("cnb", "CNB", fast.base_url),
         mirror_module.Mirror("github", "GitHub", dead.base_url),
@@ -269,7 +274,7 @@ def test_a_probe_that_never_answers_is_timed_out_not_unmeasured(monkeypatch, ws_
             asset="asset.tar.gz",
             mirrors=mirrors,
             path=report_path,
-            timeout=0.15,
+            timeout=0.6,
             on_latency=on_latency,
         )
         assert wait_until(lambda: set(seen) == {"cnb", "github"}, timeout=5.0), seen

@@ -208,7 +208,17 @@ def _write_report(report: MirrorReport, path: Path | None = None) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(target.name + ".tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(target)
+        # Windows refuses the replace while anybody has the target open for reading, and the page
+        # polls this file while a download runs: one reader that happens to be there at that instant
+        # must not turn into "the final report was never written".
+        for attempt in range(10):
+            try:
+                temporary.replace(target)
+                return
+            except OSError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.01)
     except OSError:
         logger.debug("无法写入镜像测速缓存: %s", target, exc_info=True)
 
@@ -253,6 +263,7 @@ def _race(
     *,
     on_latency: LatencyCallback | None = None,
     on_done: DoneCallback | None = None,
+    probe: Callable[[Mirror, str, str, float], int | None] | None = None,
 ) -> tuple[Mirror | None, dict[str, int], tuple[str, ...]]:
     """Run every probe at once; return the first mirror that answered **without waiting for the rest**.
 
@@ -264,8 +275,10 @@ def _race(
     results: queue.Queue[tuple[str, int | None]] = queue.Queue()
     by_key = {mirror.key: mirror for mirror in mirrors}
 
+    measure = probe or _probe
+
     def run(mirror: Mirror) -> None:
-        results.put((mirror.key, _probe(mirror, version, asset, timeout)))
+        results.put((mirror.key, measure(mirror, version, asset, timeout)))
 
     for mirror in mirrors:
         thread = threading.Thread(
@@ -312,11 +325,21 @@ def _race(
             logger.debug("镜像测速完成回调失败", exc_info=True)
 
     def drain() -> None:
-        for _ in range(remaining):
+        # One deadline for the whole tail, not one per probe: with a per-probe timeout three slow
+        # mirrors could hold the drain for 3 x (timeout + 1), and whatever waits for "all three rows
+        # measured" (the page, the tests) gave up first. Every probe already gives up at ``timeout``,
+        # so the tail can never legitimately need much more than that.
+        deadline_drain = time.monotonic() + timeout + 1.5
+        pending = remaining
+        while pending > 0:
+            left = deadline_drain - time.monotonic()
+            if left <= 0:
+                break
             try:
-                key, latency = results.get(timeout=timeout + 1.0)
+                key, latency = results.get(timeout=left)
             except queue.Empty:
                 break
+            pending -= 1
             if latency is None:
                 failed.add(key)
             else:
@@ -347,6 +370,7 @@ def choose_mirror(
     timeout: float = 4.0,
     now: float | None = None,
     on_latency: LatencyCallback | None = None,
+    probe: Callable[[Mirror, str, str, float], int | None] | None = None,
 ) -> Mirror:
     """The mirror to download from: manual choice, then fresh cache, then the race.
 
@@ -407,6 +431,7 @@ def choose_mirror(
         timeout,
         on_latency=on_latency,
         on_done=done,
+        probe=probe,
     )
     if winner is None:
         # Every probe failed: a HEAD can be blocked while GET still works, so try the measured
