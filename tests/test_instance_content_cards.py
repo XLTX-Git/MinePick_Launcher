@@ -156,6 +156,9 @@ def _centre(pixmap) -> QColor:
 def _enable_online(monkeypatch, value) -> None:
     monkeypatch.setattr(detail_module, "online_identity_enabled", lambda: True)
     identity.set_enabled(True)
+    # The queue asks for a content hash first. These fixtures are not Modrinth files and the test has no
+    # network, so the hash pass is stubbed out to "not one of ours" and the name lookup answers.
+    monkeypatch.setattr(identity, "lookup_by_hash", lambda *args, **kwargs: None)
     monkeypatch.setattr(identity, "lookup", lambda *args, **kwargs: value)
 
 

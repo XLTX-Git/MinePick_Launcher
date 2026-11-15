@@ -59,7 +59,7 @@ LIGHT_SHEET = RESOURCES / "style_light.qss"
 
 #: Same pin as tests/test_dark_state_contrast.py holds. Both suites must move together when a light
 #: sheet change is deliberate.
-LIGHT_SHEET_SHA256 = "63afa154322054066091f4d9687bc9dbfb17f8395242212ce0279a28b635745f"
+LIGHT_SHEET_SHA256 = "24b3dbfe1b5677aa96568871fa3f532af1bc7590f184b46c2676aac0fcbb8ee5"
 
 #: The three levels, deepest first. BG_NAV is not a fourth level: the rail shares level 1 with the
 #: window chrome, which is what makes the rail recede behind the page instead of competing with it.
