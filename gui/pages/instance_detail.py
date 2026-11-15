@@ -80,6 +80,7 @@ from gui.accessibility_launch import (
     trigger_source_for_click,
 )
 from gui.errors import show_fatal
+from gui.pages.export_selection import ExportCategoryCheck, ExportFilePanel
 from gui.pages.instance_files import (
     backup_save,
     display_file_name,
@@ -2305,6 +2306,13 @@ class InstanceDetail(QWidget):
         self._export_instance: str | None = None
         self._export_dest: Path | None = None
         self._export_dest_invalid = ""
+        #: The per-file selection (instance-relative paths) and the categories whose file list is
+        #: expanded. None means "not initialized for this instance yet"; the first scan fills it with
+        #: the default categories' files.
+        self._export_selected: set[str] | None = None
+        self._export_expanded: set[str] = set()
+        self.export_category_arrows: dict[str, QPushButton] = {}
+        self.export_file_panels: dict[str, ExportFilePanel] = {}
 
         # The four card lists, keyed like the pages that own them.
         self.content_lists: dict[str, _ContentList] = {}
@@ -3718,9 +3726,10 @@ class InstanceDetail(QWidget):
         Two products on purpose, in one card divided by a rule. The zip is a backup of this folder
         and only this launcher can read it back as an instance; the 整合包 is the portable artifact
         (``.mrpack`` / CurseForge zip). The pack half is the same shape PCL's page has: a name and a
-        version, one checkbox per content category with its file count and size, one advanced
-        option (打包资源文件), the destination it will use, and one primary button. Nothing here opens
-        a wizard: the page decides, then the export runs as a task with progress and 取消 in place.
+        version, one checkbox per content category with its file count and size, an arrow that opens
+        the category's per-file list, one advanced option (打包资源文件), the destination it will use,
+        and one primary button. Nothing here opens a wizard: the page decides, then the export runs
+        as a task with progress and 取消 in place.
         """
         from launcher.modpack import CATEGORIES
 
@@ -3810,10 +3819,26 @@ class InstanceDetail(QWidget):
             row = QHBoxLayout(line)
             row.setContentsMargins(0, 2, 0, 2)
             row.setSpacing(8)
-            check = QCheckBox(tr(f"instances.detail.export.category.{category}"))
+            # The arrow has its own fixed-width slot: an empty category hides the arrow (there is
+            # nothing to expand) while every checkbox in the column still starts at the same x.
+            arrow_slot = QWidget()
+            arrow_slot.setFixedWidth(24)
+            arrow_layout = QHBoxLayout(arrow_slot)
+            arrow_layout.setContentsMargins(0, 0, 0, 0)
+            arrow_layout.setSpacing(0)
+            arrow = QPushButton("▸")
+            arrow.setObjectName("iconButton")
+            arrow.setFixedWidth(24)
+            arrow.setCursor(Qt.CursorShape.PointingHandCursor)
+            arrow.clicked.connect(partial(self._toggle_export_category, category))
+            arrow_layout.addWidget(arrow)
+            check = ExportCategoryCheck(tr(f"instances.detail.export.category.{category}"))
+            check.setTristate(True)
             check.setCursor(Qt.CursorShape.PointingHandCursor)
             check.setChecked(category in DEFAULT_EXPORT_CATEGORIES)
-            check.toggled.connect(self._on_export_category_changed)
+            check.stateChanged.connect(
+                partial(self._on_export_category_changed, category)
+            )
             stats = ElidedLabel("", elide_mode=Qt.TextElideMode.ElideRight)
             stats.setObjectName("hint")
             stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -3822,10 +3847,24 @@ class InstanceDetail(QWidget):
             stats.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
             )
+            row.addWidget(arrow_slot)
             row.addWidget(check)
             row.addWidget(stats, 1)
             self.export_category_rows[category] = (check, stats)
+            self.export_category_arrows[category] = arrow
             card_layout.addWidget(line)
+
+            # Built now, filled when the category is expanded: constructing one container per
+            # category is cheap, while its 25 file rows only exist for the page actually shown.
+            panel = ExportFilePanel(
+                category,
+                human_size,
+                self._on_export_file_toggled,
+                self._on_export_category_bulk,
+            )
+            panel.setVisible(False)
+            self.export_file_panels[category] = panel
+            card_layout.addWidget(panel)
 
         advanced_label = QLabel(tr("instances.detail.export.advanced"))
         advanced_label.setObjectName("instanceCardTitle")
@@ -6350,13 +6389,145 @@ class InstanceDetail(QWidget):
     def export_pack_version(self) -> str:
         return self.export_version_edit.text().strip()
 
+    def _export_selected_files(self) -> frozenset[str]:
+        """The ticked files, as instance-relative paths - exactly what the archive may carry."""
+        return frozenset(self._export_selected or ())
+
     def _export_selection(self) -> frozenset[str]:
-        """The ticked content categories - exactly what the archive may carry."""
+        """The categories that still have at least one ticked file (derived from the file set)."""
+        plan = self._export_plan
+        selected = self._export_selected_files()
+        if plan is None:
+            return frozenset()
         return frozenset(
-            key
-            for key, (check, _stats) in self.export_category_rows.items()
-            if check.isChecked()
+            entry.category for entry in plan.all_entries if entry.relative in selected
         )
+
+    def _entries_for_category(self, category: str) -> list:
+        """The scanned files of one category, in scan order (the rows keep a stable order)."""
+        plan = self._export_plan
+        if plan is None:
+            return []
+        return [entry for entry in plan.all_entries if entry.category == category]
+
+    def _selected_count(self, entries) -> int:
+        selected = self._export_selected_files()
+        return sum(1 for entry in entries if entry.relative in selected)
+
+    # ---------- 导出: per-file selection ----------
+
+    def _set_export_category_selected(self, category: str, select: bool) -> None:
+        """全选 / 全不选 one category, then repaint the tri-state and the summary."""
+        entries = self._entries_for_category(category)
+        if not entries:
+            return
+        chosen = set(self._export_selected or ())
+        for entry in entries:
+            if select:
+                chosen.add(entry.relative)
+            else:
+                chosen.discard(entry.relative)
+        self._export_selected = chosen
+        self._refresh_export_selection()
+
+    def _on_export_file_toggled(self, relative: str, checked: bool) -> None:
+        """One file box: the panel only reports it, this method owns the selection."""
+        chosen = set(self._export_selected or ())
+        if checked:
+            chosen.add(relative)
+        else:
+            chosen.discard(relative)
+        self._export_selected = chosen
+        self._refresh_export_selection()
+
+    def _on_export_category_bulk(self, category: str, select: bool) -> None:
+        """The panel's 全选/全不选 button."""
+        self._set_export_category_selected(category, select)
+
+    def _on_export_category_changed(self, category: str, _state: int = 0) -> None:
+        """A category box was clicked (or setChecked called): it means 全选 / 全不选.
+
+        The partial state is only ever set programmatically, with signals blocked, so reaching it
+        here means a caller set it without a selection to match; leaving the files alone is the
+        honest answer instead of silently clearing them.
+        """
+        row = self.export_category_rows.get(category)
+        if row is None:
+            return
+        state = row[0].checkState()
+        if state == Qt.CheckState.PartiallyChecked:
+            return
+        self._set_export_category_selected(category, state == Qt.CheckState.Checked)
+
+    def _toggle_export_category(self, category: str, _checked: bool = False) -> None:
+        """The arrow: expand or collapse one category's paged file list."""
+        if not self._entries_for_category(category):
+            return
+        if category in self._export_expanded:
+            self._export_expanded.discard(category)
+        else:
+            self._export_expanded.add(category)
+        self._refresh_export_selection()
+
+    def _sync_export_arrow(self, category: str) -> None:
+        """The arrow's direction, name and visibility (an empty category keeps no arrow)."""
+        arrow = self.export_category_arrows.get(category)
+        if arrow is None:
+            return
+        if not self._entries_for_category(category):
+            arrow.setVisible(False)
+            return
+        expanded = category in self._export_expanded
+        arrow.setVisible(True)
+        arrow.setText("▾" if expanded else "▸")
+        key = (
+            "instances.detail.export.files.collapse"
+            if expanded
+            else "instances.detail.export.files.expand"
+        )
+        arrow.setAccessibleName(tr(key))
+        arrow.setToolTip(tr(key))
+
+    def _refresh_export_selection(self) -> None:
+        """Repaint everything that depends on the file set: tri-states, arrows, panels, summary.
+
+        One place owns the derivation (``selected files -> category state``), which is what keeps the
+        summary, the nine category boxes and the expanded lists from ever disagreeing.
+        """
+        plan = self._export_plan
+        if plan is None:
+            return
+        selected = self._export_selected_files()
+        for category, (check, _stats) in self.export_category_rows.items():
+            entries = self._entries_for_category(category)
+            total = len(entries)
+            chosen = self._selected_count(entries)
+            if not total or not chosen:
+                state = Qt.CheckState.Unchecked
+            elif chosen == total:
+                state = Qt.CheckState.Checked
+            else:
+                state = Qt.CheckState.PartiallyChecked
+            check.blockSignals(True)
+            check.setCheckState(state)
+            check.setEnabled(total > 0)
+            check.blockSignals(False)
+            arrow = self.export_category_arrows.get(category)
+            if arrow is not None:
+                arrow.setVisible(total > 0)
+            panel = self.export_file_panels.get(category)
+            if panel is not None:
+                panel.set_entries(
+                    [(entry.relative, entry.size) for entry in entries]
+                )
+                expanded = total > 0 and category in self._export_expanded
+                if not expanded and not total:
+                    self._export_expanded.discard(category)
+                panel.setVisible(expanded)
+                if expanded:
+                    panel.refresh(selected)
+                self._sync_export_arrow(category)
+        self._sync_export_summary()
 
     def _embed_files(self, fmt: str) -> bool:
         """打包资源文件 only means something for Modrinth (CurseForge has no URL list)."""
@@ -6399,6 +6570,16 @@ class InstanceDetail(QWidget):
         self._export_dest = None
         self._export_dest_invalid = ""
         self._export_plan = None
+        # A new instance answers the file-level question from scratch: the first scan of this
+        # instance selects the default categories' files. The panels are emptied here so no row of
+        # the previous instance can be ticked against this one's plan.
+        self._export_selected = None
+        self._export_expanded.clear()
+        for panel in self.export_file_panels.values():
+            panel.clear()
+        for arrow in self.export_category_arrows.values():
+            arrow.setText("▸")
+            arrow.setVisible(False)
         display = ""
         if self.instance is not None:
             display = self.instance.name or self.instance.id
@@ -6412,10 +6593,6 @@ class InstanceDetail(QWidget):
         finally:
             self.export_name_edit.blockSignals(False)
             self.export_version_edit.blockSignals(False)
-        for key, (check, _stats) in self.export_category_rows.items():
-            check.blockSignals(True)
-            check.setChecked(key in DEFAULT_EXPORT_CATEGORIES)
-            check.blockSignals(False)
         self.export_embed_check.blockSignals(True)
         self.export_embed_check.setChecked(False)
         self.export_embed_check.blockSignals(False)
@@ -6427,8 +6604,41 @@ class InstanceDetail(QWidget):
             else:
                 self._export_dest_invalid = preset.folder
 
+    def _reconcile_export_selection(self, previous, plan) -> None:
+        """Carry the ticked files from one scan to the next; the first scan starts from the defaults.
+
+        A file that disappeared is dropped (the disk is authoritative), and one that appeared in a
+        category the user had fully ticked is added - otherwise a reload would silently leave new
+        content out of a pack the user already described as "all of it". A category that was only
+        partly ticked keeps exactly the remaining ticks.
+        """
+        present = {entry.relative for entry in plan.all_entries}
+        if self._export_selected is None:
+            self._export_selected = {
+                entry.relative
+                for entry in plan.all_entries
+                if entry.category in DEFAULT_EXPORT_CATEGORIES
+            }
+            return
+        old_selected = self._export_selected
+        complete: set[str] = set()
+        if previous is not None:
+            old_by_category: dict[str, list[str]] = {}
+            for entry in previous.all_entries:
+                old_by_category.setdefault(entry.category, []).append(entry.relative)
+            complete = {
+                category
+                for category, relatives in old_by_category.items()
+                if relatives and all(path in old_selected for path in relatives)
+            }
+        kept = {path for path in old_selected if path in present}
+        for entry in plan.all_entries:
+            if entry.category in complete:
+                kept.add(entry.relative)
+        self._export_selected = kept
+
     def _sync_export_categories(self, plan) -> None:
-        """One line per category: how many files and how much space ticking it would add."""
+        """One line per category: how many files and how much space the category holds."""
         stats = plan.category_stats()
         for key, (check, stats_label) in self.export_category_rows.items():
             stat = stats.get(key)
@@ -6444,6 +6654,7 @@ class InstanceDetail(QWidget):
             )
             stats_label.setText(text)
             check.setAccessibleName(f"{check.text()} · {text}")
+        self._refresh_export_selection()
 
     def _sync_export_advanced(self, fmt: str) -> None:
         embeddable = fmt == FORMAT_MODRINTH
@@ -6471,8 +6682,8 @@ class InstanceDetail(QWidget):
         if plan is None:
             self.export_pack_button.setEnabled(False)
             return
-        selected = self._export_selection()
-        chosen = [entry for entry in plan.all_entries if entry.category in selected]
+        selected = self._export_selected_files()
+        chosen = [entry for entry in plan.all_entries if entry.relative in selected]
         if not chosen:
             self.export_pack_summary.setText(
                 tr("instances.detail.export.pack.summary.none")
@@ -6513,9 +6724,6 @@ class InstanceDetail(QWidget):
                 self.export_destination.setToolTip("")
 
     def _on_export_name_changed(self, _text: str = "") -> None:
-        self._sync_export_summary()
-
-    def _on_export_category_changed(self, _checked: bool = False) -> None:
         self._sync_export_summary()
 
     def _on_export_embed_changed(self, _checked: bool = False) -> None:
@@ -6571,16 +6779,36 @@ class InstanceDetail(QWidget):
     # ---------- 导出: config ----------
 
     def save_export_config(self) -> None:
-        """保存配置: store this form for this instance (name, version, categories, embed, folder)."""
+        """保存配置: store this form for this instance (name, version, files, embed, folder).
+
+        The category list stays what the old preset had (the categories that carry at least one
+        ticked file); the file-level part is written as the *exceptions* inside those categories.
+        A preset therefore stays small when only one screenshot was left out, and a preset written
+        before this field existed (``excluded_files == []``) still means "every file of the ticked
+        categories" - the exact old behaviour.
+        """
         from launcher.config import ExportPreset
 
         if self.instance_id is None:
             return
+        plan = self._export_plan
+        entries = list(plan.all_entries) if plan is not None else []
+        selected = self._export_selected_files()
+        categories = sorted(
+            {entry.category for entry in entries if entry.relative in selected}
+        )
+        active = set(categories)
+        excluded = sorted(
+            entry.relative
+            for entry in entries
+            if entry.category in active and entry.relative not in selected
+        )
         self._store_export_preset(
             ExportPreset(
                 name=self.export_pack_name(),
                 version=self.export_pack_version(),
-                categories=sorted(self._export_selection()),
+                categories=categories,
+                excluded_files=excluded,
                 embed_files=self.export_embed_check.isChecked(),
                 folder=str(self._export_dest) if self._export_dest else "",
             )
@@ -6597,10 +6825,20 @@ class InstanceDetail(QWidget):
             return
         self.export_name_edit.setText(preset.name)
         self.export_version_edit.setText(preset.version)
-        for key, (check, _stats) in self.export_category_rows.items():
-            check.blockSignals(True)
-            check.setChecked(key in set(preset.categories))
-            check.blockSignals(False)
+        if self._export_plan is None:
+            # The tab was not filled yet (the buttons are enabled from the instance, not from the
+            # plan): scan once so the saved file selection has something to land on.
+            self._fill_export()
+        plan = self._export_plan
+        if plan is not None:
+            categories = set(preset.categories)
+            excluded = set(preset.excluded_files)
+            self._export_selected = {
+                entry.relative
+                for entry in plan.all_entries
+                if entry.category in categories and entry.relative not in excluded
+            }
+            self._refresh_export_selection()
         self.export_embed_check.blockSignals(True)
         self.export_embed_check.setChecked(preset.embed_files)
         self.export_embed_check.blockSignals(False)
@@ -6620,7 +6858,9 @@ class InstanceDetail(QWidget):
         The scan is local (counts and sizes only), so this runs on the GUI thread without a network
         round trip or a pause - the same reason the page can afford to refresh it on every format
         change. It scans *all* categories at once so every checkbox can show its size even while it
-        is unticked; the summary only counts the ticked ones.
+        is unticked; the summary only counts the ticked files. The previous scan is carried into the
+        new one so a format change (which only changes override trees) does not lose the file ticks;
+        the first scan starts from the default categories.
         """
         from launcher.modpack import plan_export
 
@@ -6642,6 +6882,7 @@ class InstanceDetail(QWidget):
             return
         self._export_ready = True
         self.export_loading.setVisible(False)
+        previous = self._export_plan
         self._ensure_export_defaults()
         fmt = self._pack_format()
         busy = self._export_running()
@@ -6671,9 +6912,9 @@ class InstanceDetail(QWidget):
             self.export_pack_button.setEnabled(False)
             return
         self._export_plan = plan
+        self._reconcile_export_selection(previous, plan)
         self._sync_export_categories(plan)
         self._sync_export_advanced(fmt)
-        self._sync_export_summary()
         self._sync_export_destination()
 
     # ---------- 导出: running ----------
@@ -6685,7 +6926,7 @@ class InstanceDetail(QWidget):
         if self._export_running():
             self._warn_export_running()
             return
-        if not self._export_selection():
+        if not self._export_selected_files():
             self._sync_export_summary()
             set_app_status(self, tr("instances.detail.export.pack.summary.none"), "warning")
             return
@@ -6732,8 +6973,15 @@ class InstanceDetail(QWidget):
         version: str | None = None,
         categories: frozenset[str] | None = None,
         embed_files: bool | None = None,
+        files: frozenset[str] | None = None,
     ) -> None:
-        """Start one pack export into ``dest``: worker thread, task row and inline progress."""
+        """Start one pack export into ``dest``: worker thread, task row and inline progress.
+
+        ``categories``/``files`` exist for callers that want a different selection than the form's;
+        the default is the page's own file-level selection. Passing categories only keeps the old
+        category-level meaning (every file of those categories), which is what an existing caller of
+        this method expects.
+        """
         instance_id = self.instance_id
         if instance_id is None or self.resolved is None:
             return
@@ -6741,7 +6989,29 @@ class InstanceDetail(QWidget):
             self._warn_export_running()
             return  # one pack export at a time; the running row owns 取消
         chosen = fmt or self._pack_format()
-        selected = self._export_selection() if categories is None else categories
+        plan_entries = (
+            self._export_plan.all_entries if self._export_plan is not None else ()
+        )
+        selected_files = (
+            self._export_selected_files() if files is None else frozenset(files)
+        )
+        if categories is None:
+            if files is None:
+                selected = self._export_selection()
+            else:
+                selected = frozenset(
+                    entry.category
+                    for entry in plan_entries
+                    if entry.relative in selected_files
+                )
+        else:
+            selected = frozenset(categories)
+            if files is None:
+                selected_files = frozenset(
+                    entry.relative
+                    for entry in plan_entries
+                    if entry.category in selected
+                )
         embed = self._embed_files(chosen) if embed_files is None else bool(embed_files)
         pack_name = self.export_pack_name() if name is None else name
         pack_version = self.export_pack_version() if version is None else version
@@ -6793,6 +7063,7 @@ class InstanceDetail(QWidget):
                 name=pack_name,
                 version=pack_version,
                 categories=selected,
+                files=selected_files,
                 embed_files=embed,
                 on_progress=bridge,
                 should_stop=self._pack_stop.is_set,
@@ -6897,6 +7168,12 @@ class InstanceDetail(QWidget):
         ]
         if getattr(result, "embedded", False):
             lines.append(tr("instances.detail.export.pack.report.embedded"))
+        if getattr(result, "missing", 0):
+            # Ticked, but gone from disk by the time the export ran: the pack is still valid, and
+            # saying how many were skipped is the difference between "it worked" and "where is it?".
+            lines.append(
+                tr("instances.detail.export.pack.report.skip", int(result.missing))
+            )
         if result.degraded:
             lines.append(tr("instances.detail.export.pack.offline"))
         self.export_pack_result.setText("\n".join(lines))

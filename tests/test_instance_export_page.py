@@ -30,10 +30,11 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QPoint, Qt, QThreadPool
 
 from gui import i18n
 from gui.pages import instance_detail
+from gui.pages.export_selection import EXPORT_FILES_PER_PAGE
 from gui.pages.instance_detail import TAB_EXPORT
 from launcher import config as config_mod
 from launcher.instances import INSTANCE_META_FILENAME, Instance
@@ -293,3 +294,214 @@ def test_embedding_is_disabled_for_curseforge_with_the_reason(window):
     assert detail.export_embed_hint.text() == i18n.tr(
         "instances.detail.export.embed.hint"
     )
+
+
+def _instance_folder(game: Path) -> Path:
+    return game / "versions" / "fabric-loader-0.19.3-1.21.11"
+
+
+def _add_mod(game: Path, name: str, payload: bytes = b"PK\x03\x04lithium") -> None:
+    folder = _instance_folder(game) / "mods"
+    folder.mkdir(exist_ok=True)
+    (folder / name).write_bytes(payload)
+
+
+def test_the_category_box_summarises_its_files_with_three_states(window):
+    _built, game, detail = window
+    _add_mod(game, "lithium.jar")
+    detail._fill_export()
+
+    mods, stats = detail.export_category_rows["mods"]
+    assert stats.text() == i18n.tr("instances.detail.export.category.stat", 2, "21 B")
+    assert mods.checkState() == Qt.CheckState.Checked
+    assert detail.export_pack_summary.text() == i18n.tr(
+        "instances.detail.export.pack.summary.selected", 3, "31 B"
+    )
+
+    # The arrow expands the paged list, and the middle state appears the moment one file is off.
+    detail._toggle_export_category("mods")
+    panel = detail.export_file_panels["mods"]
+    assert panel.isVisibleTo(detail)
+    assert panel.checkbox_for("mods/sodium.jar").isChecked()
+    assert panel.checkbox_for("mods/lithium.jar").isChecked()
+    assert panel.all_button.text() == i18n.tr(
+        "instances.detail.export.files.select_none"
+    )
+
+    panel.checkbox_for("mods/sodium.jar").setChecked(False)
+    assert mods.checkState() == Qt.CheckState.PartiallyChecked
+    assert panel.all_button.text() == i18n.tr(
+        "instances.detail.export.files.select_all"
+    )
+    assert detail.export_pack_summary.text() == i18n.tr(
+        "instances.detail.export.pack.summary.selected", 2, "21 B"
+    )
+
+    panel.checkbox_for("mods/lithium.jar").setChecked(False)
+    assert mods.checkState() == Qt.CheckState.Unchecked
+    assert detail.export_pack_summary.text() == i18n.tr(
+        "instances.detail.export.pack.summary.selected", 1, "10 B"
+    )
+
+    # The category box itself is the 全选/全不选 entry: partial -> checked selects every file.
+    mods.setChecked(True)
+    assert mods.checkState() == Qt.CheckState.Checked
+    assert panel.checkbox_for("mods/sodium.jar").isChecked()
+    assert panel.checkbox_for("mods/lithium.jar").isChecked()
+    assert detail.export_pack_summary.text() == i18n.tr(
+        "instances.detail.export.pack.summary.selected", 3, "31 B"
+    )
+
+    # An empty category has nothing to expand and says so instead of opening an empty page.
+    assert detail.export_category_rows["screenshots"][1].text() == i18n.tr(
+        "instances.detail.export.category.empty"
+    )
+    assert detail.export_category_arrows["screenshots"].isHidden()
+
+
+def test_a_file_ticked_off_never_reaches_the_archive(app, window, ws_tmp):
+    _built, game, detail = window
+    _add_mod(game, "lithium.jar")
+    detail._fill_export()
+    detail._toggle_export_category("mods")
+    panel = detail.export_file_panels["mods"]
+    panel.checkbox_for("mods/lithium.jar").setChecked(False)
+    assert detail.export_category_rows["mods"][0].checkState() == Qt.CheckState.PartiallyChecked
+
+    dest = ws_tmp / "picked-file.mrpack"
+    detail.export_pack_to(dest)
+    assert _pump(app, lambda: detail.export_pack_result.isVisibleTo(detail))
+    with zipfile.ZipFile(dest) as archive:
+        names = archive.namelist()
+    assert "overrides/mods/sodium.jar" in names
+    assert "overrides/mods/lithium.jar" not in names
+    assert "overrides/config/sodium.json" in names
+
+
+def test_a_ticked_file_deleted_before_the_export_is_reported_not_fatal(app, window, ws_tmp):
+    _built, game, detail = window
+    _add_mod(game, "lithium.jar")
+    detail._fill_export()
+    # The page counted both jars; the second one disappears before 开始导出.
+    (_instance_folder(game) / "mods" / "lithium.jar").unlink()
+
+    dest = ws_tmp / "vanished-file.mrpack"
+    detail.export_pack_to(dest)
+    assert _pump(app, lambda: detail.export_pack_result.isVisibleTo(detail))
+    text = detail.export_pack_result.text()
+    assert i18n.tr("instances.detail.export.pack.report.skip", 1) in text
+    with zipfile.ZipFile(dest) as archive:
+        names = archive.namelist()
+    assert "overrides/mods/sodium.jar" in names
+    assert "overrides/mods/lithium.jar" not in names
+
+
+def test_the_saved_preset_remembers_per_file_ticks_and_old_presets_mean_all(
+    app, window, ws_tmp
+):
+    _built, game, detail = window
+    _add_mod(game, "lithium.jar")
+    detail._fill_export()
+    detail._toggle_export_category("mods")
+    panel = detail.export_file_panels["mods"]
+    panel.checkbox_for("mods/lithium.jar").setChecked(False)
+    detail.export_name_edit.setText("文件级配置")
+    detail.save_export_config()
+
+    preset = config_mod.load()[0].export_presets["fabric-loader-0.19.3-1.21.11"]
+    assert preset.name == "文件级配置"
+    assert preset.categories == ["config", "mods"]
+    assert preset.excluded_files == ["mods/lithium.jar"]
+
+    # Change the page, then 读取配置 brings the exact file-level answer back.
+    detail.export_category_rows["mods"][0].setChecked(True)
+    assert panel.checkbox_for("mods/lithium.jar").isChecked()
+    detail.load_export_config()
+    assert detail.export_category_rows["mods"][0].checkState() == Qt.CheckState.PartiallyChecked
+    assert panel.checkbox_for("mods/sodium.jar").isChecked()
+    assert not panel.checkbox_for("mods/lithium.jar").isChecked()
+
+    # An old preset has no excluded_files field at all: it must mean "every file of categories".
+    _cfg, cfg_path = config_mod.load()
+    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    raw["export_presets"]["fabric-loader-0.19.3-1.21.11"] = {
+        "name": "旧配置",
+        "version": "1.0.0",
+        "categories": ["mods"],
+        "embed_files": False,
+        "folder": "",
+    }
+    cfg_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    detail.load_export_config()
+    assert detail.export_name_edit.text() == "旧配置"
+    assert detail.export_category_rows["mods"][0].checkState() == Qt.CheckState.Checked
+    assert panel.checkbox_for("mods/sodium.jar").isChecked()
+    assert panel.checkbox_for("mods/lithium.jar").isChecked()
+    assert not detail.export_category_rows["config"][0].isChecked()
+
+
+def test_a_large_category_is_paged_instead_of_built_whole(window):
+    _built, game, detail = window
+    folder = _instance_folder(game) / "screenshots"
+    folder.mkdir(exist_ok=True)
+    for index in range(60):
+        (folder / f"shot-{index:03d}.png").write_bytes(b"x")
+    detail._fill_export()
+    detail._toggle_export_category("screenshots")
+    panel = detail.export_file_panels["screenshots"]
+
+    assert len(panel._entries) == 60
+    assert len(panel._rows) == EXPORT_FILES_PER_PAGE  # one page built, not all 60 rows
+    assert panel.page_label.isVisibleTo(detail)
+    first_page = set(panel._rows)
+
+    panel.next_button.click()
+    assert panel.page == 2
+    assert len(panel._rows) == EXPORT_FILES_PER_PAGE
+    assert set(panel._rows) != first_page
+    assert panel.prev_button.isEnabled()
+
+    panel.all_button.click()
+    assert detail._selected_count(detail._entries_for_category("screenshots")) == 60
+    assert detail.export_category_rows["screenshots"][0].checkState() == Qt.CheckState.Checked
+    assert panel.all_button.text() == i18n.tr("instances.detail.export.files.select_none")
+    assert panel.page == 2  # selecting does not throw the user back to page 1
+
+
+def test_the_expanded_page_still_fits_1000x610(app, window):
+    built, game, detail = window
+    folder = _instance_folder(game) / "screenshots"
+    folder.mkdir(exist_ok=True)
+    for index in range(30):
+        (folder / f"shot-{index:03d}.png").write_bytes(b"x")
+    detail._fill_export()
+    detail._toggle_export_category("mods")
+    detail._toggle_export_category("screenshots")
+    built.resize(1000, 610)
+    for _ in range(12):
+        app.processEvents()
+
+    assert built.width() == 1000
+    viewport = detail.content_scroll.viewport()
+    page = detail.stack.currentWidget()
+    assert page.minimumSizeHint().width() <= viewport.width() + 1
+    assert page.width() <= viewport.width() + 1
+
+    panel = detail.export_file_panels["screenshots"]
+    widgets = (
+        detail.export_name_edit,
+        detail.export_pack_format,
+        detail.export_pack_summary,
+        detail.export_pack_button,
+        detail.export_category_rows["mods"][1],
+        panel.all_button,
+        panel.page_label,
+        panel.next_button,
+    )
+    for widget in widgets:
+        assert widget.isVisibleTo(detail), widget
+        right = widget.mapTo(page, QPoint(widget.width(), 0)).x()
+        assert right <= page.width() + 1, (
+            f"{type(widget).__name__}({widget.objectName()}) ends at {right}px "
+            f"in a {page.width()}px page"
+        )

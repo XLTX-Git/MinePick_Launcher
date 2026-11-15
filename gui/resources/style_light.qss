@@ -358,6 +358,13 @@ QCheckBox::indicator:checked {
     image: url(__CHECK__);
 }
 QCheckBox::indicator:checked:hover { background: __ACCENT_HOVER__; border-color: __ACCENT_HOVER__; }
+/* 部分选中: the category checkbox summarises its file list, so the middle state has to be visible.
+   A horizontal accent bar in the empty box reads as "some, not all" without a second bitmap asset
+   (the tick is the only generated glyph), and it cannot be confused with the checked tick. */
+QCheckBox::indicator:indeterminate {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 __BG_LIST__, stop:0.38 __BG_LIST__, stop:0.40 __ACCENT__, stop:0.60 __ACCENT__, stop:0.62 __BG_LIST__, stop:1 __BG_LIST__);
+    border-color: __ACCENT__;
+}
 
 /* ---------- radio buttons ---------- */
 

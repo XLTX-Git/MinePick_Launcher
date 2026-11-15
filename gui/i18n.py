@@ -1420,6 +1420,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "instances.detail.export.pack.summary.selected": "已选 {} 个文件 · {}",
         "instances.detail.export.pack.note.embed": "已开启打包资源文件：所有文件（含模组）写入 overrides/，导入时无需再下载。",
         "instances.detail.export.pack.report.embedded": "所有文件已打包进 overrides/",
+        "instances.detail.export.files.expand": "展开文件列表",
+        "instances.detail.export.files.collapse": "收起文件列表",
+        "instances.detail.export.files.select_all": "全选",
+        "instances.detail.export.files.select_none": "全不选",
+        "instances.detail.export.files.selected": "已选 {}/{}",
+        "instances.detail.export.files.page": "第 {} / {} 页",
+        "instances.detail.export.files.prev": "上一页",
+        "instances.detail.export.files.next": "下一页",
+        "instances.detail.export.pack.report.skip": "已跳过 {} 个已不存在的文件",
     },
     EN: {
         # Crash / launch-failure diagnosis (keys are produced by launcher/diagnostics)
@@ -2832,6 +2841,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "instances.detail.export.pack.summary.selected": "{} files selected · {}",
         "instances.detail.export.pack.note.embed": "Pack the resource files is on: every file (mods included) goes into overrides/, so importing needs no download.",
         "instances.detail.export.pack.report.embedded": "Every file was packed into overrides/",
+        "instances.detail.export.files.expand": "Show files",
+        "instances.detail.export.files.collapse": "Hide files",
+        "instances.detail.export.files.select_all": "Select all",
+        "instances.detail.export.files.select_none": "Select none",
+        "instances.detail.export.files.selected": "{} of {} selected",
+        "instances.detail.export.files.page": "Page {} of {}",
+        "instances.detail.export.files.prev": "Previous page",
+        "instances.detail.export.files.next": "Next page",
+        "instances.detail.export.pack.report.skip": "Skipped {} file(s) that no longer exist",
     },
 }
 

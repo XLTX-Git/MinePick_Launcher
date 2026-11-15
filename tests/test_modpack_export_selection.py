@@ -289,6 +289,32 @@ def test_a_file_level_selection_is_the_only_thing_written(ws_tmp):
     assert result.missing == 0
 
 
+def test_embedding_is_also_limited_to_the_ticked_files(ws_tmp):
+    """打包资源文件 changes where the bytes travel, not which files are selected."""
+    game, _folder = _instance(ws_tmp)
+    dest = ws_tmp / "out" / "picked-embedded.mrpack"
+
+    def must_not_look(*_args):
+        raise AssertionError("打包资源文件 must not run the download lookup")
+
+    result = export_modpack(
+        "fabric-loader-0.19.3-1.21.11",
+        dest,
+        game,
+        categories={"mods"},
+        files={"mods/sodium.jar"},
+        embed_files=True,
+        matcher=must_not_look,
+    )
+    assert result.embedded is True
+    with zipfile.ZipFile(dest) as archive:
+        index = json.loads(archive.read("modrinth.index.json"))
+        names = archive.namelist()
+    assert index["files"] == []
+    assert "overrides/mods/sodium.jar" in names
+    assert "overrides/mods/lithium.jar.disabled" not in names
+
+
 def test_a_ticked_file_deleted_before_the_export_is_skipped_and_counted(ws_tmp):
     """Deleting a ticked file after the page counted it must not fail the export."""
     game, folder = _instance(ws_tmp)
