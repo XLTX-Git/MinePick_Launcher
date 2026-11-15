@@ -138,6 +138,7 @@ EXTRA_CORE: dict[str, dict[str, str]] = {
         'vault.password_prompt': "權杖加密密碼: ",
         'vault.password_required': "權杖加密已開啟但未提供密碼（請先輸入密碼解鎖，或設定 MCLAUNCHER_TOKEN_PASSWORD 環境變數）",
         'vault.wrong_password': "權杖加密密碼不正確",
+        'modpack.export_empty_missing': "勾選的 {} 個檔案都已不存在，沒有可匯出的內容",
     },
     'ja_jp': {
         'auth.chain_failed': "認証リクエストに失敗しました: {}",
@@ -261,6 +262,7 @@ EXTRA_CORE: dict[str, dict[str, str]] = {
         'vault.password_prompt': "トークン暗号化パスワード: ",
         'vault.password_required': "トークン暗号化が有効ですがパスワードが提供されていません（先にパスワードを入力してロック解除するか、MCLAUNCHER_TOKEN_PASSWORD 環境変数を設定してください）",
         'vault.wrong_password': "トークン暗号化パスワードが正しくありません",
+        'modpack.export_empty_missing': "選択した {} 個のファイルはすでに存在しないため、エクスポートできる内容がありません",
     },
     'ko_kr': {
         'auth.chain_failed': "인증 요청 실패: {}",
@@ -384,6 +386,7 @@ EXTRA_CORE: dict[str, dict[str, str]] = {
         'vault.password_prompt': "토큰 암호화 비밀번호: ",
         'vault.password_required': "토큰 암호화가 켜져 있지만 비밀번호가 제공되지 않았습니다(먼저 비밀번호를 입력해 잠금을 해제하거나 MCLAUNCHER_TOKEN_PASSWORD 환경 변수를 설정하세요)",
         'vault.wrong_password': "토큰 암호화 비밀번호가 올바르지 않습니다",
+        'modpack.export_empty_missing': "선택한 파일 {}개가 더 이상 존재하지 않아 내보낼 내용이 없습니다",
     },
     'ru_ru': {
         'auth.chain_failed': "Запрос аутентификации не удался: {}",
@@ -507,6 +510,7 @@ EXTRA_CORE: dict[str, dict[str, str]] = {
         'vault.password_prompt': "Пароль шифрования токенов: ",
         'vault.password_required': "Шифрование токенов включено, но пароль не указан (разблокируйте или задайте переменную MCLAUNCHER_TOKEN_PASSWORD)",
         'vault.wrong_password': "Неверный пароль шифрования токенов",
+        'modpack.export_empty_missing': "Выбранных файлов больше нет ({}), экспортировать нечего",
     },
     'fr_fr': {
         'auth.chain_failed': "Échec de la demande d'authentification : {}",
@@ -630,6 +634,7 @@ EXTRA_CORE: dict[str, dict[str, str]] = {
         'vault.password_prompt': "Mot de passe de chiffrement des jetons : ",
         'vault.password_required': "Chiffrement des jetons activé mais aucun mot de passe fourni (déverrouillez d'abord ou définissez MCLAUNCHER_TOKEN_PASSWORD)",
         'vault.wrong_password': "Mot de passe de chiffrement des jetons incorrect",
+        'modpack.export_empty_missing': "Les {} fichiers sélectionnés n'existent plus ; il n'y a rien à exporter",
     },
     'es_es': {
         'auth.chain_failed': "Error en la solicitud de autenticación: {}",
@@ -753,6 +758,7 @@ EXTRA_CORE: dict[str, dict[str, str]] = {
         'vault.password_prompt': "Contraseña de cifrado de tokens: ",
         'vault.password_required': "El cifrado de tokens está activado pero no se proporcionó contraseña (desbloquéalo primero o define la variable de entorno MCLAUNCHER_TOKEN_PASSWORD)",
         'vault.wrong_password': "Contraseña de cifrado de tokens incorrecta",
+        'modpack.export_empty_missing': "Los {} archivos seleccionados ya no existen; no hay nada que exportar",
     },
     'de_de': {
         'auth.chain_failed': "Authentifizierungsanfrage fehlgeschlagen: {}",
@@ -876,5 +882,6 @@ EXTRA_CORE: dict[str, dict[str, str]] = {
         'vault.password_prompt': "Passwort für Token-Verschlüsselung: ",
         'vault.password_required': "Token-Verschlüsselung aktiviert, aber kein Passwort angegeben (zuerst entsperren oder MCLAUNCHER_TOKEN_PASSWORD setzen)",
         'vault.wrong_password': "Falsches Passwort für die Token-Verschlüsselung",
+        'modpack.export_empty_missing': "Die {} ausgewählten Dateien existieren nicht mehr; es gibt nichts zu exportieren",
     },
 }

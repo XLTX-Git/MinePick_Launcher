@@ -28,6 +28,8 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from launcher.instances import INSTANCE_META_FILENAME, Instance
 from launcher.modpack import (
     CATEGORIES,
@@ -36,10 +38,12 @@ from launcher.modpack import (
     FORMAT_MODRINTH,
     CurseforgeOutcome,
     MatchOutcome,
+    ModpackError,
     export_modpack,
     parse_modpack,
     plan_export,
 )
+from launcher.modpack import export as pack_export
 
 
 def _write_profile(game: Path, version_id: str, *, inherits: str | None = None) -> Path:
@@ -259,3 +263,90 @@ def test_a_selected_plan_round_trips_through_the_importer(ws_tmp):
     assert spec.minecraft == "1.21.11"
     assert spec.loader == "fabric"
     assert spec.loader_version == "0.19.3"
+
+
+def test_a_file_level_selection_is_the_only_thing_written(ws_tmp):
+    """The page's per-file boxes: an unticked file is absent even though its category is ticked."""
+    game, _folder = _instance(ws_tmp)
+    dest = ws_tmp / "out" / "picked.mrpack"
+    result = export_modpack(
+        "fabric-loader-0.19.3-1.21.11",
+        dest,
+        game,
+        categories=CATEGORIES,
+        files={"mods/sodium.jar", "config/sodium.json", "saves/world/level.dat"},
+        matcher=lambda *_a: MatchOutcome(failed=True),
+    )
+    with zipfile.ZipFile(dest) as archive:
+        names = archive.namelist()
+    assert "overrides/mods/sodium.jar" in names
+    assert "overrides/config/sodium.json" in names
+    assert "client-overrides/saves/world/level.dat" in names
+    # The other file of the same categories stays out: the selection is the file, not the folder.
+    assert "overrides/mods/lithium.jar.disabled" not in names
+    assert "client-overrides/options.txt" not in names
+    assert result.overrides == 3
+    assert result.missing == 0
+
+
+def test_a_ticked_file_deleted_before_the_export_is_skipped_and_counted(ws_tmp):
+    """Deleting a ticked file after the page counted it must not fail the export."""
+    game, folder = _instance(ws_tmp)
+    (folder / "mods" / "sodium.jar").unlink()
+    dest = ws_tmp / "out" / "vanished.mrpack"
+    result = export_modpack(
+        "fabric-loader-0.19.3-1.21.11",
+        dest,
+        game,
+        categories=CATEGORIES,
+        files={"mods/sodium.jar", "config/sodium.json"},
+        matcher=lambda *_a: MatchOutcome(failed=True),
+    )
+    with zipfile.ZipFile(dest) as archive:
+        names = archive.namelist()
+    assert result.missing == 1
+    assert "overrides/config/sodium.json" in names
+    assert "overrides/mods/sodium.jar" not in names
+
+
+def test_every_ticked_file_gone_is_an_explicit_refusal(ws_tmp):
+    """Nothing left to write is still an error, but it names how many ticked files disappeared."""
+    game, folder = _instance(ws_tmp)
+    (folder / "mods" / "sodium.jar").unlink()
+    with pytest.raises(ModpackError) as raised:
+        export_modpack(
+            "fabric-loader-0.19.3-1.21.11",
+            ws_tmp / "out" / "empty.mrpack",
+            game,
+            categories=CATEGORIES,
+            files={"mods/sodium.jar"},
+            matcher=lambda *_a: MatchOutcome(failed=True),
+        )
+    assert "1" in str(raised.value)
+    assert not (ws_tmp / "out" / "empty.mrpack").exists()
+
+
+def test_a_file_deleted_between_the_scan_and_its_turn_is_skipped(ws_tmp, monkeypatch):
+    """The scan saw the jar; it disappears while being hashed - the archive still gets the rest."""
+    game, _folder = _instance(ws_tmp)
+    dest = ws_tmp / "out" / "mid-run.mrpack"
+    real_hash = pack_export._hash_file
+
+    def vanish(path, **kwargs):
+        Path(path).unlink()
+        return real_hash(path, **kwargs)
+
+    monkeypatch.setattr(pack_export, "_hash_file", vanish)
+    result = export_modpack(
+        "fabric-loader-0.19.3-1.21.11",
+        dest,
+        game,
+        categories={"mods"},
+        matcher=lambda *_a: MatchOutcome(failed=True),
+    )
+    with zipfile.ZipFile(dest) as archive:
+        names = archive.namelist()
+    assert result.missing == 1
+    assert "overrides/mods/sodium.jar" not in names
+    # The disabled jar is not hashed, so it still travels in overrides/.
+    assert "overrides/mods/lithium.jar.disabled" in names

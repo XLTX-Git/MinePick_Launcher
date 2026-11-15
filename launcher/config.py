@@ -167,7 +167,7 @@ class ExportPreset(BaseModel):
     """What 导出 remembers for one instance (保存配置, plus the last destination folder).
 
     Deliberately per instance: the content selection is a decision about *this* pack - a mod pack
-    and a build pack answer the nine checkboxes differently - and the remembered folder is where the
+    and a build pack tick different categories and files - and the remembered folder is where the
     user put that pack. It lives in the launcher config rather than in a file that travels with the
     instance, because it is a UI preference, not instance data.
     """
@@ -178,10 +178,31 @@ class ExportPreset(BaseModel):
     version: str = "1.0.0"
     #: The ticked content categories (``launcher.modpack.export.CATEGORIES`` ids).
     categories: list[str] = Field(default_factory=list)
+    #: Files inside those categories that are *not* ticked, as instance-relative POSIX paths.
+    #: Empty - including an old preset written before per-file selection existed - means "every file
+    #: of ``categories``", which is exactly what the category checkboxes used to mean. Storing the
+    #: exceptions instead of the selection keeps a saved preset small (a pack that only leaves out
+    #: one screenshot should not list a thousand paths) and lets a newly added file be selected.
+    excluded_files: list[str] = Field(default_factory=list)
     #: 打包资源文件: put every file into ``overrides/`` instead of naming download URLs.
     embed_files: bool = False
     #: The last destination folder (empty = none remembered yet).
     folder: str = ""
+
+    @field_validator("excluded_files", mode="before")
+    @classmethod
+    def _normalize_excluded_files(cls, value: object) -> list[str]:
+        """Keep a hand-edited config loadable: only non-empty strings survive, as POSIX paths."""
+        if not isinstance(value, list):
+            return []
+        files: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            text = item.strip().replace("\\", "/").lstrip("/")
+            if text:
+                files.append(text)
+        return files
 
 
 class LauncherConfig(BaseModel):
@@ -377,7 +398,7 @@ class LauncherConfig(BaseModel):
     export_presets: dict[str, ExportPreset] = Field(
         default_factory=dict,
         description=(
-            "Per-instance 导出 settings: pack name/version, ticked content categories, "
+            "Per-instance 导出 settings: pack name/version, ticked content categories and files, "
             "打包资源文件 and the last destination folder"
         ),
     )

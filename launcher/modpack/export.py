@@ -268,9 +268,10 @@ class CategoryStat:
 class ExportPlan:
     """What an export would contain, decided locally and before a byte is hashed.
 
-    ``all_entries`` is the complete scan; ``entries`` is that scan filtered by the categories the
-    user ticked. Keeping both is what lets the page show "N files · X MB" for a category it is *not*
-    exporting, and change the summary the moment a checkbox flips, without rescanning the folder.
+    ``all_entries`` is the complete scan; ``entries`` is that scan filtered by the categories and
+    files the user ticked. Keeping both is what lets the page show "N files · X MB" for a category it
+    is *not* exporting, and change the summary the moment a checkbox flips, without rescanning the
+    folder.
     """
 
     instance_id: str
@@ -284,6 +285,12 @@ class ExportPlan:
     #: The categories this plan exports. Defaults to the four a pack is made of; the page passes its
     #: checkboxes.
     categories: frozenset[str] = DEFAULT_CATEGORIES
+    #: The ticked files, as instance-relative POSIX paths - the page's per-file boxes. ``None`` means
+    #: "every file of the ticked categories", which is what the nine category checkboxes used to mean
+    #: and what an old saved preset still means. A path here that the scan did not find is reported by
+    #: :meth:`missing_files` and skipped, never an error: the file may have been renamed or deleted
+    #: between the page counting it and 开始导出 being pressed.
+    files: frozenset[str] | None = None
     total_bytes: int = 0
     #: Files that were looked at but are not pack material (a non-jar in ``mods/``, an unreadable
     #: file). Reported so a surprising count has an explanation.
@@ -291,10 +298,20 @@ class ExportPlan:
 
     @property
     def entries(self) -> tuple[ExportEntry, ...]:
-        """The files this plan exports (the scan filtered by the ticked categories)."""
+        """The files this plan exports (the scan filtered by the ticked categories and files)."""
         return tuple(
-            entry for entry in self.all_entries if entry.category in self.categories
+            entry
+            for entry in self.all_entries
+            if entry.category in self.categories
+            and (self.files is None or entry.relative in self.files)
         )
+
+    def missing_files(self) -> frozenset[str]:
+        """Ticked paths the scan did not find (deleted or renamed since the page counted them)."""
+        if not self.files:
+            return frozenset()
+        present = {entry.relative for entry in self.all_entries}
+        return self.files - present
 
     def category_stats(self) -> dict[str, CategoryStat]:
         """Per-category count and size over the *whole* scan, for the page's category rows."""
@@ -389,6 +406,9 @@ class ExportResult:
     size: int
     #: True when 打包资源文件 was on: every file travelled in ``overrides/`` and ``files[]`` is empty.
     embedded: bool = False
+    #: Ticked files that were not on disk when the export ran (deleted or renamed after the page
+    #: counted them, including during the run). They were skipped; the rest of the pack is intact.
+    missing: int = 0
 
 
 @dataclass(frozen=True)
@@ -591,6 +611,7 @@ def plan_export(
     *,
     fmt: str = FORMAT_MODRINTH,
     categories: Iterable[str] | None = None,
+    files: Iterable[str] | None = None,
 ) -> ExportPlan:
     """Scan one instance and describe the pack an export would write.
 
@@ -600,13 +621,16 @@ def plan_export(
 
     ``categories`` is the page's checkbox set; None means the four a pack is made of. An empty set
     is allowed (the page shows it as "nothing to export") - the refusal happens when an *archive*
-    would be written.
+    would be written. ``files`` is the per-file selection inside those categories: None keeps the
+    category-level answer, and a ticked path the scan no longer sees is simply absent from
+    :meth:`ExportPlan.missing_files`.
     """
     if fmt not in (FORMAT_MODRINTH, FORMAT_CURSEFORGE):
         raise ValueError(f"unsupported modpack format: {fmt!r}")
     selected = (
         DEFAULT_CATEGORIES if categories is None else frozenset(str(item) for item in categories)
     )
+    selected_files = None if files is None else frozenset(str(item) for item in files)
     unknown = selected - set(CATEGORIES)
     if unknown:
         raise ValueError(f"unsupported modpack categories: {sorted(unknown)}")
@@ -615,6 +639,12 @@ def plan_export(
     instance = get_instance(instance_id, root)
     minecraft, loader, loader_version = loader_identity(root, resolved.version_id)
     entries, skipped = _scan_entries(resolved.launch_dir, fmt)
+    chosen = tuple(
+        entry
+        for entry in entries
+        if entry.category in selected
+        and (selected_files is None or entry.relative in selected_files)
+    )
     return ExportPlan(
         instance_id=instance_id,
         name=(instance.display_name if instance is not None else "") or instance_id,
@@ -625,7 +655,8 @@ def plan_export(
         fmt=fmt,
         all_entries=tuple(entries),
         categories=frozenset(selected),
-        total_bytes=sum(entry.size for entry in entries if entry.category in selected),
+        files=selected_files,
+        total_bytes=sum(entry.size for entry in chosen),
         skipped=skipped,
     )
 
@@ -819,6 +850,7 @@ def export_modpack(
     curseforge_matcher: (
         Callable[[Sequence[ModCandidate], str, str], CurseforgeOutcome] | None
     ) = None,
+    files: Iterable[str] | None = None,
 ) -> ExportResult:
     """Write one standard modpack for ``instance_id`` into ``dest``.
 
@@ -828,6 +860,9 @@ def export_modpack(
 
     ``categories`` is the page's content selection (None = the four a pack is made of): an
     unchecked category is never scanned into the archive, so it cannot leak into ``overrides/``.
+    ``files`` narrows that further to the exact paths the user ticked; ``None`` keeps the old
+    category-level meaning. The scan is repeated here, so a ticked file that disappeared in the
+    meantime is skipped and counted in :attr:`ExportResult.missing` - the disk always wins.
 
     ``embed_files`` is 打包资源文件: every file - mods included - travels in ``overrides/`` instead of
     being named in ``files[]``. It is the Modrinth answer to "the pack must not depend on any of its
@@ -840,9 +875,16 @@ def export_modpack(
     """
     if fmt not in (FORMAT_MODRINTH, FORMAT_CURSEFORGE):
         raise ValueError(f"unsupported modpack format: {fmt!r}")
-    plan = plan_export(instance_id, game_dir, fmt=fmt, categories=categories)
+    plan = plan_export(instance_id, game_dir, fmt=fmt, categories=categories, files=files)
     embed = bool(embed_files) and fmt == FORMAT_MODRINTH
+    #: Paths that were ticked on the page but are not on disk now (and, below, ones that disappear
+    #: between the scan and their turn in the archive). Reported, never fatal while anything is left.
+    missing_selection = plan.missing_files()
     if not plan.entries:
+        if missing_selection:
+            raise ModpackError(
+                tr_core("modpack.export_empty_missing", len(missing_selection))
+            )
         raise ModpackError(tr_core("modpack.export_empty"))
     _check_stop(should_stop)
 
@@ -865,6 +907,9 @@ def export_modpack(
     candidates: list[ModCandidate] = []
     matched_hashes: dict[str, ModrinthFile] = {}
     matched_ids: dict[str, CurseforgeIds] = {}
+    #: Files that vanished between the scan and their turn (deleted or renamed by another program
+    #: while the export was running). Skipped like the ones the scan itself did not find.
+    vanished: set[str] = set()
     degraded = False
 
     try:
@@ -877,7 +922,14 @@ def export_modpack(
                     _check_stop(should_stop)
                     reporter.tick(count, entry.relative)
 
-                digest = _hash_file(entry.source, on_chunk=on_chunk)
+                try:
+                    digest = _hash_file(entry.source, on_chunk=on_chunk)
+                except FileNotFoundError:
+                    # Renamed or deleted after the scan: skip it, keep the rest. The size still counts
+                    # as processed so the progress bar can reach its end instead of stopping short.
+                    vanished.add(entry.relative)
+                    reporter.advance(entry.size, entry.relative)
+                    continue
                 hashes[entry.relative] = digest
                 candidates.append(_candidate(entry, digest.sha1, digest.size))
                 reporter.advance(0, entry.relative)
@@ -961,7 +1013,12 @@ def export_modpack(
                     continue
                 member = f"{entry.override}/{entry.relative}"
                 _write_member(member)
-                zf.write(entry.source, member)
+                try:
+                    zf.write(entry.source, member)
+                except FileNotFoundError:
+                    vanished.add(entry.relative)
+                    reporter.advance(entry.size, entry.relative)
+                    continue
                 reporter.advance(entry.size, entry.relative)
         reporter.finish()
         tmp.replace(destination)
@@ -981,7 +1038,11 @@ def export_modpack(
             pass
         raise
 
-    overrides = sum(1 for entry in plan.entries if entry.relative not in matched)
+    overrides = sum(
+        1
+        for entry in plan.entries
+        if entry.relative not in matched and entry.relative not in vanished
+    )
     try:
         size = destination.stat().st_size
     except OSError:
@@ -1006,4 +1067,5 @@ def export_modpack(
         degraded=degraded,
         size=size,
         embedded=embed,
+        missing=len(missing_selection) + len(vanished),
     )
