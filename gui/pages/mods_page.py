@@ -1636,15 +1636,19 @@ class _ContentTab(QWidget):
         self._form_grid.addWidget(self.sort_combo, 0, 3)
         self._form_grid.addWidget(self.search_edit, 0, 4)
         self._form_grid.addWidget(self.search_button, 0, 5)
-        # The game-version pair keeps columns 2/3 on every tab, so switching 模组 → 整合包 only removes the
-        # loader field: the version field does not move. It used to slide into column 0 when there was no
-        # loader, which made the whole second row jump sideways as you changed tabs.
-        version_column = 2
+        # MC 版本 comes first and the loader follows it. That order is also what keeps the version field
+        # still: it owns columns 0/1 on every tab, and 整合包 / 资源包 / 光影 simply have nothing in the
+        # columns the loader would have used. The other arrangement put the version second and slid it
+        # left on tabs without a loader, so the whole second row jumped sideways when you changed tabs.
+        self._form_grid.addWidget(self.game_version_label, 1, 0)
+        self._form_grid.addWidget(self.game_version_edit, 1, 1)
+        # A floor under both fields: sized purely from their labels ("1.20.1", "Fabric") they came out
+        # half the width the row had before, which read as a layout accident rather than a design.
+        self.game_version_edit.setMinimumWidth(190)
         if self.loader_label is not None:
-            self._form_grid.addWidget(self.loader_label, 1, 0)
-            self._form_grid.addWidget(self.loader_combo, 1, 1)
-        self._form_grid.addWidget(self.game_version_label, 1, version_column)
-        self._form_grid.addWidget(self.game_version_edit, 1, version_column + 1)
+            self._form_grid.addWidget(self.loader_label, 1, 2)
+            self._form_grid.addWidget(self.loader_combo, 1, 3)
+            self.loader_combo.setMinimumWidth(190)
         self._form_grid.addWidget(self.slug_edit, 1, 4)
         self._form_grid.addWidget(self.query_button, 1, 5)
         # A hidden slug field must not shrink the action column: both buttons keep the width of the
