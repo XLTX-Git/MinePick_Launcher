@@ -381,6 +381,49 @@ def list_files(
     return files
 
 
+def match_fingerprint(fingerprint: int, *, client: httpx.Client | None = None) -> dict | None:
+    """Ask CurseForge which file this fingerprint is; ``None`` when it is not one of theirs.
+
+    The answer is authoritative in a way a name search is not: the fingerprint is computed from the
+    bytes, so a renamed jar still resolves and a same-named different file does not.
+    """
+    own = client is None
+    active = client or _client()
+    try:
+        response = active.post(CURSEFORGE_API + "/v1/fingerprints", json={"fingerprints": [int(fingerprint)]})
+        if response.status_code == 400:
+            return None  # CurseForge rejects unknown fingerprints with a 400
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    finally:
+        if own:
+            active.close()
+    matches = ((payload or {}).get("data") or {}).get("exactMatches") or []
+    for match in matches:
+        if isinstance(match, dict):
+            return match
+    return None
+
+
+def fetch_mod(mod_id: int, *, client: httpx.Client | None = None) -> dict | None:
+    """One CurseForge project, for the title and logo a lobby row shows."""
+    own = client is None
+    active = client or _client()
+    try:
+        response = active.get(f"{CURSEFORGE_API}/v1/mods/{int(mod_id)}")
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    finally:
+        if own:
+            active.close()
+    data = (payload or {}).get("data")
+    return data if isinstance(data, dict) else None
+
+
 def download_file(
     cf_file: CfFile,
     target_dir: Path,

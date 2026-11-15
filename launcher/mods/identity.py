@@ -442,6 +442,29 @@ def _latest_version(client: httpx.Client, slug: str, game_version: str, loader: 
     return ""
 
 
+def _identity_from_curseforge(kind: str, project: dict) -> Identity:
+    """Map one CurseForge project onto :class:`Identity`.
+
+    CurseForge calls the description ``summary`` and the icon ``logo.thumbnailUrl``; the slug is absent,
+    so the numeric id doubles as one - it is only ever used for cache keys and log lines here.
+    """
+    logo = project.get("logo") or {}
+    classes = project.get("categories") or []
+    return Identity(
+        kind=kind,
+        slug=str(project.get("slug") or project.get("id") or ""),
+        title=str(project.get("name") or ""),
+        description=str(project.get("summary") or ""),
+        categories=tuple(
+            str(entry.get("name") or "")
+            for entry in classes
+            if isinstance(entry, dict) and entry.get("name")
+        )[:2],
+        icon_url=str(logo.get("thumbnailUrl") or logo.get("url") or ""),
+        updated=str(project.get("dateModified") or ""),
+    )
+
+
 def _identity_from_hit(
     kind: str, hit: dict, project: dict, latest_version: str
 ) -> Identity:
@@ -552,7 +575,29 @@ def lookup_by_hash(
     try:
         version = _version_from_hash(active, sha1)
         if version is None:
-            return None
+            # Not a Modrinth file. CurseForge recognises files by the same idea (a content hash), so try
+            # it second: a jar from there is still exactly identifiable, just by a different fingerprint.
+            from launcher.mods import curseforge as cf_mod
+            from launcher.mods.curseforge_fingerprint import murmur2_filtered
+
+            try:
+                fingerprint = murmur2_filtered(Path(path))
+            except OSError:
+                return None
+            match = cf_mod.match_fingerprint(fingerprint)
+            if not match:
+                return None
+            file_info = match.get("file") or {}
+            mod_info = match.get("mod") or {}
+            mod_id = file_info.get("modId") or mod_info.get("id")
+            if not mod_id:
+                return None
+            project = cf_mod.fetch_mod(int(mod_id)) or {}
+            if not project:
+                return None
+            identity = _identity_from_curseforge(kind, project)
+            _write_cache(kind, key, identity)
+            return identity
         project_id = str(version.get("project_id") or "").strip()
         if not project_id:
             return None
