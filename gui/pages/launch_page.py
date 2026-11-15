@@ -72,6 +72,31 @@ from launcher.launch import (
 from launcher.meta.version import version_json_path
 
 tr = i18n.tr
+logger = logging.getLogger(__name__)
+
+def _complete_missing_files(game_dir: Path, version_id: str) -> str:
+    """Fetch whatever this instance is missing before the command is built; returns a status line.
+
+    A folder made by another launcher can arrive without a library or the client jar; the game then
+    fails inside the class loader and names none of it. Completing the gaps here means the failure a
+    person sees (if any) is about something else - a bad profile, missing Java - rather than a
+    NoClassDefFoundError.
+
+    Never fatal: a repair that cannot reach the network leaves the launch to fail with its own reason,
+    instead of turning into a download error before anything has been tried.
+    """
+    try:
+        from launcher.repair import repair
+
+        plan = repair(version_id, game_dir=game_dir)
+    except Exception:
+        logger.debug("补全实例文件失败", exc_info=True)
+        return ""
+    if not plan.tasks:
+        return ""
+    megabytes = plan.total_bytes / (1024 * 1024) if plan.total_bytes else 0.0
+    return i18n.tr("launch.msg.completed", len(plan.tasks), f"{megabytes:.0f}")
+
 _LOGGER = logging.getLogger(__name__)
 
 #: Version kinds the manifest knows, mapped onto the labels the versions page already uses.
@@ -750,6 +775,11 @@ class LaunchPage(QWidget):
                     and version_json_path(game_dir / "versions" / target_version_id) is None
                 ):
                     target_version_id = version_id
+                # Complete the instance before building the command. A folder made by another
+                # launcher can be missing a library or the client jar, and Minecraft then dies inside
+                # the class loader with a message that names none of it; PCL's answer is to fetch the
+                # gaps at launch, and this is the same idea with only the missing files fetched.
+                note = _complete_missing_files(game_dir, target_version_id)
                 prepared = prepare_launch(
                     target_version_id,
                     game_dir=game_dir,
@@ -764,7 +794,7 @@ class LaunchPage(QWidget):
                     game_args=resolved.game_args,
                     server=resolved.server or None,
                 )
-                return ("ok", prepared, resolved)
+                return ("ok", prepared, resolved, note)
             except JavaMissingError as exc:
                 return ("java", exc.required_major)
 
@@ -825,9 +855,13 @@ class LaunchPage(QWidget):
             else:
                 set_app_status(self, tr("launch.msg.cancelled", major))
             return
-        _kind, prepared, resolved = result
+        _kind, prepared, resolved, note = result
         command = prepared.command
         self._last_launch = (prepared, resolved)  # the exit callback needs it for the diagnosis
+        if note:
+            # The repair already happened (it runs in the worker, before the command is built); this
+            # line is the record of what it fetched, shown in place of nothing.
+            logger.info("补全实例文件: %s", note)
         set_app_status(
             self,
             tr(

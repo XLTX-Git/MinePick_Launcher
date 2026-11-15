@@ -577,3 +577,50 @@ def test_the_switch_shows_up_in_the_window_task_list(app, window, monkeypatch):
     )
     tasks = built.tasks.tasks()
     assert [task.state for task in tasks if task.kind == "version"] == [DONE]
+
+def test_the_verify_button_completes_the_instance_without_rebuilding_it(
+    app, window, monkeypatch
+):
+    """校验并补全 is the manual half of the pre-launch repair: same planner, no core rebuild."""
+    _built, game, detail = window
+    called: list[tuple[str, Path]] = []
+
+    class _Plan:
+        tasks = [object(), object()]
+        total_bytes = 5 * 1024 * 1024
+
+    def fake_repair(version_id, *, game_dir, **kwargs):
+        called.append((version_id, game_dir))
+        return _Plan()
+
+    monkeypatch.setattr("launcher.repair.repair", fake_repair)
+    detail.verify_button.click()
+    for _ in range(200):
+        app.processEvents()
+        if called:
+            break
+        time.sleep(0.01)
+    for _ in range(5):
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert called and called[0][1] == game
+    assert "2" in detail.modify_result.text(), detail.modify_result.text()
+    assert detail.verify_button.isEnabled()
+
+
+def test_the_verify_button_says_so_when_nothing_is_missing(app, window, monkeypatch):
+    _built, _game, detail = window
+
+    class _Plan:
+        tasks: list[object] = []
+        total_bytes = 0
+
+    monkeypatch.setattr("launcher.repair.repair", lambda version_id, **kw: _Plan())
+    detail.verify_button.click()
+    for _ in range(200):
+        app.processEvents()
+        if detail.modify_result.text() not in ("", i18n.tr("instances.detail.modify.verify.checking")):
+            break
+        time.sleep(0.01)
+    assert detail.modify_result.text() == i18n.tr("instances.detail.modify.verify.ok")

@@ -3525,10 +3525,20 @@ class InstanceDetail(QWidget):
         self.reset_button.setAccessibleName(tr("instances.detail.modify.reset.start"))
         self.reset_button.setEnabled(False)
         self.reset_button.clicked.connect(self._on_modify_button)
+        #: Completes a folder that other launchers left half-installed; sits next to 重置 because both
+        #: answer "this instance does not run, make it run" - one rebuilds the core, one fetches the
+        #: files that are simply absent. It never rewrites the profile.
+        self.verify_button = QPushButton(tr("instances.detail.modify.verify"))
+        self.verify_button.setObjectName("secondaryButton")
+        self.verify_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.verify_button.setAccessibleName(tr("instances.detail.modify.verify"))
+        self.verify_button.setEnabled(False)
+        self.verify_button.clicked.connect(self._verify_files)
         reset_row = QHBoxLayout()
         reset_row.setContentsMargins(0, 4, 0, 0)
-        reset_row.setSpacing(0)
+        reset_row.setSpacing(8)
         reset_row.addStretch(1)
+        reset_row.addWidget(self.verify_button)
         reset_row.addWidget(self.reset_button)
         reset_row.addStretch(1)
         card_layout.addLayout(reset_row)
@@ -4618,10 +4628,14 @@ class InstanceDetail(QWidget):
         self.reset_button.setIcon(QIcon(pixmap))
         self.reset_button.setIconSize(QSize(16, 16))
         self.reset_button.setEnabled(self._modify_ready and not self._switch_busy)
+        # Completing files needs the same "an instance is loaded and no core job is running" gate as
+        # the primary button: both download into the same folder.
+        self.verify_button.setEnabled(self._modify_ready and not self._switch_busy)
 
     def _set_modify_busy(self, busy: bool) -> None:
         """One core job at a time: the primary button and every row action follow the same flag."""
         self.reset_button.setEnabled(not busy and self._modify_ready)
+        self.verify_button.setEnabled(not busy and self._modify_ready)
         for row in self.modify_rows.values():
             row.set_busy(busy)
 
@@ -5118,6 +5132,51 @@ class InstanceDetail(QWidget):
         )
 
     # ---------- 修改: the one primary button ----------
+
+    def _verify_files(self) -> None:
+        """Complete an instance that is missing files, without rebuilding its core.
+
+        A folder another launcher left half-installed has a readable profile and no client jar; the game
+        then dies in the class loader naming nothing. This is the manual half of the pre-launch repair
+        the launch page runs - same planner, so it fetches exactly the files that are absent and leaves
+        the profile, the loader and everything that checks out alone.
+        """
+        if not (self._modify_ready and self.instance_id and self.resolved):
+            return
+        from gui.workers import run_in_background
+
+        version_id = self.resolved.version_id
+        game_dir = self.game_dir
+        self.verify_button.setEnabled(False)
+        self.verify_button.setText(tr("instances.detail.modify.verify.checking"))
+        self.modify_result.setVisible(True)
+        self.modify_result.setText(tr("instances.detail.modify.verify.checking"))
+
+        def work() -> str:
+            from launcher.repair import repair
+
+            plan = repair(version_id, game_dir=game_dir)
+            if not plan.tasks:
+                return tr("instances.detail.modify.verify.ok")
+            megabytes = plan.total_bytes / (1024 * 1024) if plan.total_bytes else 0.0
+            return tr(
+                "instances.detail.modify.verify.done", len(plan.tasks), f"{megabytes:.0f}"
+            )
+
+        def done(message) -> None:
+            self.modify_result.setText(str(message))
+            self.verify_button.setText(tr("instances.detail.modify.verify"))
+            self.verify_button.setEnabled(True)
+            self._fill_modify()
+
+        def failed(message) -> None:
+            self.modify_result.setText(
+                tr("instances.detail.modify.verify.failed", str(message))
+            )
+            self.verify_button.setText(tr("instances.detail.modify.verify"))
+            self.verify_button.setEnabled(True)
+
+        run_in_background(work, on_result=done, on_error=failed)
 
     def _on_modify_button(self) -> None:
         """开始重置 with no plan, 开始修改 with one."""

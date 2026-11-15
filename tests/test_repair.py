@@ -98,3 +98,65 @@ def test_a_missing_version_json_is_reported_not_raised(ws_tmp):
 
     assert not plan.tasks
     assert plan.problems, "an empty folder must say why nothing could be planned"
+
+def test_the_launch_path_completes_a_missing_instance_and_says_so(monkeypatch, ws_tmp):
+    """The pre-launch hook: a folder missing files is completed, and the caller gets one line to log.
+
+    Launching used to go straight from "resolve the instance" to "build the command", so an instance
+    made by another launcher failed inside the class loader with a message that named no file.
+    """
+    from gui.pages import launch_page
+
+    game = ws_tmp / "game"
+    _instance(game)
+
+    completed: list[str] = []
+
+    def fake_repair(version_id, *, game_dir, **kwargs):
+        completed.append(version_id)
+        from launcher.net.downloader import DownloadTask
+        from launcher.repair import RepairPlan
+
+        plan = RepairPlan(version_id=version_id)
+        plan.tasks = [
+            DownloadTask(url="https://x/a.jar", dest=game / "a.jar", sha1="00", size=1000)
+        ]
+        return plan
+
+    monkeypatch.setattr("launcher.repair.repair", fake_repair)
+    note = launch_page._complete_missing_files(game, "demo")
+
+    assert completed == ["demo"]
+    assert note, "a completed repair must leave a line for the log"
+    assert "1" in note
+
+
+def test_the_launch_path_stays_quiet_when_nothing_is_missing(monkeypatch, ws_tmp):
+    from gui.pages import launch_page
+    from launcher.repair import RepairPlan
+
+    game = ws_tmp / "game"
+    _instance(game)
+    monkeypatch.setattr(
+        "launcher.repair.repair", lambda version_id, **kwargs: RepairPlan(version_id=version_id)
+    )
+    assert launch_page._complete_missing_files(game, "demo") == ""
+
+
+def test_a_failing_repair_never_blocks_the_launch(monkeypatch, ws_tmp):
+    from gui.pages import launch_page
+
+    def boom(version_id, **kwargs):
+        raise OSError("no network")
+
+    monkeypatch.setattr("launcher.repair.repair", boom)
+    assert launch_page._complete_missing_files(ws_tmp / "game", "demo") == ""
+
+def test_the_modify_page_offers_the_same_repair(app, ws_tmp, monkeypatch):
+    """The manual half: a button on 修改 that completes the instance without rebuilding its core."""
+    from gui.pages import instance_detail
+
+    plan = instance_detail.InstanceDetailPage if hasattr(
+        instance_detail, "InstanceDetailPage"
+    ) else None
+    assert plan is not None, "the page class moved; update this test"

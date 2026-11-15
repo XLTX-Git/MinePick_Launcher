@@ -136,3 +136,40 @@ def _already_holds(task: DownloadTask) -> bool:
         return True
     except OSError:
         return False
+
+def repair(
+    version_id: str,
+    *,
+    game_dir: Path,
+    cache_dir: Path | None = None,
+    platform: Platform | None = None,
+    progress=None,
+    concurrency: int = 4,
+    client=None,
+) -> RepairPlan:
+    """Plan and download whatever the instance is missing; returns the plan that was carried out.
+
+    Only the missing files are fetched - a repair never rewrites the version JSON, never re-extracts
+    natives and never touches a file that checks out. ``progress`` is the downloader's own
+    ``DownloadProgress`` callback, so a caller can show the same bytes/seconds a normal install shows.
+    """
+    from launcher.install import (
+        plan_tasks as _plan_tasks,  # noqa: F401 - kept for callers reading this
+    )
+    from launcher.net.downloader import Downloader
+
+    plan = plan_repair(version_id, game_dir=game_dir, platform=platform)
+    if not plan.tasks:
+        return plan
+    client_owned = client is None
+    http_client = client
+    try:
+        if http_client is None:
+            import httpx
+
+            http_client = httpx.Client(follow_redirects=True)
+        Downloader(concurrency=concurrency, client=http_client).download(plan.tasks, progress)
+    finally:
+        if client_owned and http_client is not None:
+            http_client.close()
+    return plan
