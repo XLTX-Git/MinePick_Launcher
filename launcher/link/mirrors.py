@@ -42,7 +42,7 @@ import os
 import queue
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,6 +51,13 @@ import httpx
 from launcher import paths
 
 logger = logging.getLogger(__name__)
+
+#: ``(mirror key, latency in ms or None)`` - ``None`` means the probe ran and did not answer, which
+#: is a different fact from "not probed yet" and is shown as 超时.
+LatencyCallback = Callable[[str, "int | None"], None]
+#: Called once when every probe has answered (or the race gave up): the winner's key ("" when none),
+#: the full latency map and the keys that timed out.
+DoneCallback = Callable[[str, dict[str, int], tuple[str, ...]], None]
 
 #: How long a measured winner is trusted.
 MIRROR_TTL = 7 * 24 * 3600.0
@@ -102,9 +109,15 @@ class MirrorReport:
     chosen: str = ""
     latency_ms: dict[str, int] = field(default_factory=dict)
     measured_at: float = 0.0
+    #: Mirrors that were probed and did not answer. Distinct from a key missing from ``latency_ms``,
+    #: which still means "not measured"; the page prints 超时 for these and 未测 for the others.
+    failed: tuple[str, ...] = ()
 
     def latency(self, key: str) -> int | None:
         return self.latency_ms.get(key)
+
+    def timed_out(self, key: str) -> bool:
+        return key in self.failed
 
 
 def cache_path() -> Path:
@@ -167,10 +180,17 @@ def read_report(path: Path | None = None) -> MirrorReport:
             if isinstance(value, (int, float)):
                 latencies[str(key)] = int(value)
     measured_at = raw.get("measured_at")
+    failed_raw = raw.get("failed")
+    failed = (
+        tuple(str(key) for key in failed_raw)
+        if isinstance(failed_raw, list)
+        else ()
+    )
     return MirrorReport(
         chosen=chosen,
         latency_ms=latencies,
         measured_at=float(measured_at) if isinstance(measured_at, (int, float)) else 0.0,
+        failed=failed,
     )
 
 
@@ -182,12 +202,23 @@ def _write_report(report: MirrorReport, path: Path | None = None) -> None:
         "chosen": report.chosen,
         "latency_ms": report.latency_ms,
         "measured_at": report.measured_at or time.time(),
+        "failed": list(report.failed),
     }
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(target.name + ".tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(target)
+        # Windows refuses the replace while anybody has the target open for reading, and the page
+        # polls this file while a download runs: one reader that happens to be there at that instant
+        # must not turn into "the final report was never written".
+        for attempt in range(10):
+            try:
+                temporary.replace(target)
+                return
+            except OSError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.01)
     except OSError:
         logger.debug("无法写入镜像测速缓存: %s", target, exc_info=True)
 
@@ -212,15 +243,42 @@ def _probe(mirror: Mirror, version: str, asset: str, timeout: float) -> int | No
     return None
 
 
+def _notify_latency(
+    callback: LatencyCallback | None, key: str, latency: int | None
+) -> None:
+    """Deliver one probe result; a broken listener must never kill the race thread."""
+    if callback is None:
+        return
+    try:
+        callback(key, latency)
+    except Exception:
+        logger.debug("镜像测速回调失败: %s", key, exc_info=True)
+
+
 def _race(
-    mirrors: Sequence[Mirror], version: str, asset: str, timeout: float
-) -> tuple[Mirror | None, dict[str, int]]:
-    """Run every probe at once; return the first mirror that answered and the latencies seen."""
+    mirrors: Sequence[Mirror],
+    version: str,
+    asset: str,
+    timeout: float,
+    *,
+    on_latency: LatencyCallback | None = None,
+    on_done: DoneCallback | None = None,
+    probe: Callable[[Mirror, str, str, float], int | None] | None = None,
+) -> tuple[Mirror | None, dict[str, int], tuple[str, ...]]:
+    """Run every probe at once; return the first mirror that answered **without waiting for the rest**.
+
+    The download starts from the first success. The remaining probes keep running on daemon threads
+    and report through ``on_latency`` (a mirror that never answers reports ``None``, shown as 超时);
+    once they are all in, ``on_done`` receives the complete latency map so the cache can be rewritten.
+    That is what makes all three 其他下载渠道 rows end up measured while the download is already going.
+    """
     results: queue.Queue[tuple[str, int | None]] = queue.Queue()
     by_key = {mirror.key: mirror for mirror in mirrors}
 
+    measure = probe or _probe
+
     def run(mirror: Mirror) -> None:
-        results.put((mirror.key, _probe(mirror, version, asset, timeout)))
+        results.put((mirror.key, measure(mirror, version, asset, timeout)))
 
     for mirror in mirrors:
         thread = threading.Thread(
@@ -232,6 +290,7 @@ def _race(
         thread.start()
 
     latencies: dict[str, int] = {}
+    failed: set[str] = set()
     winner: Mirror | None = None
     deadline = time.monotonic() + timeout + 0.5
     remaining = len(mirrors)
@@ -244,12 +303,61 @@ def _race(
         except queue.Empty:
             break
         remaining -= 1
-        if latency is not None:
+        if latency is None:
+            failed.add(key)
+        else:
             latencies[key] = latency
-            if winner is None:
-                winner = by_key.get(key)  # the first answer wins: "先回来的先用"
-                break  # the download starts now; the other probes are daemon threads
-    return winner, latencies
+        _notify_latency(on_latency, key, latency)
+        if latency is not None:
+            winner = by_key.get(key)  # the first answer wins: "先回来的先用"
+            break
+
+    def finish(all_latencies: dict[str, int], all_failed: set[str]) -> None:
+        if on_done is None:
+            return
+        try:
+            on_done(
+                winner.key if winner is not None else "",
+                all_latencies,
+                tuple(sorted(all_failed)),
+            )
+        except Exception:
+            logger.debug("镜像测速完成回调失败", exc_info=True)
+
+    def drain() -> None:
+        # One deadline for the whole tail, not one per probe: with a per-probe timeout three slow
+        # mirrors could hold the drain for 3 x (timeout + 1), and whatever waits for "all three rows
+        # measured" (the page, the tests) gave up first. Every probe already gives up at ``timeout``,
+        # so the tail can never legitimately need much more than that.
+        deadline_drain = time.monotonic() + timeout + 1.5
+        pending = remaining
+        while pending > 0:
+            left = deadline_drain - time.monotonic()
+            if left <= 0:
+                break
+            try:
+                key, latency = results.get(timeout=left)
+            except queue.Empty:
+                break
+            pending -= 1
+            if latency is None:
+                failed.add(key)
+            else:
+                latencies[key] = latency
+            _notify_latency(on_latency, key, latency)
+        # Every key must end in exactly one of the two buckets: a probe that never answered (or the
+        # race deadline) is 超时, while a key we never touched stays 未测 on screen.
+        for mirror in mirrors:
+            if mirror.key not in latencies and mirror.key not in failed:
+                failed.add(mirror.key)
+                _notify_latency(on_latency, mirror.key, None)
+        finish(dict(latencies), set(failed))
+
+    if remaining > 0:
+        threading.Thread(target=drain, name="terracotta-mirror-drain", daemon=True).start()
+    else:
+        finish(dict(latencies), set(failed))
+    return winner, latencies, tuple(sorted(failed))
 
 
 def choose_mirror(
@@ -261,8 +369,15 @@ def choose_mirror(
     path: Path | None = None,
     timeout: float = 4.0,
     now: float | None = None,
+    on_latency: LatencyCallback | None = None,
+    probe: Callable[[Mirror, str, str, float], int | None] | None = None,
 ) -> Mirror:
-    """The mirror to download from: manual choice, then fresh cache, then the race."""
+    """The mirror to download from: manual choice, then fresh cache, then the race.
+
+    ``on_latency`` is called for **every** probe that answers, including the ones that arrive after
+    the winner was returned, and with ``None`` for a probe that ran and did not answer. The download
+    never waits for the slower probes: the first success is returned immediately.
+    """
     chosen_key = (preferred or preferred_key()).strip().lower()
     manual = next((mirror for mirror in mirrors if mirror.key == chosen_key), None)
     timestamp = time.time() if now is None else now
@@ -284,12 +399,53 @@ def choose_mirror(
         if match is not None:
             return match
 
-    winner, latencies = _race(list(mirrors), version, asset, timeout)
+    winner: Mirror | None = None
+
+    finished = {"final": False}
+    finish_lock = threading.Lock()
+
+    def done(
+        chosen_key: str, latencies: dict[str, int], failed: tuple[str, ...]
+    ) -> None:
+        # The full picture arrives after the download already started; rewriting the cache here is
+        # what makes the next open show all three rows instead of only the winner. The lock closes
+        # the one ordering that would lose it: the drain thread finishing before choose_mirror
+        # writes its partial report, which would otherwise overwrite the final one.
+        with finish_lock:
+            if chosen_key:
+                _write_report(
+                    MirrorReport(
+                        chosen=chosen_key,
+                        latency_ms=latencies,
+                        measured_at=timestamp,
+                        failed=failed,
+                    ),
+                    path,
+                )
+            finished["final"] = True
+
+    winner, latencies, failed = _race(
+        list(mirrors),
+        version,
+        asset,
+        timeout,
+        on_latency=on_latency,
+        on_done=done,
+        probe=probe,
+    )
     if winner is None:
         # Every probe failed: a HEAD can be blocked while GET still works, so try the measured
         # order rather than reporting a download failure that may not exist.
         return mirrors[0]
-    _write_report(
-        MirrorReport(chosen=winner.key, latency_ms=latencies, measured_at=timestamp), path
-    )
+    with finish_lock:
+        if not finished["final"]:
+            _write_report(
+                MirrorReport(
+                    chosen=winner.key,
+                    latency_ms=latencies,
+                    measured_at=timestamp,
+                    failed=failed,
+                ),
+                path,
+            )
     return winner

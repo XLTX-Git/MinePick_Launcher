@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
@@ -55,6 +56,7 @@ from PySide6.QtWidgets import (
 
 from gui import i18n, inwindow_dialog, paint_utils, theme
 from gui.widgets import (
+    ElidedLabel,
     add_page_top_inset,
     build_download_progress,
     set_app_status,
@@ -374,8 +376,16 @@ class _MemberAvatar(QWidget):
     def load_skin(self) -> None:
         """Kick off the background lookup when the member has a premium UUID."""
         member = self._member
-        if not (member.premium and member.uuid):
-            return  # offline, or a backend (Terracotta v0.4.2) that provides no UUID
+        if not member.uuid:
+            # Terracotta reports a name and nothing else. Ask Mojang what UUID that name is, then the
+            # usual session-server path can paint a face; the letter stays until (and unless) it does.
+            run_in_background(
+                lambda: skins.resolve_uuid_by_name(member.name),
+                on_result=self._on_member_uuid,
+            )
+            return
+        if not member.premium:
+            return
         url = skins.cached_skin_url(member.uuid)
         if url:
             self._use_skin_url(url)
@@ -384,6 +394,14 @@ class _MemberAvatar(QWidget):
             lambda: skins.resolve_skin_url(member.uuid),
             on_result=self._on_skin_url,
         )
+
+    def _on_member_uuid(self, player_uuid) -> None:
+        """A name resolved to a UUID: continue into the ordinary skin lookup."""
+        player_uuid = str(player_uuid or "")
+        if not player_uuid or not widget_alive(self):
+            return
+        self._member = replace(self._member, uuid=player_uuid, premium=True)
+        self.load_skin()
 
     def _on_skin_url(self, url) -> None:
         if not widget_alive(self) or not str(url or ""):
@@ -431,6 +449,9 @@ class ToolsPage(QWidget):
     session_changed = Signal()
     #: The progress callback is itself a signal so a real downloader may report from a worker.
     download_progress = Signal(object)
+    #: One mirror probe answered: (key, latency in ms or None = timed out). The mirror race calls its
+    #: listener from a daemon thread, so this signal is the hop back to the GUI thread.
+    channel_latency = Signal(str, object)
     #: Reserved for the next change: opening multiplayer needs a real launch path.
     open_multiplayer_requested = Signal(str)
 
@@ -474,6 +495,7 @@ class ToolsPage(QWidget):
         self._build_ui()
         self.session_changed.connect(self._sync)
         self.download_progress.connect(self._on_download_progress)
+        self.channel_latency.connect(self._on_channel_latency)
         # A bound method of the page itself is not called for its own `destroyed` signal: Qt has
         # already severed the object's connections by then (measured with PySide6 6.11). The lambda
         # is a plain callable, so it still runs and can stop observing before the C++ object goes.
@@ -552,11 +574,6 @@ class ToolsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         layout.addWidget(self._build_banner())
-        self.self_check_line = QLabel()
-        self.self_check_line.setObjectName("hint")
-        self.self_check_line.setContentsMargins(36, 0, 0, 0)
-        self.self_check_line.hide()
-        layout.addWidget(self.self_check_line)
         return block
 
     def _build_banner(self) -> QFrame:
@@ -566,10 +583,21 @@ class ToolsPage(QWidget):
         layout.setContentsMargins(12, BANNER_VERTICAL_PADDING, 12, BANNER_VERTICAL_PADDING)
         layout.setSpacing(8)
         layout.addWidget(_RoundBadge("i", diameter=16, fill="ACCENT", ink="FG_SELECTED", pixel_size=10))
-        text = QLabel(tr("tools.banner"))
+        # The hint is the part that gives way on a narrow window: an elided one-line label (not a
+        # word-wrapped one) keeps the banner one row tall and lets the measured result - which must
+        # stay readable - keep its full width to the right.
+        text = ElidedLabel(tr("tools.banner"), elide_mode=Qt.TextElideMode.ElideRight)
         text.setObjectName("toolsBannerText")
-        text.setWordWrap(True)
         layout.addWidget(text, 1)
+        # UDP/TCP results live inside the banner now, in the blank space before the button. Empty
+        # until a check has run, in which case it takes no width and changes no geometry.
+        self.self_check_result = QLabel("")
+        self.self_check_result.setObjectName("hint")
+        self.self_check_result.setWordWrap(False)
+        self.self_check_result.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred
+        )
+        layout.addWidget(self.self_check_result, 0, Qt.AlignmentFlag.AlignVCenter)
         self.self_check_button = QPushButton(tr("tools.net.title"))
         self.self_check_button.setObjectName("secondaryButton")
         # No fixed height: #secondaryButton carries `padding: 8px 16px` and a 1px border, so the QSS
@@ -598,7 +626,7 @@ class ToolsPage(QWidget):
         session = self._session
         self.self_check_button.setEnabled(False)
         self.self_check_button.setText(tr("tools.net.checking"))
-        self._show_self_check_line(
+        self._show_self_check_result(
             tr("tools.net.checking"),
             tr("tools.net.checking"),
             tr("tools.net.nat.checking_tip"),
@@ -609,10 +637,10 @@ class ToolsPage(QWidget):
             on_error=lambda _message: self._on_self_check_ready(None, session),
         )
 
-    def _show_self_check_line(self, udp: str, tcp: str, tooltip: str) -> None:
-        self.self_check_line.setText(tr("tools.net.nat.line", udp, tcp))
-        self.self_check_line.setToolTip(tooltip)
-        self.self_check_line.show()
+    def _show_self_check_result(self, udp: str, tcp: str, tooltip: str) -> None:
+        """Write the result into the banner's blank space; the old line below it is gone."""
+        self.self_check_result.setText(tr("tools.net.nat.line", udp, tcp))
+        self.self_check_result.setToolTip(tooltip)
 
     def _on_self_check_ready(self, report, session) -> None:
         if session is not self._session or not widget_alive(self):
@@ -622,7 +650,7 @@ class ToolsPage(QWidget):
         self.self_check_button.setText(tr("tools.net.refresh"))
         nat = report.nat if isinstance(report, SelfCheckReport) else None
         if isinstance(nat, NatProbe) and nat.tested:
-            self._show_self_check_line(
+            self._show_self_check_result(
                 _nat_type_text(nat.udp),
                 _nat_type_text(nat.tcp),
                 _nat_tooltip(nat),
@@ -632,7 +660,7 @@ class ToolsPage(QWidget):
         verdict = report.stun if isinstance(report, SelfCheckReport) else StunVerdict.UNKNOWN
         fallback_failed = verdict in (StunVerdict.UNKNOWN, StunVerdict.ERROR)
         udp = unknown if fallback_failed else _verdict_text(verdict)
-        self._show_self_check_line(
+        self._show_self_check_result(
             udp,
             unknown,
             _nat_tooltip(nat, fallback_failed=fallback_failed and isinstance(nat, NatProbe)),
@@ -1204,10 +1232,9 @@ class ToolsPage(QWidget):
         self._downloading = False
         self._download_failure = ""
         self._checking = False
-        if hasattr(self, "self_check_line"):
-            self.self_check_line.hide()
-            self.self_check_line.clear()
-            self.self_check_line.setToolTip("")
+        if hasattr(self, "self_check_result"):
+            self.self_check_result.clear()
+            self.self_check_result.setToolTip("")
             self.self_check_button.setText(tr("tools.net.title"))
             self.self_check_button.setEnabled(True)
         self._attach_bus()
@@ -1389,10 +1416,35 @@ class ToolsPage(QWidget):
         self.download_button.setEnabled(False)
         self.download_button.setVisible(False)
         try:
-            self._session.download_core(self._emit_download_progress)
+            self._session.download_core(
+                self._emit_download_progress,
+                on_latency=self._emit_channel_latency,
+            )
         except Exception:
             log.exception("link core download failed")
             self._show_download_failure("tools.fail.download")
+
+    def _emit_channel_latency(self, key: str, latency_ms: int | None) -> None:
+        """Called from the mirror race thread(s): hop to the GUI thread with a signal."""
+        if self._disposed:
+            return
+        try:
+            self.channel_latency.emit(str(key), latency_ms)
+        except RuntimeError:
+            pass  # the page was destroyed while the probes were still running
+
+    def _on_channel_latency(self, key: str, latency_ms) -> None:
+        """One channel's row gets its result: a measured latency, or 超时 for a probe that failed."""
+        label = self.channel_speed_labels.get(str(key))
+        if label is None:
+            return
+        if latency_ms is None:
+            label.setText(tr("tools.onboard.channels.timeout"))
+            return
+        try:
+            label.setText(tr("tools.onboard.channels.latency", int(latency_ms)))
+        except (TypeError, ValueError):
+            label.setText(tr("tools.onboard.channels.timeout"))
 
     def _emit_download_progress(self, progress: LinkDownloadProgress) -> None:
         """Called from the download thread; the signal carries the value to the GUI thread."""
@@ -1495,6 +1547,23 @@ class ToolsPage(QWidget):
         self._session.cancel()
 
     def _close_room(self) -> None:
+        """Close the room for real: the tunnel ends, guests drop, our core stops.
+
+        Closing is what a person does when they want to play alone, so it does not leave an empty room
+        behind. When somebody else is still in it the click asks first - the guests are about to be
+        disconnected and that is not a thing to discover afterwards.
+        """
+        others = [member for member in self._session.members() if not member.is_host]
+        if others and not inwindow_dialog.confirm(
+            self,
+            tr("tools.ready.close_confirm.title"),
+            tr("tools.ready.close_confirm.body", len(others)),
+            accept_text=tr("tools.ready.close_confirm.accept"),
+            reject_text=tr("dialog.cancel"),
+            default=inwindow_dialog.Outcome.REJECTED,
+            severity="warning",
+        ):
+            return
         self._session.close_room()
 
     def _disable_link_dialog(self) -> inwindow_dialog.InWindowMessage:
@@ -1633,14 +1702,16 @@ class ToolsPage(QWidget):
         _save_mirror_choice(self._selected_channel)
 
     def _refresh_channel_speeds(self) -> None:
-        """Show the last measured latency per mirror, or 未测 when no race has run yet."""
+        """Show the last measured latency per mirror: 超时 for a failed probe, else 未测."""
         report = read_report()
         for key, label in self.channel_speed_labels.items():
             latency = report.latency(key)
-            if latency is None:
-                label.setText(tr("tools.onboard.channels.unmeasured"))
-            else:
+            if latency is not None:
                 label.setText(tr("tools.onboard.channels.latency", latency))
+            elif report.timed_out(key):
+                label.setText(tr("tools.onboard.channels.timeout"))
+            else:
+                label.setText(tr("tools.onboard.channels.unmeasured"))
 
     def focus_link_tab(self) -> None:
         """The title-bar capsule's destination: show 联机 as it is now, never restart anything."""
@@ -1667,3 +1738,4 @@ class ToolsPage(QWidget):
     def member_row_count(self) -> int:
         """How many member rows the ready page currently shows."""
         return self.members_layout.count()
+

@@ -25,7 +25,7 @@ import time
 import pytest
 from PySide6.QtCore import QBuffer, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
-from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel
+from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QSizePolicy
 
 from gui import i18n, inwindow_dialog, paint_utils
 from gui.pages.tools_page import SCREEN_STATES, ToolsPage, _MemberAvatar
@@ -128,7 +128,7 @@ class _DiagnosticSession(FakeLinkSession):
 class _DownloadFailSession(FakeLinkSession):
     """Keeps the page on the onboarding layout and reports a failed install."""
 
-    def download_core(self, progress_cb) -> None:
+    def download_core(self, progress_cb, on_latency=None) -> None:
         self._failure_key = "tools.fail.verify"
         self._state = LinkState.NOT_DOWNLOADED
         self._notify()
@@ -137,7 +137,7 @@ class _DownloadFailSession(FakeLinkSession):
 class _SlowDownloadSession(FakeLinkSession):
     """Reports one byte-based progress step and never finishes, to inspect the in-row progress."""
 
-    def download_core(self, progress_cb) -> None:
+    def download_core(self, progress_cb, on_latency=None) -> None:
         progress_cb(LinkDownloadProgress.from_bytes(3_200_000, 8_135_914))
 
 
@@ -490,6 +490,7 @@ def test_channel_rows_show_the_last_measurement_or_unmeasured(app, monkeypatch, 
             chosen="cnb",
             latency_ms={"cnb": 37, "gitee": 120},
             measured_at=time.time(),
+            failed=("github",),
         ),
         data_dir / "cache" / "mirror-pick.json",
     )
@@ -501,8 +502,52 @@ def test_channel_rows_show_the_last_measurement_or_unmeasured(app, monkeypatch, 
         assert page.channel_speed_labels["gitee"].text() == i18n.tr(
             "tools.onboard.channels.latency", 120
         )
+        # A probe that ran and failed reads 超时; 未测 is only for a channel never probed.
         assert page.channel_speed_labels["github"].text() == i18n.tr(
-            "tools.onboard.channels.unmeasured"
+            "tools.onboard.channels.timeout"
+        )
+    finally:
+        _close(app, page)
+
+
+def test_live_latency_updates_fill_all_three_channel_rows(app) -> None:
+    page = _show(app, FakeLinkSession(state=LinkState.NOT_DOWNLOADED))
+    try:
+        page._on_channel_latency("cnb", 203)
+        page._on_channel_latency("gitee", 480)
+        page._on_channel_latency("github", None)
+        assert page.channel_speed_labels["cnb"].text() == i18n.tr(
+            "tools.onboard.channels.latency", 203
+        )
+        assert page.channel_speed_labels["gitee"].text() == i18n.tr(
+            "tools.onboard.channels.latency", 480
+        )
+        assert page.channel_speed_labels["github"].text() == i18n.tr(
+            "tools.onboard.channels.timeout"
+        )
+    finally:
+        _close(app, page)
+
+
+def test_the_download_hands_the_mirror_callback_to_the_session(app) -> None:
+    """The page must pass its own listener into the downloader, or the other rows stay 未测."""
+    seen: dict[str, object] = {}
+
+    class _RecordingSession(FakeLinkSession):
+        def download_core(self, progress_cb, on_latency=None) -> None:
+            seen["on_latency"] = on_latency
+            super().download_core(progress_cb)
+
+    session = _RecordingSession(state=LinkState.NOT_DOWNLOADED)
+    page = _show(app, session)
+    try:
+        page._download_core()
+        callback = seen.get("on_latency")
+        assert callable(callback), "the page did not hand a latency listener to the downloader"
+        callback("github", None)
+        app.processEvents()
+        assert page.channel_speed_labels["github"].text() == i18n.tr(
+            "tools.onboard.channels.timeout"
         )
     finally:
         _close(app, page)
@@ -612,7 +657,8 @@ def test_the_page_has_no_self_check_column(app) -> None:
         assert page.self_check_button.text() == i18n.tr("tools.net.title")
         assert page.self_check_button.toolTip() == i18n.tr("tools.net.nat.note")
         assert page.self_check_button.isVisibleTo(page)
-        assert page.self_check_line.isHidden()
+        assert page.self_check_result.text() == ""
+        assert page.self_check_result.parentWidget().objectName() == "toolsBanner"
     finally:
         _close(app, page)
 
@@ -662,6 +708,46 @@ def test_banner_fits_without_clipping_at_the_window_floor(app, width) -> None:
         _close(app, page)
 
 
+def test_the_udp_tcp_result_sits_inside_the_banner_at_the_window_floor(app) -> None:
+    """The result occupies the banner's blank space; the hint gives way before it does.
+
+    Structurally, the hint is the only Ignored-width label in the row while the result keeps its
+    Fixed size hint, so a narrow banner elides the sentence and never the measurement.
+    """
+    nat = NatProbe(udp=NatType.SYMMETRIC_EASY, tcp=NatType.RESTRICTED_CONE)
+    session = _DiagnosticSession(SelfCheckReport(nat=nat), state=LinkState.IDLE)
+    page = _show(app, session)
+    try:
+        page.resize(1000, 610)
+        app.processEvents()
+        page.self_check_button.click()
+        assert _pump(app, lambda: not page._checking and session.checks == 1)
+        page.resize(1000, 610)
+        app.processEvents()
+
+        result = page.self_check_result
+        banner = page.findChild(QFrame, "toolsBanner")
+        hint = page.findChild(QLabel, "toolsBannerText")
+        assert result.parentWidget() is banner
+        assert result.text() == _line(
+            _nat_type(NatType.SYMMETRIC_EASY), _nat_type(NatType.RESTRICTED_CONE)
+        )
+        # The measurement is fully painted: its label has at least its size hint, no elision.
+        assert result.width() >= result.sizeHint().width()
+        assert result.fontMetrics().horizontalAdvance(result.text()) <= result.width()
+        # The sentence is the widget allowed to give way, and the banner stays one row tall.
+        assert hint.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+        assert result.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed
+        assert result.geometry().right() <= banner.contentsRect().right()
+        assert hint.geometry().right() <= result.geometry().left()
+        assert banner.height() <= 56
+        # No second row survives under the banner: the block is exactly the banner.
+        assert not hasattr(page, "self_check_line")
+        assert banner.parentWidget().height() == banner.height()
+    finally:
+        _close(app, page)
+
+
 def test_network_check_line_shows_the_cone_fallback(app) -> None:
     report = SelfCheckReport(
         component=ComponentStatus(downloaded=True, version="0.4.2", supported=True),
@@ -674,8 +760,8 @@ def test_network_check_line_shows_the_cone_fallback(app) -> None:
     try:
         page.self_check_button.click()
         assert _pump(app, lambda: session.checks == 1 and not page._checking)
-        assert page.self_check_line.isVisibleTo(page)
-        assert page.self_check_line.text() == _line(labels[1], i18n.tr("tools.net.nat.unknown"))
+        assert page.self_check_result.isVisibleTo(page)
+        assert page.self_check_result.text() == _line(labels[1], i18n.tr("tools.net.nat.unknown"))
         assert page.self_check_button.text() == i18n.tr("tools.net.refresh")
         assert page.self_check_button.isEnabled()
     finally:
@@ -689,10 +775,10 @@ def test_network_check_line_shows_both_easytier_types(app) -> None:
     try:
         page.self_check_button.click()
         assert _pump(app, lambda: not page._checking and session.checks == 1)
-        assert page.self_check_line.text() == _line(
+        assert page.self_check_result.text() == _line(
             _nat_type(NatType.SYMMETRIC_EASY), _nat_type(NatType.RESTRICTED_CONE)
         )
-        assert page.self_check_line.toolTip() == i18n.tr("tools.net.nat.easytier_tip")
+        assert page.self_check_result.toolTip() == i18n.tr("tools.net.nat.easytier_tip")
     finally:
         _close(app, page)
 
@@ -707,10 +793,10 @@ def test_tcp_failure_keeps_the_udp_fallback_and_gives_the_reason(app) -> None:
     try:
         page.self_check_button.click()
         assert _pump(app, lambda: not page._checking and session.checks == 1)
-        assert page.self_check_line.text() == _line(
+        assert page.self_check_result.text() == _line(
             labels[1], i18n.tr("tools.net.nat.unknown")
         )
-        assert i18n.tr("tools.net.reason.timeout") in page.self_check_line.toolTip()
+        assert i18n.tr("tools.net.reason.timeout") in page.self_check_result.toolTip()
     finally:
         _close(app, page)
 
@@ -728,7 +814,7 @@ def test_network_check_verdicts_cover_every_probe_result(app) -> None:
         ):
             page._on_self_check_ready(SelfCheckReport(stun=verdict), page.session())
             udp = expected if verdict not in (StunVerdict.UNKNOWN, StunVerdict.ERROR) else unknown
-            assert page.self_check_line.text() == _line(udp, unknown)
+            assert page.self_check_result.text() == _line(udp, unknown)
     finally:
         _close(app, page)
 
@@ -739,8 +825,8 @@ def test_network_check_without_a_backend_reports_a_failed_check(app) -> None:
     try:
         page.self_check_button.click()
         app.processEvents()
-        assert page.self_check_line.text() == _line(unknown, unknown)
-        assert page.self_check_line.toolTip() == i18n.tr("tools.net.nat.failed_tip")
+        assert page.self_check_result.text() == _line(unknown, unknown)
+        assert page.self_check_result.toolTip() == i18n.tr("tools.net.nat.failed_tip")
         assert page.self_check_button.isEnabled()
     finally:
         _close(app, page)
@@ -764,13 +850,13 @@ def test_network_check_disables_the_button_while_the_probe_runs(app) -> None:
         app.processEvents()
         assert not page.self_check_button.isEnabled()
         assert page.self_check_button.text() == i18n.tr("tools.net.checking")
-        assert page.self_check_line.text() == _line(
+        assert page.self_check_result.text() == _line(
             i18n.tr("tools.net.checking"), i18n.tr("tools.net.checking")
         )
-        assert page.self_check_line.toolTip() == i18n.tr("tools.net.nat.checking_tip")
+        assert page.self_check_result.toolTip() == i18n.tr("tools.net.nat.checking_tip")
         gate.set()
         assert _pump(app, lambda: page.self_check_button.isEnabled())
-        assert page.self_check_line.text() == _line(
+        assert page.self_check_result.text() == _line(
             labels[1], i18n.tr("tools.net.nat.unknown")
         )
     finally:
@@ -1316,3 +1402,5 @@ def test_language_switch_rebuilds_the_tools_entry_and_page(app, monkeypatch, ws_
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
