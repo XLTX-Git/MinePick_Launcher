@@ -46,14 +46,15 @@ combo that already exists when it is installed. No page has to touch its own com
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPoint, Qt, QTimer
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QFontMetrics, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFrame,
     QProxyStyle,
     QStyle,
+    QStyledItemDelegate,
     QStyleFactory,
     QWidget,
 )
@@ -78,6 +79,62 @@ _SHAPED_PROPERTY = "comboPopupShaped"
 #: The token values the container was last painted with. A theme swap changes them, so the sheet is
 #: refreshed on the next show instead of keeping the colours of the theme it was first shaped under.
 _SURFACE_PROPERTY = "comboPopupSurface"
+
+
+class _PopupRowDelegate(QStyledItemDelegate):
+    """Paint one popup row: the highlight and the text positioned from the same rectangle.
+
+    The platform delegate owns the popup's rows today, and it ignores the sheet entirely - the padding
+    in the stylesheet never applied, the row height is whatever the font gives, and the highlight colour
+    comes from the palette rather than the theme token. Measured, the glyph sat 1px below the middle of
+    its own highlight on every dropdown in the app.
+
+    Drawing here fixes both halves at once: the row is 24px (the line box plus the asymmetric padding
+    that centres the ink), the highlight fills the row, and the text is centred on its ink box instead
+    of its line box. The colours are the ones the popup already showed, so this changes alignment only.
+    """
+
+    #: Left inset, matching the closed field's text so the menu does not jump when it opens.
+    #: 13px: the closed field's own text ink starts at 14px (12px padding + a 1px bearing), and the
+    #: glyph adds one pixel of bearing inside this inset.
+    LEFT = 13
+    #: Row height: 17px line box + 3 above + 4 below.
+    HEIGHT = 24
+
+    def sizeHint(self, option, index):
+        hint = super().sizeHint(option, index)
+        return QSize(hint.width(), self.HEIGHT)
+
+    def paint(self, painter, option, index) -> None:
+        from gui.theme import current_tokens
+
+        tokens = current_tokens()
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if selected:
+            background: str | None = tokens.get("ACCENT_SEL_ROW", "#1a423d")
+        elif hovered:
+            background = tokens.get("BG_SECTION", "#1c2531")
+        else:
+            background = None
+
+        rect = option.rect
+        painter.save()
+        if background:
+            painter.fillRect(rect, QColor(background))
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        font = option.font
+        painter.setFont(font)
+        painter.setPen(QColor(tokens.get("FG_TEXT", "#e6ecf5")))
+        metrics = QFontMetrics(font)
+        line_height = metrics.height()
+        top = rect.top() + (rect.height() - line_height) // 2
+        painter.drawText(
+            QRect(rect.left() + self.LEFT, top, max(0, rect.width() - 2 * self.LEFT), line_height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            text,
+        )
+        painter.restore()
 
 
 def _apply_popup_surface(popup: QWidget) -> None:
@@ -157,6 +214,8 @@ def shape_combo_popup(combo: QComboBox) -> QWidget | None:
     # Name the list explicitly for the sheet, and repolish so a selector on the new name applies
     # immediately (the combo descendant selector keeps working as the fallback in the same rule).
     view = combo.view()
+    if not isinstance(view.itemDelegate(), _PopupRowDelegate):
+        view.setItemDelegate(_PopupRowDelegate(view))
     if view.objectName() != POPUP_LIST_OBJECT_NAME:
         view.setObjectName(POPUP_LIST_OBJECT_NAME)
         view.style().unpolish(view)

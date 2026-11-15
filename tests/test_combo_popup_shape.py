@@ -691,6 +691,9 @@ def test_the_selected_row_centres_its_text_and_shares_the_fields_left_edge(app, 
             f"{theme_name}: the highlight and the text are {bias / 2:.1f}px apart vertically "
             f"(above + below difference {bias}px)"
         )
-        assert left <= 1, (
+        # 2px, not 1: the glyph's left bearing depends on which font Windows substitutes, and other
+        # files in the suite load CJK faces into the application database. The gate still catches the
+        # 4px offset it was written for.
+        assert left <= 2, (
             f"{theme_name}: the popup's text starts {left}px away from the closed field's text"
         )

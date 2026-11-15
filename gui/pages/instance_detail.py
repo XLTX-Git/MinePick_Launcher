@@ -35,7 +35,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -2447,11 +2447,16 @@ class InstanceDetail(QWidget):
         self.content_scroll.setObjectName("instanceContentScroll")
         # WCAG 4.1.2: a QScrollArea is a keyboard stop of its own and must say what it scrolls.
         self.content_scroll.setAccessibleName(tr("a11y.instance_content"))
-        self.content_scroll.setWidgetResizable(True)
+        # Not widgetResizable: that mode sizes the stack once and then only ever grows it, so a short tab
+        # kept the previous tab's height and could be scrolled into empty space, while a tall tab got
+        # clipped. The geometry is driven from the current page instead (_sync_content_geometry).
+        self.content_scroll.setWidgetResizable(False)
         self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.content_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.content_scroll.setWidget(self.stack)
+        self.content_scroll.viewport().installEventFilter(self)
+        self._sync_content_geometry()
         content_layout.addWidget(self.content_scroll, 1)
         main.addWidget(content, 1)
 
@@ -2583,14 +2588,36 @@ class InstanceDetail(QWidget):
     def _on_tab_clicked(self, index: int) -> None:
         self._show_section(index)
 
+    def _sync_content_geometry(self) -> None:
+        """Size the stack to the page on screen: viewport width, page height, never more.
+
+        The scroll area is not widgetResizable, so this is the one place that decides the scrollable
+        size. Height is the current page's own hint (``_FitStack`` reports exactly that), which keeps the
+        scrollbar's range equal to the content: no empty space below a short tab, no clipped tall one.
+        """
+        viewport = self.content_scroll.viewport()
+        if viewport is None or self.stack is None:
+            return
+        height = max(viewport.height(), self.stack.sizeHint().height())
+        size = QSize(viewport.width(), height)
+        if self.stack.size() != size:
+            self.stack.resize(size)
+
+    def eventFilter(self, watched, event) -> bool:
+        viewport = getattr(self.content_scroll, "viewport", lambda: None)()
+        if watched is viewport and event.type() == QEvent.Type.Resize:
+            self._sync_content_geometry()
+        return super().eventFilter(watched, event)
+
     def _show_section(self, index: int) -> None:
         if index != TAB_MODIFY:
             # The version picker is a sub-view of 修改, not a tab: leaving the tab returns to the
             # overview, and the sidebar's checked row is untouched either way.
             self._show_modify_overview()
         self.stack.setCurrentIndex(index)
-        # The stack's size hint follows the current page now; Qt does not re-ask on its own.
+        # The stack's size hint follows the current page (see _FitStack); the scrollable size follows it.
         self.stack.updateGeometry()
+        self._sync_content_geometry()
         self._sync_sidebar()
         self._ensure_tab_data(index)
 

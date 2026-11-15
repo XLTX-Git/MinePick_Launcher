@@ -141,19 +141,27 @@ def _get_text(url: str, client: httpx.Client | None, *, timeout: float | None = 
 def _fabric_versions(
     game_version: str, client: httpx.Client | None
 ) -> list[LoaderVersion]:
-    loaders = _get_json(FABRIC_META + "/versions/loader", client)
+    # Per game version, not the global list: /versions/loader answers with the builds that actually
+    # work with this MC version (255 of them for 1.21.1), newest first.
+    loaders = _get_json(f"{FABRIC_META}/versions/loader/{game_version}", client)
     installers = _get_json(FABRIC_META + "/versions/installer", client)
     installer_url = installers[0]["url"] if installers else ""
     out: list[LoaderVersion] = []
     for entry in loaders:
-        if not entry.get("stable", True):
+        # The per-game payload nests the build under "loader"; the global one does not. Accept both.
+        node = entry.get("loader") if isinstance(entry.get("loader"), dict) else entry
+        version = node.get("version")
+        if not version:
             continue
+        # No `stable` filter here. On this endpoint the flag means "the current recommendation", not
+        # "installable": Fabric marks the newest build true and every older one false, so filtering on it
+        # left the picker with exactly one build - the whole reason the Fabric row offered no list.
         out.append(
             LoaderVersion(
                 loader="fabric",
-                version=entry["version"],
+                version=version,
                 game_version=game_version,
-                stable=True,
+                stable=bool(node.get("stable", True)),
                 installer_url=installer_url,
             )
         )

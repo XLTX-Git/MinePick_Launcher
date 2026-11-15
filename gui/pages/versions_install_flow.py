@@ -54,10 +54,12 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -634,13 +636,15 @@ class LoaderRow(QAbstractButton):
         painter.setPen(pen)
         middle = self.HEIGHT / 2.0
         inset = self.CHEVRON * 0.28
+        # Symmetric about the row's centre line. The up chevron used to reach 1.6*inset down but only
+        # 1*inset up, so its ink sat below centre and the whole glyph read as riding high in the row.
         if self._expanded:
             painter.drawPolyline(
                 QPolygonF(
                     [
-                        QPointF(chevron_left + inset, middle + inset * 1.6),
+                        QPointF(chevron_left + inset, middle + inset),
                         QPointF(chevron_left + self.CHEVRON / 2.0, middle - inset),
-                        QPointF(chevron_left + self.CHEVRON - inset, middle + inset * 1.6),
+                        QPointF(chevron_left + self.CHEVRON - inset, middle + inset),
                     ]
                 )
             )
@@ -648,9 +652,9 @@ class LoaderRow(QAbstractButton):
             painter.drawPolyline(
                 QPolygonF(
                     [
-                        QPointF(chevron_left + inset, middle - inset * 1.6),
+                        QPointF(chevron_left + inset, middle - inset),
                         QPointF(chevron_left + self.CHEVRON - inset, middle),
-                        QPointF(chevron_left + inset, middle + inset * 1.6),
+                        QPointF(chevron_left + inset, middle + inset),
                     ]
                 )
             )
@@ -674,6 +678,9 @@ class LoaderChoice(QWidget):
     version_chosen = Signal(object)
     version_cleared = Signal()
 
+    #: How tall the open build list may grow before it scrolls (about six rows).
+    BODY_MAX_HEIGHT = 240
+
     def __init__(self, loader: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.loader = loader
@@ -689,11 +696,22 @@ class LoaderChoice(QWidget):
         self.body_layout.setContentsMargins(28, 0, 0, 8)
         self.body_layout.setSpacing(2)
         self.body.setVisible(False)
+        # The body scrolls. Fabric alone lists 255 builds for one game version: laid out directly, the
+        # column squeezed every row until the version numbers overlapped. A bounded viewport keeps the
+        # rows at their real height and lets the list scroll.
+        self.body_scroll = QScrollArea()
+        self.body_scroll.setObjectName("loaderChoiceScroll")
+        self.body_scroll.setWidgetResizable(True)
+        self.body_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.body_scroll.setMaximumHeight(self.BODY_MAX_HEIGHT)
+        self.body_scroll.setWidget(self.body)
+        self.body_scroll.setVisible(False)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self.header)
-        outer.addWidget(self.body)
+        outer.addWidget(self.body_scroll)
 
     # ---------- data ----------
 
@@ -737,6 +755,7 @@ class LoaderChoice(QWidget):
         self._expanded = expanded
         self.header.set_expanded(expanded)
         self.body.setVisible(expanded)
+        self.body_scroll.setVisible(expanded)
         if expanded:
             self._rebuild()
 
@@ -782,6 +801,7 @@ class LoaderChoice(QWidget):
                 self._items.append(item)
                 self.body_layout.addWidget(item)
         self._sync_items()
+        self.body_scroll.verticalScrollBar().setValue(0)
 
     def _choose(self, version: LoaderVersion) -> None:
         if self._selected is not None and self._selected.version == version.version:
