@@ -586,8 +586,9 @@ def test_the_verify_button_completes_the_instance_without_rebuilding_it(
     called: list[tuple[str, Path]] = []
 
     class _Plan:
-        tasks = [object(), object()]
-        total_bytes = 5 * 1024 * 1024
+        def __init__(self) -> None:
+            self.tasks = [object(), object()]
+            self.total_bytes = 5 * 1024 * 1024
 
     def fake_repair(version_id, *, game_dir, **kwargs):
         called.append((version_id, game_dir))
@@ -613,8 +614,9 @@ def test_the_verify_button_says_so_when_nothing_is_missing(app, window, monkeypa
     _built, _game, detail = window
 
     class _Plan:
-        tasks: list[object] = []
-        total_bytes = 0
+        def __init__(self) -> None:
+            self.tasks: list[object] = []
+            self.total_bytes = 0
 
     monkeypatch.setattr("launcher.repair.repair", lambda version_id, **kw: _Plan())
     detail.verify_button.click()
