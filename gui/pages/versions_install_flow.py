@@ -280,7 +280,9 @@ class LoaderVersionItem(QAbstractButton):
         self.update()
 
     def sizeHint(self) -> QSize:
-        return QSize(320, self.height())
+        # The constant, not ``self.height()``: before the row is laid out that is 0, which made the
+        # build list report a near-zero height and collapse to a sliver.
+        return QSize(320, self.LATEST_HEIGHT if self.latest else self.HEIGHT)
 
     # ---------- interaction ----------
 
@@ -801,6 +803,12 @@ class LoaderChoice(QWidget):
                 self._items.append(item)
                 self.body_layout.addWidget(item)
         self._sync_items()
+        # Size the viewport to the rows, up to the cap. Without this the step's column gives the scroll
+        # area only its header's height and the list collapses to a sliver.
+        # Sum the rows, not the layout's hint: a widget that has not been shown yet counts as empty in
+        # QLayout.sizeHint(), so the fresh rows were skipped and the list collapsed to a sliver.
+        wanted = sum(item.sizeHint().height() for item in self._items) + 56
+        self.body_scroll.setFixedHeight(min(self.BODY_MAX_HEIGHT, max(60, wanted)))
         self.body_scroll.verticalScrollBar().setValue(0)
 
     def _choose(self, version: LoaderVersion) -> None:
