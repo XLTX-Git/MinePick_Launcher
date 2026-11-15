@@ -35,7 +35,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -2598,40 +2598,12 @@ class InstanceDetail(QWidget):
         viewport = self.content_scroll.viewport()
         if viewport is None or self.stack is None:
             return
-        page = self.stack.currentWidget()
-        wanted = self.stack.sizeHint().height()
-        if page is not None:
-            wanted = self._content_bottom(page)
-        height = max(viewport.height(), wanted)
+        # The page's own hint, never a measured "painted bottom": sizing below the layout's minimum
+        # compresses every row of the page into overlapping text (the export form did exactly that).
+        height = max(viewport.height(), self.stack.sizeHint().height())
         size = QSize(viewport.width(), height)
         if self.stack.size() != size:
             self.stack.resize(size)
-
-    @staticmethod
-    def _content_bottom(page: QWidget) -> int:
-        """Where the page's painted content actually ends, measured from visible leaf widgets.
-
-        ``sizeHint()`` is not that number. Every tab ends in a stretch, and a container that fills the
-        tab reports the whole tab as its own height, so the hint kept claiming ~300px more than the card
-        drew - a short tab could be scrolled into blank space long after its content ended. Leaves (a
-        label, a button - widgets with no visible children) cannot be stretched that way, so the lowest
-        one is where the content really stops.
-        """
-        bottom = 0
-        for child in page.findChildren(QWidget):
-            if not child.isVisible() or child.isWindow():
-                continue
-            if any(grandchild.isVisible() for grandchild in child.children() if isinstance(grandchild, QWidget)):
-                continue
-            corner = child.mapTo(page, QPoint(0, child.height()))
-            bottom = max(bottom, corner.y())
-        return bottom + 24 if bottom else page.sizeHint().height()
-
-    def eventFilter(self, watched, event) -> bool:
-        viewport = getattr(self.content_scroll, "viewport", lambda: None)()
-        if watched is viewport and event.type() == QEvent.Type.Resize:
-            self._sync_content_geometry()
-        return super().eventFilter(watched, event)
 
     def _show_section(self, index: int) -> None:
         if index != TAB_MODIFY:
