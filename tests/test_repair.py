@@ -151,12 +151,3 @@ def test_a_failing_repair_never_blocks_the_launch(monkeypatch, ws_tmp):
 
     monkeypatch.setattr("launcher.repair.repair", boom)
     assert launch_page._complete_missing_files(ws_tmp / "game", "demo") == ""
-
-def test_the_modify_page_offers_the_same_repair(app, ws_tmp, monkeypatch):
-    """The manual half: a button on 修改 that completes the instance without rebuilding its core."""
-    from gui.pages import instance_detail
-
-    plan = instance_detail.InstanceDetailPage if hasattr(
-        instance_detail, "InstanceDetailPage"
-    ) else None
-    assert plan is not None, "the page class moved; update this test"

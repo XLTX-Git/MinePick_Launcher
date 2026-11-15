@@ -855,7 +855,9 @@ class LaunchPage(QWidget):
             else:
                 set_app_status(self, tr("launch.msg.cancelled", major))
             return
-        _kind, prepared, resolved, note = result
+        # Three items is the shape a caller (and a test) may still hand over: the note is optional.
+        _kind, prepared, resolved = result[:3]
+        note = result[3] if len(result) > 3 else ""
         command = prepared.command
         self._last_launch = (prepared, resolved)  # the exit callback needs it for the diagnosis
         if note:

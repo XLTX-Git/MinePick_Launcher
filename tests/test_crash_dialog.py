@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -252,7 +253,13 @@ def test_diagnostics_tab_shows_the_recorded_code(app, ws_tmp, monkeypatch):
         app.processEvents()
         detail = page.detail
         detail.set_tab(TAB_DIAGNOSIS)
-        app.processEvents()
+        # The tab reads diagnosis.json and the log tail on a worker now, so one processEvents is not
+        # enough: pump until it renders (or let the assertion report what it saw).
+        for _ in range(300):
+            app.processEvents()
+            if detail.diagnosis_code.text():
+                break
+            time.sleep(0.01)
         assert detail.diagnosis_code.text() == "MPL-Crash-0107"
         assert "内存不足" in detail.diagnosis_body.text()
         assert detail.diagnosis_empty.isVisible() is False

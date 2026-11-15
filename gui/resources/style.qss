@@ -1643,7 +1643,8 @@ QFrame#modifySeparator { background: __BORDER_LIST__; border: none; }
 QLabel#modifyRowName {
     background: transparent;
     color: __FG_TEXT__;
-    font-size: 13px;
+    /* 14px, not 13: the weight gate forbids a semibold below 14px, where CJK strokes fill in. */
+    font-size: 14px;
     font-weight: 600;
 }
 QLabel#modifyRowValue {

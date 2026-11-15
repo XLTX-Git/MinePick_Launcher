@@ -588,6 +588,9 @@ class ToolsPage(QWidget):
         # stay readable - keep its full width to the right.
         text = ElidedLabel(tr("tools.banner"), elide_mode=Qt.TextElideMode.ElideRight)
         text.setObjectName("toolsBannerText")
+        # A read-only sentence: it must not become a keyboard stop. ElidedLabel defaults to a focus
+        # policy, which put a stop in the walkthrough with no :focus rule to draw for it.
+        text.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         layout.addWidget(text, 1)
         # UDP/TCP results live inside the banner now, in the blank space before the button. Empty
         # until a check has run, in which case it takes no width and changes no geometry.
@@ -1150,6 +1153,7 @@ class ToolsPage(QWidget):
         )
         note_text = QLabel(tr("tools.joined.note"))
         note_text.setObjectName("toolsBannerText")
+        note_text.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         note_text.setWordWrap(True)
         note_layout.addWidget(note_text, 1)
         layout.addWidget(note)

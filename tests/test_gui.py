@@ -216,7 +216,7 @@ def test_settings_autosave_without_save_button(app, monkeypatch, ws_tmp):
 def test_settings_accessibility_preference_is_three_radios_that_autosave(app, monkeypatch, ws_tmp):
     """Task 1: a radio group (not a dropdown), loaded from config and written on every change."""
     monkeypatch.setenv("MCLAUNCHER_DATA_DIR", str(ws_tmp / "data_a11y_settings"))
-    from PySide6.QtWidgets import QRadioButton
+    from PySide6.QtWidgets import QRadioButton, QWidget
 
     from gui.main_window import MainWindow
 
@@ -229,9 +229,13 @@ def test_settings_accessibility_preference_is_three_radios_that_autosave(app, mo
     assert len(radios) == 3
     assert group.value() == "auto"  # the default, and the fallback
     assert page.accessibility_hint.wordWrap()  # the "only the launcher's question" sentence
-    # The group sits with the behaviour options, before the isolation dropdown and the checkboxes.
+    # The isolation row belongs with 游戏目录 (both answer where an instance's files go) and not under
+    # the accessibility group, where it read as one of that group's options.
+    assert page.isolation_row.parentWidget() is not page.accessibility_box
+    assert page.isolation_row not in page.accessibility_box.findChildren(QWidget)
     layout = page.accessibility_box.parentWidget().layout()
-    assert layout.indexOf(page.accessibility_box) < layout.indexOf(page.isolation_row)
+    assert layout.indexOf(page.accessibility_box) >= 0
+    assert layout.indexOf(page.isolation_row) < 0
     assert page.isolation_combo.count() == 2
     assert [page.isolation_combo.itemData(i) for i in range(2)] == [True, False]
     assert page.isolation_combo.accessibleName().strip()
