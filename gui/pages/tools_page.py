@@ -34,10 +34,9 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import replace
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -77,7 +76,6 @@ from launcher.link import (
     StunVerdict,
     default_link_bus,
     default_link_session,
-    skins,
 )
 from launcher.link.components import ComponentError
 from launcher.link.mirrors import MIRRORS, read_report
@@ -100,7 +98,6 @@ SCREEN_STATES: tuple[LinkState, ...] = (
     LinkState.JOINED,
 )
 #: Member avatars use the height of the ready row (40 px) minus its 8 px vertical padding.
-MEMBER_AVATAR_SIZE = 24
 #: A Minecraft name is ASCII by rule; the letter avatar takes its first letter or digit.
 _AVATAR_LETTER = re.compile(r"[A-Za-z0-9]")
 _STUN_VERDICT_INDEX = {
@@ -161,21 +158,6 @@ def _difficulty_labels() -> list[str]:
     """The three localized difficulty names, in ``LinkDifficulty`` order."""
     labels = _lines("tools.difficulty")
     return labels if len(labels) >= 3 else ["", "", ""]
-
-
-def _avatar_initial(member: LinkMember) -> str:
-    """The letter avatar's character: first ASCII letter or digit, upper-cased.
-
-    A Minecraft name is ``[A-Za-z0-9_]{3,16}``, so this only ever falls back for a value that is
-    not a player name (a server name, an author) or is malformed: a CJK character or an emoji would
-    otherwise become a tofu box. ``member.avatar`` is an explicit display initial; it goes through
-    the same rule so a backend cannot smuggle a glyph into the circle.
-    """
-    for candidate in (member.avatar, member.name):
-        match = _AVATAR_LETTER.search(str(candidate or ""))
-        if match:
-            return match.group(0).upper()
-    return "?"
 
 
 def _format_mb(byte_count: int) -> str:
@@ -328,117 +310,6 @@ class _Spinner(QWidget):
         painter.setPen(arc)
         painter.drawArc(rect, self._angle * 16, 270 * 16)
         painter.end()
-
-
-class _MemberAvatar(QWidget):
-    """One member's 24px avatar: the real skin face for a premium UUID, a letter otherwise.
-
-    The letter is painted first and is exactly the disc/tint/letter the ready list always showed,
-    so an offline member (or a failed skin lookup) does not change size, position or colour. A
-    premium member's texture is fetched through the same :mod:`gui.paint_utils` cache the account
-    pages use: UUID -> session-server URL -> skin texture -> face crop, all on the worker pool. The
-    widget never waits for the network; it upgrades itself when the answer arrives.
-    """
-
-    def __init__(self, member: LinkMember, diameter: int = MEMBER_AVATAR_SIZE) -> None:
-        super().__init__()
-        self._member = member
-        self._diameter = diameter
-        self._face = None
-        self._skin_url = ""
-        self.setFixedSize(diameter, diameter)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-
-    # -- paint ------------------------------------------------------------
-    def paintEvent(self, event) -> None:
-        tokens = _tokens()
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        if self._face is not None:
-            path = QPainterPath()
-            path.addEllipse(QRectF(self.rect()))
-            painter.setClipPath(path)
-            painter.drawPixmap(self.rect(), self._face)
-            painter.end()
-            return
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(tokens["ACCENT_TINT"]))
-        painter.drawEllipse(self.rect())
-        font = QFont(self.font())
-        font.setPixelSize(11)
-        font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(font)
-        painter.setPen(QColor(tokens["ACCENT_TEXT"]))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, _avatar_initial(self._member))
-        painter.end()
-
-    # -- skin -------------------------------------------------------------
-    def load_skin(self) -> None:
-        """Kick off the background lookup when the member has a premium UUID."""
-        member = self._member
-        if not member.uuid:
-            # Terracotta reports a name and nothing else. Ask Mojang what UUID that name is, then the
-            # usual session-server path can paint a face; the letter stays until (and unless) it does.
-            run_in_background(
-                lambda: skins.resolve_uuid_by_name(member.name),
-                on_result=self._on_member_uuid,
-            )
-            return
-        if not member.premium:
-            return
-        url = skins.cached_skin_url(member.uuid)
-        if url:
-            self._use_skin_url(url)
-            return
-        run_in_background(
-            lambda: skins.resolve_skin_url(member.uuid),
-            on_result=self._on_skin_url,
-        )
-
-    def _on_member_uuid(self, player_uuid) -> None:
-        """A name resolved to a UUID: continue into the ordinary skin lookup."""
-        player_uuid = str(player_uuid or "")
-        if not player_uuid or not widget_alive(self):
-            return
-        self._member = replace(self._member, uuid=player_uuid, premium=True)
-        self.load_skin()
-
-    def _on_skin_url(self, url) -> None:
-        if not widget_alive(self) or not str(url or ""):
-            return
-        self._use_skin_url(str(url))
-
-    def _use_skin_url(self, url: str) -> None:
-        self._skin_url = url
-
-        def apply(source, expected: str = url) -> None:
-            if source is None or not widget_alive(self) or self._skin_url != expected:
-                return
-            face = paint_utils.skin_face_pixmap(source, self._diameter)
-            if face is None:
-                return  # not a skin texture: the letter stays
-            self._face = face
-            self.update()
-
-        if not paint_utils.watch_skin(url, apply):
-            return  # already cached (painted above) or another download will call back
-        run_in_background(
-            lambda: self._download_skin(url),
-            on_result=lambda data: paint_utils.finish_skin(url, data),
-            on_error=lambda _message: paint_utils.finish_skin(url, None),
-        )
-
-    @staticmethod
-    def _download_skin(url: str) -> bytes:
-        from launcher.meta.manifest import _new_client
-
-        client = _new_client()
-        try:
-            response = client.get(url)
-            response.raise_for_status()
-            return response.content
-        finally:
-            client.close()
 
 
 class ToolsPage(QWidget):
@@ -1387,8 +1258,8 @@ class ToolsPage(QWidget):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
         name = member.name.strip()
-        avatar = _MemberAvatar(member)
-        layout.addWidget(avatar)
+        # No avatar. The room reports a name and nothing else - no UUID, no premium flag - so a face
+        # here would be a guess presented as a fact. The name is what the person chose to send.
         name_label = QLabel(name or "?")
         name_label.setObjectName("toolsMemberName")
         layout.addWidget(name_label)
@@ -1404,8 +1275,6 @@ class ToolsPage(QWidget):
             state_label = QLabel(tr("tools.ready.online"))
             state_label.setObjectName("toolsOnlineText")
             layout.addWidget(state_label)
-        # The letter is already painted; a premium UUID upgrades it when the texture arrives.
-        avatar.load_skin()
         return row
 
     # ------------------------------------------------------------------ actions

@@ -27,8 +27,8 @@ from PySide6.QtCore import QBuffer, QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QSizePolicy
 
-from gui import i18n, inwindow_dialog, paint_utils
-from gui.pages.tools_page import SCREEN_STATES, ToolsPage, _MemberAvatar
+from gui import i18n, inwindow_dialog
+from gui.pages.tools_page import SCREEN_STATES, ToolsPage
 from launcher.link import (
     ComponentStatus,
     FakeLinkSession,
@@ -42,7 +42,6 @@ from launcher.link import (
     ProcessStatus,
     SelfCheckReport,
     StunVerdict,
-    skins,
 )
 from launcher.link import components as components_module
 from launcher.link.components import ComponentError
@@ -864,51 +863,31 @@ def test_network_check_disables_the_button_while_the_probe_runs(app) -> None:
         _close(app, page)
 
 
-# ------------------------------------------------------------------ members and avatars
+# ------------------------------------------------------------------ members
+
+# The room reports a name and nothing else - no UUID, no premium flag, no launcher origin - so the
+# member row shows the name and the host badge, and nothing that would look like a verified identity.
+# These tests pin that: no avatar widget, and a hostile/empty name still renders as text.
 
 
-@pytest.mark.parametrize(
-    ("name", "avatar", "expected"),
-    [
-        ("Steve", "", "S"),
-        ("alex", "", "A"),
-        ("7_days", "", "7"),
-        ("Craft_Fox", "", "C"),
-        ("", "x", "X"),
-        ("玩家", "", "?"),
-        ("", "", "?"),
-    ],
-)
-def test_letter_avatar_takes_the_first_ascii_letter_or_digit(name, avatar, expected) -> None:
-    from gui.pages.tools_page import _avatar_initial
+def test_a_member_row_is_a_name_badge_and_state(app) -> None:
+    from PySide6.QtWidgets import QLabel
 
-    assert _avatar_initial(LinkMember(name, avatar=avatar)) == expected
+    row = ToolsPage._member_row(LinkMember("Steve", is_host=True))
+    labels = [child.text() for child in row.findChildren(QLabel)]
+    assert "Steve" in labels
+    assert i18n.tr("tools.ready.host_badge") in labels
+    assert not [child for child in row.findChildren(QLabel) if child.objectName() == "toolsMemberAvatar"]
 
 
-def test_premium_member_gets_the_cached_skin_face(app) -> None:
-    paint_utils.clear_skin_cache()
-    skins.clear_cache()
-    url = "https://skins.example.invalid/steve.png"
-    skins.remember_skin_url(FakeLinkSession.DEMO_STEVE_UUID, url)
-    paint_utils.finish_skin(url, _skin_png())
-    avatar = _MemberAvatar(
-        LinkMember("Steve", premium=True, uuid=FakeLinkSession.DEMO_STEVE_UUID)
-    )
-    try:
-        avatar.load_skin()
-        app.processEvents()
-        assert avatar._face is not None
-        assert avatar._face.width() == 24
-    finally:
-        paint_utils.clear_skin_cache()
-        skins.clear_cache()
+def test_a_member_with_no_name_still_renders(app) -> None:
+    from PySide6.QtWidgets import QLabel
 
+    row = ToolsPage._member_row(LinkMember("   "))
 
-def test_offline_member_keeps_the_letter_avatar(app) -> None:
-    skin = _MemberAvatar(LinkMember("Alex"))
-    skin.load_skin()
-    app.processEvents()
-    assert skin._face is None
+    texts = [child.text() for child in row.findChildren(QLabel)]
+    assert texts[0] == "?", texts
+
 
 
 # ------------------------------------------------------------------ host-starting and lifecycle
