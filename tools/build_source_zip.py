@@ -32,6 +32,8 @@ INCLUDE_FILES = (
     "pyproject.toml",
     "README.md",
     "README_zh.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING_zh.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     ".gitignore",
