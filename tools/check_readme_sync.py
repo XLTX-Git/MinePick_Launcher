@@ -23,7 +23,8 @@ translation against the English README and reports what is missing or extra.
 
 Two differences are intentional and must never be reported as drift:
 - only the Chinese READMEs list the built-in Chinese mod-name table (it is a Chinese-only feature);
-- the Chinese READMEs link the Chinese developer docs while the others link docs/*_en.md.
+- each README links the developer docs in its own language: `docs/x.md` is English and
+  `docs/x_zh.md` is Chinese, and the comparison drops that suffix before matching.
 
 Usage: python tools/check_readme_sync.py [--json]
 """
