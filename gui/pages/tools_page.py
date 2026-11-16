@@ -441,6 +441,40 @@ class ToolsPage(QWidget):
         card_layout.addWidget(self._build_footer())
         outer.addWidget(card, 1)
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._fit_label_buttons()
+
+    def _fit_label_buttons(self) -> None:
+        """Give the two banner/channel buttons the width their current style and font need.
+
+        Their labels change text at runtime (网络自检 -> 检测中…, 测速 -> 测速中…) and the theme's own padding
+        is what Qt adds on top of the text. Measuring by hand at construction used the pre-theme font and
+        ignored that padding, which left the last glyph under the border on a larger UI font. ``sizeHint``
+        is computed by the style for the *current* font and padding, so taking it here cannot disagree
+        with what the button then paints.
+        """
+        for button, keys in (
+            (
+                self.channels_measure_button,
+                ("tools.onboard.channels.measure", "tools.onboard.channels.measuring"),
+            ),
+            (
+                self.self_check_button,
+                ("tools.net.title", "tools.net.checking", "tools.net.refresh"),
+            ),
+        ):
+            current = button.text()
+            widest = 0
+            for key in keys:
+                button.setText(tr(key))
+                button.ensurePolished()
+                widest = max(widest, button.sizeHint().width())
+            button.setText(current)
+            button.setMinimumWidth(widest)
+            # Leave room for the arrow/indicator some styles reserve on the right.
+            button.setMaximumWidth(16777215)
+
     def _build_banner_block(self) -> QWidget:
         block = QWidget()
         layout = QVBoxLayout(block)
@@ -482,15 +516,6 @@ class ToolsPage(QWidget):
         self.self_check_button.setAccessibleName(tr("tools.net.title"))
         self.self_check_button.setToolTip(tr("tools.net.nat.note"))
         self.self_check_button.clicked.connect(self._run_self_check)
-        # 网络自检 / 检测中… / 重新检测 differ in width; the widest one decides, so the label never ends
-        # up clipped under the button's border when the text changes mid-check.
-        self.self_check_button.setMinimumWidth(
-            max(
-                self.self_check_button.fontMetrics().horizontalAdvance(tr(key))
-                for key in ("tools.net.title", "tools.net.checking", "tools.net.refresh")
-            )
-            + 40
-        )
         layout.addWidget(self.self_check_button, 0, Qt.AlignmentFlag.AlignVCenter)
         # The floor is the button, not the text: 35px + 8px top + 8px bottom. A shorter bar would
         # squash the button, which is exactly the defect the old 26px fixed height caused.
@@ -691,15 +716,6 @@ class ToolsPage(QWidget):
         self.channels_measure_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.channels_measure_button.setAccessibleName(tr("tools.onboard.channels.measure"))
         self.channels_measure_button.clicked.connect(self._measure_channels)
-        # Room for the longest of its two labels. Sized by the theme's padding alone it fitted 测速, but a
-        # larger UI font (or a longer translation) put the last glyph under the border.
-        self.channels_measure_button.setMinimumWidth(
-            max(
-                self.channels_measure_button.fontMetrics().horizontalAdvance(tr(key))
-                for key in ("tools.onboard.channels.measure", "tools.onboard.channels.measuring")
-            )
-            + 40
-        )
         channels_layout.addWidget(self.channels_measure_button)
         channels_layout.addWidget(self.channels_arrow)
         self.channels_button.toggled.connect(self._on_channels_toggled)
