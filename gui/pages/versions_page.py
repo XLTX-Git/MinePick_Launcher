@@ -21,6 +21,7 @@ the instance page."""
 from __future__ import annotations
 
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -432,7 +433,11 @@ class _VersionRow(QWidget):
         tag_font = QFont(self.font())
         tag_font.setPixelSize(11)
         tag_metrics = QFontMetrics(tag_font)
-        tag_width = min(width, tag_metrics.horizontalAdvance(self.type_label) + 12)
+        # Ceil, and keep the padding out of the text box: ``int(advance + 12) - 12`` rounds the text
+        # width *down*, so elidedText() saw one pixel too few and cut a label that had room to spare
+        # ("远古版 Be…" in a row with half its width empty).
+        tag_text_width = math.ceil(tag_metrics.horizontalAdvance(self.type_label))
+        tag_width = min(width, tag_text_width + 12)
 
         name_rect = QRectF(text_left, 15, max(0, width), 22)
         name = name_metrics.elidedText(self.version_id, Qt.TextElideMode.ElideRight, max(0, width))
@@ -454,11 +459,14 @@ class _VersionRow(QWidget):
             painter.drawRoundedRect(tag_rect, 4, 4)
             painter.setFont(tag_font)
             painter.setPen(hint_color)
-            painter.drawText(
-                tag_rect,
-                int(Qt.AlignmentFlag.AlignCenter),
-                tag_metrics.elidedText(self.type_label, Qt.TextElideMode.ElideRight, int(tag_width) - 12),
-            )
+            # Only the cramped case elides; with room for the whole label, it is drawn whole.
+            if tag_width >= tag_text_width + 12:
+                tag_label = self.type_label
+            else:
+                tag_label = tag_metrics.elidedText(
+                    self.type_label, Qt.TextElideMode.ElideRight, max(0, int(tag_width) - 12)
+                )
+            painter.drawText(tag_rect, int(Qt.AlignmentFlag.AlignCenter), tag_label)
 
         meta_font = QFont(self.font())
         meta_font.setPixelSize(12)
