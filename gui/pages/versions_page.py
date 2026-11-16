@@ -2033,12 +2033,15 @@ class VersionsPage(QWidget):
     def _new_load_more_item(
         self, key: str | None, *, add: bool = True
     ) -> tuple[QListWidgetItem, _LoadMoreRow]:
+        # ``clicked`` carries a bool, and it lands in the first positional parameter. Written as
+        # ``lambda group=key: ...`` the button therefore called load_more(False), which silently did
+        # nothing: 加载更多 under a fold never worked, while the zero-argument search variant did.
         if key is None:
             remaining = max(0, self._search_total - self._search_shown)
-            on_load = lambda: self.load_more(None)
+            on_load = lambda *_args: self.load_more(None)
         else:
             remaining = max(0, len(self._buckets.get(key, [])) - self._shown.get(key, 0))
-            on_load = lambda group=key: self.load_more(group)
+            on_load = lambda *_args, group=key: self.load_more(group)
         text = tr("versions.group.more", remaining)
         row = _LoadMoreRow(text, on_load=on_load)
         self._load_more_rows[key] = row

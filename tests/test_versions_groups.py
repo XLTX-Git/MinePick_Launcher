@@ -423,3 +423,21 @@ def test_search_results_follow_the_same_selection_rule(page) -> None:
     page._refilter()
     assert page._selected_id() is None
     _assert_actions_hidden(page)
+
+def test_the_load_more_button_actually_loads_when_clicked(page, app) -> None:
+    """A real click on 加载更多, not a call to load_more: the button used to swallow it.
+
+    ``clicked`` carries a bool and it landed in the lambda's first parameter, so the fold's button
+    called load_more(False) and nothing happened - the row count stayed at one batch however often it
+    was pressed. The zero-argument search variant was fine, which is why this went unnoticed.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    page.expand_group("snapshot")
+    app.processEvents()
+    before = len(page.rows)
+    row = page._load_more_rows["snapshot"]
+    QTest.mouseClick(row, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    assert len(page.rows) == before + 5, "the second batch of snapshots did not load"
