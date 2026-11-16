@@ -36,13 +36,21 @@ $env:QT_QPA_PLATFORM = "offscreen"
 
 ## The three commands
 
-Every pull request must leave these green:
+How much of this you run depends on what you changed:
 
 ```powershell
+ruff check launcher gui tests            # lint, every change
+python tools/ui_regression.py --quick    # any UI change; runs seven checks
 pytest -q                                # the whole suite, ~20 minutes
-ruff check launcher gui tests            # lint
-python tools/ui_regression.py --quick    # for any UI change; runs seven checks
 ```
+
+- **Documentation only** (README, docs, CONTRIBUTING): no `pytest` at all. Run
+  `python tools/check_readme_sync.py` and the README tests
+  (`pytest tests/test_readme_page_header_claim.py`) — that is what those files can break.
+- **While developing**: run the test files you touched. A single file is seconds, and that is the loop
+  you want.
+- **Before marking a pull request ready**: the whole suite once, `pytest -q` (~20 minutes). The lint and
+  UI checks above apply to every change either way.
 
 `--quick` skips screenshots. The release gate runs the full script, so a UI change that only passes
 `--quick` is not finished — but it is enough to open a pull request with.
@@ -83,7 +91,8 @@ python tools/ui_regression.py --quick    # for any UI change; runs seven checks
   English at runtime, which is a bug, not a shortcut.
 - The README exists in nine languages. `python tools/check_readme_sync.py` must report `0 drift`, and
   `pytest tests/test_readme_page_header_claim.py` pins that no README promises UI that no longer exists.
-- Technical documents come in pairs: `docs/x.md` (Chinese) and `docs/x_en.md` (English). Update both.
+- Technical documents come in pairs, named the same way the README is: `docs/x.md` is English,
+  `docs/x_zh.md` is Chinese. Update both.
 
 ## UI changes
 
@@ -97,7 +106,8 @@ python tools/ui_regression.py --quick    # for any UI change; runs seven checks
 
 ## Commits and pull requests
 
-- Commit messages are **English only** — a mixed-language message is rejected in review.
+- Commit messages are **English only** — a mixed-language message is rejected in review. Machine
+  translation is fine: `fix: resolve the launcher crash on startup` is right, `fix: 修复启动崩溃` is not.
 - Use a conventional prefix: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `perf`, `style`.
 - Subject in the imperative mood, at most 72 characters. The body says what changed and **why**, and
   names the commands you ran (for example "pytest tests/test_tools_page.py: 63 passed").

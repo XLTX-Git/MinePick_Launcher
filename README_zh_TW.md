@@ -137,8 +137,8 @@ ruff check launcher gui tests
 
 以下文件以簡體中文撰寫。
 
-建置與簽署：`pyinstaller build_exe.spec` → `scripts/sign_exe.ps1`（見 `docs/code_signing.md`）。
-此 spec 會產生單一 GUI 版 EXE（建置前置條件列於 `docs/github_release.md`）。
+建置與簽署：`pyinstaller build_exe.spec` → `scripts/sign_exe.ps1`（見 `docs/code_signing_zh.md`）。
+此 spec 會產生單一 GUI 版 EXE（建置前置條件列於 `docs/github_release_zh.md`）。
 
 一行指令完成介面檢查（測試 + lint + 對比度/溢出/高 DPI + 圓角稽核 + 畫面截圖）：
 
@@ -146,7 +146,7 @@ ruff check launcher gui tests
 python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
-主題內部機制（預留位置、自訂掛鉤、如何新增選項）：`docs/theming.md`。
+主題內部機制（預留位置、自訂掛鉤、如何新增選項）：`docs/theming_zh.md`。
 
 ## 授權條款
 

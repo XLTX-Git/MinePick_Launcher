@@ -156,8 +156,8 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-Compilar y firmar: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (ver `docs/code_signing_en.md`).
-El archivo spec genera un único EXE con GUI (los requisitos previos de compilación se indican en `docs/github_release_en.md`).
+Compilar y firmar: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (ver `docs/code_signing.md`).
+El archivo spec genera un único EXE con GUI (los requisitos previos de compilación se indican en `docs/github_release.md`).
 
 Comprobación de la interfaz con un solo comando (pruebas + lint + contraste/desbordamiento/alta DPI + auditoría de
 esquinas + capturas):
@@ -167,7 +167,7 @@ python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
 Funcionamiento interno de los temas (marcadores de posición, puntos de extensión para la personalización, cómo
-añadir una nueva opción): `docs/theming_en.md`.
+añadir una nueva opción): `docs/theming.md`.
 
 ## Licencia
 

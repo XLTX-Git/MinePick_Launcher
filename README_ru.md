@@ -156,8 +156,8 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-Сборка и подпись: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (см. `docs/code_signing_en.md`).
-Spec-файл собирает один GUI EXE (предварительные условия сборки перечислены в `docs/github_release_en.md`).
+Сборка и подпись: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (см. `docs/code_signing.md`).
+Spec-файл собирает один GUI EXE (предварительные условия сборки перечислены в `docs/github_release.md`).
 
 Проверка интерфейса одной командой (тесты + lint + контраст/переполнение/высокий DPI + аудит скруглений + скриншоты):
 
@@ -165,7 +165,7 @@ Spec-файл собирает один GUI EXE (предварительные 
 python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
-Внутреннее устройство тем (плейсхолдеры, хуки настройки, как добавить новый параметр): `docs/theming_en.md`.
+Внутреннее устройство тем (плейсхолдеры, хуки настройки, как добавить новый параметр): `docs/theming.md`.
 
 ## Лицензия
 

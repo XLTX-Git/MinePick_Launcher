@@ -153,8 +153,8 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-Build & Signieren: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (siehe `docs/code_signing_en.md`).
-Die Spec-Datei erzeugt eine einzelne GUI-EXE (die Build-Voraussetzungen stehen in `docs/github_release_en.md`).
+Build & Signieren: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (siehe `docs/code_signing.md`).
+Die Spec-Datei erzeugt eine einzelne GUI-EXE (die Build-Voraussetzungen stehen in `docs/github_release.md`).
 
 Oberflächenprüfung mit einem Befehl (Tests + Lint + Kontrast/Überlauf/Hoch-DPI + Eckenradius-Audit + Screenshots):
 
@@ -162,7 +162,7 @@ Oberflächenprüfung mit einem Befehl (Tests + Lint + Kontrast/Überlauf/Hoch-DP
 python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
-Design-Interna (Platzhalter, Anpassungs-Hooks, neue Option hinzufügen): `docs/theming_en.md`.
+Design-Interna (Platzhalter, Anpassungs-Hooks, neue Option hinzufügen): `docs/theming.md`.
 
 ## Lizenz
 

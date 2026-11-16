@@ -159,8 +159,8 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-Build & sign: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (see `docs/code_signing_en.md`).
-The spec produces a single GUI EXE (build prerequisites are listed in `docs/github_release_en.md`).
+Build & sign: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (see `docs/code_signing.md`).
+The spec produces a single GUI EXE (build prerequisites are listed in `docs/github_release.md`).
 
 One-command interface check (tests + lint + contrast/overflow/high-DPI + corner audit + screenshots):
 
@@ -168,7 +168,7 @@ One-command interface check (tests + lint + contrast/overflow/high-DPI + corner 
 python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
-Theme internals (placeholders, customisation hooks, how to add a new option): `docs/theming_en.md`.
+Theme internals (placeholders, customisation hooks, how to add a new option): `docs/theming.md`.
 
 ## License
 

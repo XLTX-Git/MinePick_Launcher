@@ -1,13 +1,17 @@
-# 发布到 GitHub（MinePick Launcher）
+English | [简体中文](github_release_zh.md)
 
-本仓库为 **MinePick Launcher**：远端 `https://github.com/XLTX-Git/MinePick_Launcher.git`，分支 `main`，当前版本 `0.5.0`（以 `launcher/__init__.py` 为准）。
-本产品线**只发布 GUI 版**，没有 CLI 可执行文件（既不构建 `MinePick_Launcher_cli.exe`，也不打包 `run_cli.py`）。
-以下命令均在 Windows 的 **CMD** 中执行；本机未安装 gh CLI，Release 在 GitHub 网页上创建。
+# Publishing to GitHub (MinePick Launcher)
 
-## 一、首次发布（仓库）
+> This document is also available in [Simplified Chinese](github_release_zh.md).
 
-1. GitHub 网页 → New repository（公开/私有自选），**不要**勾选自动生成 README/LICENSE；
-2. 本地推送：
+This repository is **MinePick Launcher**: remote `https://github.com/XLTX-Git/MinePick_Launcher.git`, branch `main`, current version `0.5.0` (as declared in `launcher/__init__.py`).
+This line ships a **GUI build only** — there is no CLI executable (no `MinePick_Launcher_cli.exe` is built, and `run_cli.py` is not packaged).
+Every command below is run in **CMD** on Windows; the gh CLI is not installed, so the Release is created on the GitHub web page.
+
+## 1. First release (the repository)
+
+1. On the GitHub website → New repository (public or private, your choice), **do not** check the option that generates a README/LICENSE automatically;
+2. Push from your local machine:
 
 ```cmd
 git init
@@ -18,27 +22,27 @@ git remote add origin https://github.com/XLTX-Git/MinePick_Launcher.git
 git push -u origin main
 ```
 
-> 注意：build/、dist/、Releases/、.devdata/、tests/.work/ 等已在 .gitignore 排除；
-> 签名私钥 build/codesign.pfx 也在忽略列表内，**切勿**上传。
+> Note: build/, dist/, Releases/, .devdata/, tests/.work/ and the like are already excluded by .gitignore;
+> the signing private key build/codesign.pfx is on the ignore list too, so **never** upload it.
 
-## 二、发 Release（附带成品）
+## 2. Publishing a Release (with built artifacts)
 
-打包好的成品先暂存在仓库的 `Releases\` 文件夹（该文件夹已进 .gitignore，不随 git 提交），同时也会产出到 `dist\`：
+The packaged artifacts are staged first in the repository's `Releases\` folder (that folder is covered by .gitignore, so it is never committed), and are also produced in `dist\`:
 
-- `MinePick_Launcher.exe`（GUI 单文件 EXE，已签名，约 65 MB）
-- `Source_code.zip`（源代码包，供 GPL-3.0 合规分发，约 3.5 MB）
+- `MinePick_Launcher.exe` (single-file GUI EXE, signed, roughly 65 MB)
+- `Source_code.zip` (source code package, for GPL-3.0 compliant distribution, roughly 3.5 MB)
 
-1. GitHub 仓库页 → Releases → Draft a new release，Tag 填 `v0.5.0`（当前版本；本地已有 `v0.1.0` 到 `v0.4.2`，远端另有一个 `v0.1.3`）；
-2. 把上面两个文件拖进附件区；
-3. Release 说明按第四节的规范撰写，并写清：
-   - 功能简介（参考 README 功能列表）；
-   - 便携模式说明（EXE 旁生成 config/ 文件夹）；
-   - 提示：签名为自签名证书（WDNDXLTX），他人电脑的 SmartScreen 可能提示“未知发布者”，属预期；
-   - 许可证：GPL-3.0。
+1. On the GitHub repository page → Releases → Draft a new release, and set the Tag to `v0.5.0` (the current version; the local repository already has `v0.1.0` through `v0.4.2`, and the remote carries an extra `v0.1.3`);
+2. Drag the two files above into the attachments area;
+3. Write the release notes following the convention in section 4, and state:
+   - A brief feature overview (see the feature list in the README);
+   - A note about portable mode (a config/ folder is generated next to the EXE);
+   - A note that the signature is a self-signed certificate (WDNDXLTX), so SmartScreen on other people's computers may warn about an "unknown publisher" — this is expected;
+   - License: GPL-3.0.
 
-## 三、推送提交与标签（CMD）
+## 3. Pushing commits and tags (CMD)
 
-版本号写在 `launcher/__init__.py` 与 `pyproject.toml`；提交后在 CMD 中推送：
+The version number lives in `launcher/__init__.py` and `pyproject.toml`; once the changes are committed, push from CMD:
 
 ```cmd
 cd /d D:\dsh-workspace\Source_code_UI
@@ -46,22 +50,18 @@ git push
 git push origin v0.5.0
 ```
 
-> 注意：普通 `git push` **不会**推送标签，必须再执行一次 `git push origin vX.Y.Z`，否则 Release 页面选不到该 Tag。
->
-> 如果本地 `main` 与远端分叉（远端有本地没有的提交），先用 `git log --oneline origin/main..HEAD` 和
-> `git cherry -v origin/main HEAD` 确认那些提交的内容是否已在本地；确认后再用
-> `git push --force-with-lease origin main`。**不要**在没核对内容的情况下强推。
+> Note: a plain `git push` does **not** push tags, so you must run `git push origin vX.Y.Z` as well, otherwise the Release page cannot select that Tag.
 
-## 四、发版说明（Release Notes）规范
+## 4. Release notes convention
 
-先写英文，再用一行 `---` 分隔、用中文写同样内容；两部分都按下面的顺序写三个小节：
+Write the English part first, then a single `---` line, then the same content in Chinese; both parts use the same three sections in this order:
 
 ```markdown
 ## ✨ New
 ## 🔧 Improvements
 ## 🐛 Fixes
 
-**某节没有内容就整节省略**(例如只有改进与修复时不写 ✨ New),不要为凑节数硬编条目。
+**Omit a section entirely when it has nothing in it** (for example a release with only improvements and fixes carries no ✨ New heading); never invent entries to fill a section.
 
 ---
 
@@ -70,56 +70,59 @@ git push origin v0.5.0
 ## 🐛 修复
 ```
 
-内容只写**上一个已发布版本**的用户能观察到的变化；本版本开发过程中引入又修掉的 bug **不要**写进发版说明。
+Describe only what a user of the **previous released version** could observe; bugs that were introduced and fixed while developing the same version must **not** appear in the release notes.
 
-## 五、GPL-3.0 合规提示
+## 5. GPL-3.0 compliance notes
 
-- 仓库根目录已含 LICENSE（GNU GPL v3 官方全文）；
-- 分发二进制（Release 的 EXE）应同时提供源代码，Source_code.zip 即为此用途；
-- 若他人索取源码，指向仓库或 Source_code.zip 均可。
+- The repository root already contains LICENSE (the official full text of GNU GPL v3);
+- Distributing the binaries (the EXE in the Release) should be accompanied by the source code; Source_code.zip exists for that purpose;
+- If someone asks you for the source code, pointing them to the repository or to Source_code.zip is fine either way.
 
-## 六、发版前自检（硬门槛）
+## 6. Self-check before a release (hard gate)
 
 ```powershell
-python tools\ui_regression.py --quick      # 必须全部 OK；检查项清单以脚本为准，不在此枚举
-python tools\ui_regression.py --list-checks  # 列出当前检查项
+python tools\ui_regression.py --quick        # every check must pass; the list lives in the script
+python tools\ui_regression.py --list-checks  # print the current checks
 ```
 
-- **没跑过自检的改动不算完成**；失败先修到绿。
-- 若单元测试撞上已知环境 flake（GUI worker 线程偶发原生崩溃，纯净提交也能复现）：
-  整条**重跑一次**；仍非绿则**分半跑**（`-k "not java and not locate and not detected"` 与
-  `-k "java or locate or detected"`）。**终止条件：两侧都绿 → 视为 flake，放行；
-  任一侧崩且单独重跑仍崩 → 按真失败处理，不得提交。**
-  因 flake 重跑才通过的提交，信息末尾加标记 `(flake rerun passed)`。
-- 打包/文档/截图有改动时，还要**开箱核验** `Releases\` 里的 EXE 与 `Source_code.zip`
-  （包内版本号、9 份 README、截图数、无 `tests/.work` 残留、逐文件 sha256、本次改动确实进包）。
+- **A change that has not passed the self-check is not finished.** Fix failures until it is green.
+- If the unit tests hit the known environment flake (an occasional native crash in a GUI worker
+  thread that reproduces on a pristine checkout): **run them once more**; if still not green, run the
+  two halves separately (`-k "not java and not locate and not detected"` and
+  `-k "java or locate or detected"`). **Termination rule: both halves green → treat as a flake and
+  proceed; one half crashes again on its own re-run → treat it as a real failure and do not commit.**
+  A commit that only passed after a flake re-run carries the marker `(flake rerun passed)` at the end.
+- When packaging, docs or screenshots changed, also **open the artifacts** in `Releases\` and verify
+  them (version inside the package, all nine READMEs, screenshot count, no `tests/.work` leftovers,
+  per-file sha256, and that this change is really inside).
 
-### 版本号提升逻辑（精简）
+### Version bump logic (short form)
 
-| 变更 | 升位 |
+| Change | Bump |
 |---|---|
-| 修 bug / 打磨 / 文案与 i18n 修正 / 文档 | PATCH `+1` |
-| 普通新增：小功能、单个可调项、局部移除 | PATCH `+1` |
-| **重大功能**：成体系的新能力，或明显改变使用方式 | MINOR `+1`，PATCH 归 0 |
-| 破坏兼容（配置结构不兼容） | `0.x` 阶段可放 MINOR；`1.0.0` 之后必须 MAJOR |
-| UI 定稿转为正式形态 | `1.0.0` |
+| Bug fix / polish / wording and i18n fixes / docs | PATCH `+1` |
+| Ordinary additions: a small feature, one new option, a local removal | PATCH `+1` |
+| **Major feature**: a whole new capability, or a clearly different way of working | MINOR `+1`, PATCH back to 0 |
+| Breaking change (incompatible config layout) | allowed in MINOR while `0.x`; MAJOR once at `1.0.0` |
+| UI declared final | `1.0.0` |
 
-- **只在要发 Release 时升**，不要提前推版本号（避免仓库里躺着从未发布的版本）；
-- 一批改动合并成一次升位；**纯技术 / 文档改动不升版本、不打标签**；
-- **拿不准时默认 PATCH**：升慢了可以随时补，升快了无法回收；
-- 已发布版本的产物不改写，修好发下一个 PATCH；
-- 升位时同步：`launcher/__init__.py`、`pyproject.toml`、9 份 README，提交信息用纯版本号，新建标签，重建 EXE 与源码包。
+- **Bump only when a Release is actually cut** — never push the number ahead of time;
+- Group a batch of changes into one bump; **tooling and documentation changes do not bump and are not tagged**;
+- **When in doubt, choose PATCH**: a late bump can always be added, an early one cannot be taken back;
+- Published artifacts are never rewritten: fix and cut the next PATCH;
+- When bumping, update `launcher/__init__.py`, `pyproject.toml` and all nine READMEs, commit with the bare
+  version as the message, tag it, and rebuild the EXE and the source package.
 
-## 七、构建前置（打包用）
+## 7. Build prerequisites (for packaging)
 
-`python -m PyInstaller build_exe.spec --noconfirm` 需要两项本地资源（都不进仓库，由 `.gitignore` 覆盖）：
+`python -m PyInstaller build_exe.spec --noconfirm` requires two local resources (neither goes into the repository; both are covered by `.gitignore`):
 
-- `build/cf_key.txt` —— 随包内置的 CurseForge API Key（缺失时打包报 `Unable to find 'build/cf_key.txt'`）；
-- 代码签名证书 `CN=WDNDXLTX` —— 见 `docs/code_signing.md`。
+- `build/cf_key.txt` — the CurseForge API Key bundled into the package (when it is missing, packaging fails with `Unable to find 'build/cf_key.txt'`);
+- The code signing certificate `CN=WDNDXLTX` — see `docs/code_signing.md`.
 
-打包与签名：`python -m PyInstaller build_exe.spec --noconfirm` → `scripts\sign_exe.ps1`。
+Packaging and signing: `python -m PyInstaller build_exe.spec --noconfirm` → `scripts\sign_exe.ps1`.
 
-源码包重打：README 或 docs 改动后必须重新生成 `Source_code.zip`（包内含 `docs/screenshots/` 与所有 README 翻译）：
+Rebuilding the source package: after any change to the READMEs or the docs you must rebuild `Source_code.zip` (it contains `docs/screenshots/` and all README translations):
 
 ```cmd
 python tools/build_source_zip.py

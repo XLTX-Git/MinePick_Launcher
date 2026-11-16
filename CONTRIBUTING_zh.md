@@ -31,13 +31,20 @@ $env:QT_QPA_PLATFORM = "offscreen"
 
 ## 三条必须通过的命令
 
-每个 pull request 都要让这三条保持绿色：
+跑多少取决于你改了什么：
 
 ```powershell
-pytest -q                                # 全量测试，约 20 分钟
-ruff check launcher gui tests            # 静态检查
+ruff check launcher gui tests            # 静态检查，每次都要
 python tools/ui_regression.py --quick    # 改了界面就要跑；共七项检查
+pytest -q                                # 全量测试，约 20 分钟
 ```
+
+- **只改文档**（README、docs、CONTRIBUTING）：**不用跑 pytest**。跑
+  `python tools/check_readme_sync.py` 与 README 相关测试（`pytest tests/test_readme_page_header_claim.py`）
+  ——那才是这些文件能弄坏的东西。
+- **开发过程中**：只跑你动过的那几个测试文件。单个文件是秒级，这才是你需要的循环。
+- **标记 pull request 为「待合并」之前**：跑一次全量 `pytest -q`（约 20 分钟）。上面的 lint 与界面检查
+  任何改动都要跑。
 
 `--quick` 会跳过截图。发版门槛跑的是完整脚本，所以只过 `--quick` 的界面改动还不算完成——但足以开一个
 pull request。
@@ -71,7 +78,7 @@ pull request。
   新增一个键就要在九张表里都补上。缺翻译会回退到英文，那是缺陷，不是省事的办法。
 - README 有九种语言。`python tools/check_readme_sync.py` 必须报 `0 drift`；
   `pytest tests/test_readme_page_header_claim.py` 会钉住「README 不得再承诺已经删掉的界面」。
-- 技术文档成对出现：`docs/x.md`（中文）和 `docs/x_en.md`（英文），两边都要改。
+- 技术文档成对出现，命名与 README 同向：`docs/x.md` 是**英文**，`docs/x_zh.md` 是**中文**，两边都要改。
 
 ## 界面改动
 
@@ -83,10 +90,11 @@ pull request。
 
 ## 提交与 pull request
 
-- **提交信息只用英文**——中英混写会在评审里被退回。
+- **提交信息只用英文**——中英混写会在评审里被退回。用翻译工具翻一下就可以：
+  `fix: resolve the launcher crash on startup` 是对的，`fix: 修复启动崩溃` 不对。
 - 用约定前缀：`feat`、`fix`、`docs`、`test`、`chore`、`refactor`、`perf`、`style`。
 - 标题用祈使句，不超过 72 个字符。正文说明改了什么、**为什么**改，并写出你跑过的命令
-  （例如「pytest tests/test_tools_page.py：63 passed」）。
+  （例如「pytest tests/test_tools_page.py: 63 passed」）。
 - 一个提交只做一件事。一次改了两个不相干的地方，就该拆成两个提交。
 
 ## 发版

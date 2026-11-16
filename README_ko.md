@@ -147,8 +147,8 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-빌드 및 서명: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (`docs/code_signing_en.md` 참고).
-이 spec 파일은 단일 GUI EXE를 생성합니다(빌드 사전 요구 사항은 `docs/github_release_en.md`에 나열되어 있습니다).
+빌드 및 서명: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (`docs/code_signing.md` 참고).
+이 spec 파일은 단일 GUI EXE를 생성합니다(빌드 사전 요구 사항은 `docs/github_release.md`에 나열되어 있습니다).
 
 한 명령으로 끝내는 인터페이스 검사(테스트 + 린트 + 명도 대비/오버플로/고DPI + 모서리 둥글기 검사 + 스크린샷):
 
@@ -156,7 +156,7 @@ ruff check launcher gui tests
 python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
-테마 내부 구조(플레이스홀더, 사용자 지정 훅, 새 옵션을 추가하는 방법): `docs/theming_en.md`.
+테마 내부 구조(플레이스홀더, 사용자 지정 훅, 새 옵션을 추가하는 방법): `docs/theming.md`.
 
 ## 라이선스
 

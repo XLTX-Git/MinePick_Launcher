@@ -136,8 +136,8 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-打包与签名：`pyinstaller build_exe.spec` → `scripts/sign_exe.ps1`（见 `docs/code_signing.md`）。
-打包产物为**单个 GUI 版 EXE**（构建前置条件见 `docs/github_release.md`）。
+打包与签名：`pyinstaller build_exe.spec` → `scripts/sign_exe.ps1`（见 `docs/code_signing_zh.md`）。
+打包产物为**单个 GUI 版 EXE**（构建前置条件见 `docs/github_release_zh.md`）。
 
 一条命令跑完整界面检查（测试 + lint + 对比度/溢出/高 DPI + 圆角审计 + 截图）：
 
@@ -145,7 +145,7 @@ ruff check launcher gui tests
 python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
-主题机制（占位符、可调项挂钩、如何新增一个可调项）：`docs/theming.md`。
+主题机制（占位符、可调项挂钩、如何新增一个可调项）：`docs/theming_zh.md`。
 
 ## 许可证
 

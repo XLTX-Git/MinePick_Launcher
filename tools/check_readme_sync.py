@@ -60,8 +60,13 @@ def links(text: str) -> set[str]:
 
 
 def normalise_docs(values: set[str]) -> set[str]:
-    """The two Chinese READMEs legitimately link the Chinese developer docs."""
-    return {re.sub(r"(docs/[a-z_]+)_en\.md$", r"\1.md", value) for value in values}
+    """Developer docs are paired: `docs/x.md` is English, `docs/x_zh.md` is Chinese.
+
+    A translation legitimately points at its own language's member of the pair, so the language suffix
+    is dropped before comparing - otherwise the Chinese READMEs would look like drift for linking
+    `docs/theming_zh.md` while the English baseline links `docs/theming.md`.
+    """
+    return {re.sub(r"(docs/[a-z_]+?)(?:_en|_zh)?\.md$", r"\1.md", value) for value in values}
 
 
 def identifiers(text: str) -> set[str]:

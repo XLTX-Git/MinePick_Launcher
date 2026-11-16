@@ -1,37 +1,43 @@
-# Windows 代码签名流程（#32）
+English | [简体中文](code_signing_zh.md)
 
-## 本机已执行的自签名（2026-08-15）
+# Windows code signing process (#32)
 
-- 签名者（证书主体）：**CN=WDNDXLTX, E=wdndxltx@gmail.com**（自签名，象征性署名）
-- 有效期：**10 年**（至 2036/8/15）；签名已打 DigiCert 时间戳（旧包永久有效）
-- 证书指纹：609714616FD61C6B7BF179C03903F07A13EABDBA
-- 私钥备份：build/codesign.pfx（导出密码仅保存在本机，切勿写入任何会被提交的文件）
-- 根证书已导入本机 `Cert:\CurrentUser\Root`（本机信任；他人电脑仍会提示未知发布者）
-- 两个 EXE 均已签名：`Get-AuthenticodeSignature` → `Status: Valid`，属性里可见签名者 WDNDXLTX
+> This document is also available in [Simplified Chinese](code_signing_zh.md).
 
-### 每次重新打包后重签（本机，无需安装 Windows SDK）
+## Self-signing already performed on this machine (2026-08-15)
+
+- Signer (certificate subject): **CN=WDNDXLTX, E=wdndxltx@gmail.com** (self-signed, symbolic attribution only)
+- Validity: **10 years** (until 2036/8/15); the signatures carry a DigiCert timestamp (so older builds stay valid forever)
+- Certificate thumbprint: 609714616FD61C6B7BF179C03903F07A13EABDBA
+- Private key backup: build/codesign.pfx (the export password is kept on this machine only — never write it into any file that would be committed)
+- The root certificate has been imported into `Cert:\CurrentUser\Root` on this machine (trusted here; other people's computers will still warn about an unknown publisher)
+- The executable is signed: `Get-AuthenticodeSignature` → `Status: Valid`, and the signer WDNDXLTX is visible in the file properties
+
+### Re-signing after every rebuild (on this machine, no Windows SDK installation needed)
 
 ```powershell
 $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -like "CN=WDNDXLTX*" } | Select-Object -First 1
 Set-AuthenticodeSignature -FilePath dist\MinePick_Launcher.exe -Certificate $cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com"
-# 本仓库只产出 GUI 版：没有 MinePick_Launcher_cli.exe 需要签名
+# this repository builds a GUI executable only: there is no MinePick_Launcher_cli.exe to sign
 ```
 
-> 注：Set-AuthenticodeSignature 要求证书链被本机信任，因此根证书必须先导入受信任根
-> （certutil -user -addstore Root build\codesign-root.cer）。一键脚本见 scripts/sign_exe.ps1。
+> Note: Set-AuthenticodeSignature requires the certificate chain to be trusted on this machine, so the root
+> certificate has to be imported into the trusted root store first
+> (certutil -user -addstore Root build\codesign-root.cer). See scripts/sign_exe.ps1 for a one-click script.
 
-## 背景说明
+## Background
 
-SmartScreen 默认会警告未签名 EXE。签名分两种：
+SmartScreen warns about unsigned EXEs by default. There are two kinds of signing:
 
-1. **自签名证书（本地信任，分发受限）**：仅在自己/受控环境的机器上消除警告，
-   其它用户仍会看到 SmartScreen 提示（需手动"仍要运行"）。
-2. **正式代码签名证书（推荐分发）**：从证书机构购买 OV/EV 证书
-   （EV 证书可快速建立 SmartScreen 信誉）。
+1. **Self-signed certificate (trusted locally, limited for distribution)**: it only removes the warning on
+   machines you own or control; other users still see the SmartScreen prompt (they have to choose
+   "Run anyway" manually).
+2. **An official code signing certificate (recommended for distribution)**: buy an OV/EV certificate from a
+   certificate authority (an EV certificate builds SmartScreen reputation quickly).
 
-## 一、自签名（本地验证流程）
+## 1. Self-signing (local verification flow)
 
-以管理员身份打开 PowerShell，在项目目录执行：
+Open PowerShell as administrator and run the following in the project directory:
 
 ```powershell
 # 1. 创建代码签名证书（个人证书存储）
@@ -43,9 +49,9 @@ $password = ConvertTo-SecureString -String "你的导出密码" -Force -AsPlainT
 Export-PfxCertificate -Cert $cert -FilePath .\build\codesign.pfx -Password $password
 ```
 
-## 二、使用 signtool 签名
+## 2. Signing with signtool
 
-需要 Windows SDK（或 Visual Studio 构建工具）中的 signtool.exe。
+This needs signtool.exe from the Windows SDK (or the Visual Studio build tools).
 
 ```powershell
 # 签名（自签名/正式证书均可，/f 指定 pfx）
@@ -56,8 +62,10 @@ Export-PfxCertificate -Cert $cert -FilePath .\build\codesign.pfx -Password $pass
 & signtool.exe verify /pa /v dist\MinePick_Launcher.exe
 ```
 
-注意：
-- 只需签名 `MinePick_Launcher.exe` —— 本仓库只产出 GUI 版，不构建 CLI 可执行文件；
-- 正式证书建议使用硬件令牌或证书库（`/sha1 <指纹>` 代替 `/f`）；
-- 每次 PyInstaller 重新打包后签名失效，需重新签名（打包脚本可自动追加签名步骤）；
-- 一键脚本见 scripts/sign_exe.ps1（需先完成第一步并导出 pfx）。
+Notes:
+- Only `MinePick_Launcher.exe` has to be signed — this repository ships the GUI build only, so no CLI executable is produced;
+- With a real certificate, prefer a hardware token or the certificate store (use `/sha1 <thumbprint>`
+  instead of `/f`);
+- Every PyInstaller onefile build invalidates the signature, so the EXE has to be signed again (the build
+  script can append the signing step automatically);
+- See scripts/sign_exe.ps1 for a one-click script (step 1 has to be completed and the pfx exported first).
