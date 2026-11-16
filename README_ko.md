@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
 
 Python + PySide6로 만든 포터블 Minecraft 런처: Microsoft/오프라인 계정, 버전 설치,
 Modrinth & CurseForge 리소스, Fabric/Forge/NeoForge/Quilt 로더, 격리된 인스턴스 — 단일
@@ -42,6 +42,8 @@ Modrinth & CurseForge 리소스, Fabric/Forge/NeoForge/Quilt 로더, 격리된 �
     <td colspan="2" align="center"><sub>크래시 진단 대화 상자</sub></td>
   </tr>
 </table>
+
+스크린샷은 영어 인터페이스입니다.
 
 ## 인터페이스
 
@@ -164,4 +166,4 @@ GPL 소스 배포 요구 사항을 충족합니다.
 ## 관련 프로젝트
 
 - [MinePick Launcher Classic](https://github.com/XLTX-Git/MinePick_Launcher_Classic) — 이 프로젝트의 전신(보관됨, GUI + CLI)
-- [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) — 커뮤니티 동료가 만든 개정판
+- [MinePick Launcher Revision](https://github.com/TheDarkLord234/MinePick_Launcher_Revision) — 커뮤니티 구성원이 만든 개정판

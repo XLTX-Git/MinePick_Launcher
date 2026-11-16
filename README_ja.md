@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
 
 Python + PySide6 で作られたポータブルな Minecraft ランチャー：Microsoft アカウントとオフラインアカウント、バージョンの
 インストール、Modrinth と CurseForge のリソース、Fabric/Forge/NeoForge/Quilt ローダー、分離された
@@ -42,6 +42,8 @@ Python + PySide6 で作られたポータブルな Minecraft ランチャー：M
     <td colspan="2" align="center"><sub>クラッシュ診断ダイアログ</sub></td>
   </tr>
 </table>
+
+スクリーンショットは英語版の画面です。
 
 ## インターフェース
 

@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
 
 以 Python + PySide6 打造的免安裝 Minecraft 啟動器：Microsoft/離線帳號、版本安裝、
 Modrinth 與 CurseForge 資源、Fabric/Forge/NeoForge/Quilt 載入器、隔離實例 ——
@@ -42,6 +42,8 @@ Modrinth 與 CurseForge 資源、Fabric/Forge/NeoForge/Quilt 載入器、隔離�
     <td colspan="2" align="center"><sub>崩潰診斷對話方塊</sub></td>
   </tr>
 </table>
+
+截圖為簡體中文介面。
 
 ## 介面
 
@@ -132,6 +134,8 @@ python -m gui                # run the GUI
 pytest -q                    # tests
 ruff check launcher gui tests
 ```
+
+以下文件以簡體中文撰寫。
 
 建置與簽署：`pyinstaller build_exe.spec` → `scripts/sign_exe.ps1`（見 `docs/code_signing.md`）。
 此 spec 會產生單一 GUI 版 EXE（建置前置條件列於 `docs/github_release.md`）。

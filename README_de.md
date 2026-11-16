@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
 
 Ein portabler Minecraft-Launcher auf Basis von Python + PySide6: Microsoft-/Offline-Konten, Versionsinstallation,
 Modrinth- & CurseForge-Ressourcen, Fabric/Forge/NeoForge/Quilt-Loader, isolierte Instanzen — verpackt als
@@ -43,6 +43,8 @@ einzelne portable EXE.
   </tr>
 </table>
 
+Die Screenshots zeigen die englische Oberfläche.
+
 ## Oberfläche
 
 - **Assistent beim ersten Start, im Fenster** — der Willkommensablauf ist ein Overlay im Hauptfenster
@@ -74,10 +76,10 @@ einzelne portable EXE.
   bestanden), vollständige Tastaturbedienung mit sichtbarem Fokus an **jeder per Tastatur erreichbaren Fokusposition**,
   ohne Lücke, ein lesbarer Name an jedem bedienbaren Element, Tooltips, die man **überfahren kann, ohne dass sie
   verschwinden**, und Statusmeldungen, die an Hilfstechnologien gemeldet werden.
-- **Nicht gemacht**: ein manueller Durchgang mit einem Screenreader (NVDA / Narrator). Die Ansage der
-  Statusmeldungen wurde auf echter Hardware bestätigt (Narrator liest sie vor, und ohne Narrator entstehen
-  keine Systemtöne). Auf echter Hardware noch offen sind nur zwei Punkte: die Ansagereihenfolge von Tabellen
-  und Aufklapplisten und das Verhalten des Tooltips unter einem echten Fenstermanager.
+- **Nicht gemacht**: ein manueller Durchgang mit einem Screenreader (NVDA / Narrator). Auf echter
+  Hardware noch offen sind nur zwei Punkte: die Ansagereihenfolge von Tabellen und Aufklapplisten
+  (die Ansage der Statusmeldungen ist auf echter Hardware bestätigt) und das Verhalten des Tooltips
+  unter einem echten Fenstermanager.
 - Bekannte Probleme: Das Beenden während eines laufenden Downloads oder Updates kann einen Absturz verursachen. Siehe
   Versionshinweise.
 

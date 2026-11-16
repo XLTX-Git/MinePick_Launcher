@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
 
 Un lanceur Minecraft portable écrit en Python + PySide6 : comptes Microsoft/hors ligne, installation de versions,
 ressources Modrinth et CurseForge, chargeurs Fabric/Forge/NeoForge/Quilt, instances isolées — le tout empaqueté
@@ -43,6 +43,8 @@ dans un seul EXE portable.
   </tr>
 </table>
 
+Les captures d'écran montrent l'interface en anglais.
+
 ## Interface
 
 - **Assistant de premier démarrage, dans la fenêtre** — le flux d'accueil est une surcouche à l'intérieur de la
@@ -73,7 +75,7 @@ dans un seul EXE portable.
   programme de bureau**.
 - Vérifié automatiquement à chaque modification : les paires texte/fond sont **énumérées à partir des jetons de couleur**
   (deux thèmes × huit couleurs d'accent ; texte ≥4,5:1, éléments non textuels ≥3:1), les cibles cliquables font ≥24×24 px
-  (76 contrôles lors d'une exécution réelle, tous conformes), tout est atteignable au clavier avec un indicateur de focus
+  (vérifiés lors d'une exécution réelle, tous conformes), tout est atteignable au clavier avec un indicateur de focus
   visible sur **chaque arrêt atteignable au clavier**, sans aucun manque, un nom lisible sur chaque contrôle interactif,
   des infobulles que l'on peut **survoler sans qu'elles disparaissent**, et des messages d'état annoncés aux technologies
   d'assistance.

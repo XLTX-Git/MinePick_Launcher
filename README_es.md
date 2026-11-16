@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
 
 Un launcher portátil de Minecraft creado con Python + PySide6: cuentas de Microsoft/sin conexión, instalación de versiones,
 recursos de Modrinth y CurseForge, cargadores Fabric/Forge/NeoForge/Quilt, instancias aisladas — empaquetado como un
@@ -43,6 +43,8 @@ recursos de Modrinth y CurseForge, cargadores Fabric/Forge/NeoForge/Quilt, insta
   </tr>
 </table>
 
+Las capturas muestran la interfaz en inglés.
+
 ## Interfaz
 
 - **Asistente de primer inicio, dentro de la ventana** — el flujo de bienvenida es una capa superpuesta dentro de la
@@ -72,7 +74,7 @@ recursos de Modrinth y CurseForge, cargadores Fabric/Forge/NeoForge/Quilt, insta
   escritorio**.
 - Se comprueba automáticamente en cada cambio: las parejas texto/fondo se **enumeran a partir de los tokens de color**
   (dos temas × ocho colores de acento; texto ≥4,5:1, elementos no textuales ≥3:1), los objetivos pulsables miden ≥24×24 px
-  (76 controles en una ejecución real, todos correctos), todo es accesible con el teclado y con un indicador de foco visible
+  (comprobados en una ejecución real, todos correctos), todo es accesible con el teclado y con un indicador de foco visible
   en **cada punto alcanzable con el teclado**, sin ninguno sin foco, un nombre legible en cada control interactivo,
   información emergente que **se puede sobrevolar sin que desaparezca**, y mensajes de estado anunciados a las tecnologías
   de asistencia.
