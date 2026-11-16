@@ -709,21 +709,28 @@ class ToolsPage(QWidget):
         self.channels_arrow.setPixmap(_chevron_icon(False))
         channels_layout.addWidget(channels_label)
         channels_layout.addStretch(1)
-        # Measuring lives here because this is where the numbers are shown: the rows used to stay 未测
-        # until a download happened to race the mirrors, with no way to ask for a measurement.
+        channels_layout.addWidget(self.channels_arrow)
+        self.channels_button.toggled.connect(self._on_channels_toggled)
+
+        # The button is a sibling of the disclosure row, not a child of it. Nested inside, it inherited the
+        # row's 27px height and drew its label in a 9px content rect - the bottom of every glyph was cut -
+        # and a click could also toggle the section.
         self.channels_measure_button = QPushButton(tr("tools.onboard.channels.measure"))
         self.channels_measure_button.setObjectName("secondaryButton")
         self.channels_measure_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.channels_measure_button.setAccessibleName(tr("tools.onboard.channels.measure"))
         self.channels_measure_button.clicked.connect(self._measure_channels)
-        channels_layout.addWidget(self.channels_measure_button)
-        channels_layout.addWidget(self.channels_arrow)
-        self.channels_button.toggled.connect(self._on_channels_toggled)
-        # One signal per probe result: the measurement runs on a worker and every row updates as its
-        # own answer arrives, so a slow mirror never delays the other two.
+        channels_row = QWidget()
+        channels_row_layout = QHBoxLayout(channels_row)
+        channels_row_layout.setContentsMargins(0, 0, 0, 0)
+        channels_row_layout.setSpacing(8)
+        channels_row_layout.addWidget(self.channels_button, 1)
+        channels_row_layout.addWidget(self.channels_measure_button)
+        # One signal per probe result: the measurement runs on a worker and every row updates as its own
+        # answer arrives, so a slow mirror never delays the other two.
         self.channel_probe.connect(self._on_channel_probe)
         self._measuring_channels = False
-        layout.addWidget(self.channels_button)
+        layout.addWidget(channels_row)
 
         self.channels_detail = self._build_channels()
         self.channels_detail.setVisible(False)

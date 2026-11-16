@@ -1415,3 +1415,32 @@ def test_measuring_channels_fills_every_row_and_says_so(app, monkeypatch) -> Non
         assert page.channels_measure_button.isEnabled()
     finally:
         _close(app, page)
+
+def test_the_measure_button_has_room_for_its_own_text(app) -> None:
+    """The label was drawn in a 9px content rect: the bottom of every glyph was cut off.
+
+    The button sat inside the disclosure row, which is 27px tall by its own stylesheet, so the label's
+    17px line never fitted. It is a sibling of that row now, and this pins the geometry that was missing.
+    """
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
+
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        page.channels_button.setChecked(True)
+        app.processEvents()
+        button = page.channels_measure_button
+        option = QStyleOptionButton()
+        button.initStyleOption(option)
+        content = button.style().subElementRect(
+            QStyle.SubElement.SE_PushButtonContents, option, button
+        )
+        assert content.height() >= button.fontMetrics().height(), (
+            f"content rect {content.height()}px cannot hold a {button.fontMetrics().height()}px line"
+        )
+        # A control inside a control would also toggle the section when pressed.
+        page.channels_button.setChecked(False)
+        button.click()
+        app.processEvents()
+        assert page.channels_button.isChecked() is False
+    finally:
+        _close(app, page)
