@@ -49,8 +49,8 @@ single portable EXE.
   (step rail on the left, content on the right, action bar at the bottom) instead of a separate
   dialog, and it closes and hands control back to the main window when you finish
 - **Custom window frame** — the title bar is drawn by the launcher itself, so the chrome matches
-  the theme; it carries no icon, just the window title on the left and the minimize/close buttons on
-  the right, while the pickaxe icon is used for the taskbar, the file icon and dialogs
+  the theme; the left side carries the window title and the right side the minimize/close buttons,
+  and the pickaxe icon is used for the taskbar, the file icon and dialogs
 - **Customisable look** — accent colour (any hex value, eight presets, or the system colour picker),
   UI font (every installed family, the most common ones pinned on top, type to filter), corner radius (compact / default /
   round), theme (dark / light / follow the system)
@@ -63,7 +63,7 @@ single portable EXE.
   coloured by severity, empty lists explain what to do next
 - **Accessible by default** — contrast is checked by enumerating the colour tokens (both themes × eight
   accent presets: body text ≥4.5:1, non-text ≥3:1), every interactive control carries a readable name,
-  keyboard focus is always visible, and status messages are announced to assistive technology
+  and keyboard focus is always visible
 
 ## Accessibility
 
@@ -77,8 +77,9 @@ single portable EXE.
   technology.
 - **Not done**: a manual screen-reader walkthrough (NVDA / Narrator). What a real desktop still has to
   confirm is narrowed to two items: **how the tables and the "source" dropdowns are announced in
-  sequence** (the status messages themselves are already confirmed announced), and how the tooltip
-  behaves under a real window manager.
+  sequence**, and how the tooltip behaves under a real window manager — its "movable, does not dismiss
+  itself" behaviour is covered by automated tests, but not re-checked by hand. Status messages are
+  confirmed announced on real hardware.
 - Known issue: closing the program while a download or update is still running can crash it. See the
   release notes.
 
@@ -93,14 +94,14 @@ single portable EXE.
 ### Versions & Java
 - Official version manifest with collapsible version groups (release / snapshot / April Fools / legacy), "Latest release"
   and "Latest snapshot" cards, name search, one-click install & uninstall, version details
-- Isolation is decided per instance — always isolated, never, or follow the policy for new instances
+- Isolation is decided per instance — always isolated, never, or follow the global default
   (an instance that already holds mods or saves keeps its own folder automatically)
-- Java requirement mapping (1.16.5→8, 1.17–1.20.4→17, 1.20.5–1.21.11→21, 26.1+→25) with automatic Adoptium
+- Java requirement mapping (1.16.5→8, 1.17–1.20.4→17, 1.20.5–1.21.11→21, 26.1+→25; from 26.1 Mojang numbers releases year.sequence) with automatic Adoptium
   download and a runtime manager
 
 ### Launching & instances
 - Memory suggestion from mod count and free RAM, custom JVM arguments, server direct-connect, game language,
-  "after the game starts" behaviour, working-set trimming
+  "after the game starts" behaviour (keep open / hide / exit), working-set trimming that does not quit the launcher
 - Instances are version folders: every installed version *is* an instance, so nothing is duplicated and
   nothing has to be created first. Each one keeps its own saves / mods / configuration, and its own
   overrides for isolation, Java, memory, JVM arguments and extra game arguments — each of which can
@@ -129,6 +130,14 @@ single portable EXE.
   third-party credits, and an update checker that compares this build with the latest GitHub release
 - **Four automatic-update modes** — download & install, download & notify (default), notify only, or no
   automatic check; whenever installing is not possible the launcher falls back to opening the release page
+
+## Requirements
+
+- Windows 10 / 11 (64-bit). The program is a single portable EXE and bundles its runtime, so no
+  Python, .NET or VC++ redistributable has to be installed.
+- The first run creates `config/` next to the EXE, so keep it somewhere writable (the Desktop, or a
+  folder you own) rather than in `Program Files`.
+- Building from source needs Python 3.11+ (see Development below).
 
 ## Download & usage
 
