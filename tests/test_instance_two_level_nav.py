@@ -405,3 +405,39 @@ def test_folder_rows_are_tab_reachable_and_named(app, monkeypatch, ws_tmp):
     finally:
         if window is not None:
             _close(app, window)
+
+def test_the_rail_can_remove_a_folder_after_confirming(app, monkeypatch, ws_tmp):
+    """「添加文件夹」 had no counterpart: dropping a folder needed the settings page."""
+    from gui import inwindow_dialog
+
+    window, _main, other, _empty = _window(app, monkeypatch, ws_tmp)
+    try:
+        page = window.pages["instances"]
+        assert page.folder_rail.count() == 3
+        monkeypatch.setattr(inwindow_dialog, "question", lambda *a, **k: True)
+        page.folder_rail.remove_requested.emit(str(other))
+        _settle(app, window)
+        assert page.folder_rail.count() == 2
+        cfg, _path = config_mod.load()
+        assert all(str(folder.path) != str(other) for folder in cfg.effective_game_folders())
+    finally:
+        _close(app, window)
+
+
+def test_removing_the_last_folder_is_refused(app, monkeypatch, ws_tmp):
+    """One folder always stays: the rail says so instead of emptying itself."""
+    window, _main, _other, _empty = _window(app, monkeypatch, ws_tmp, three_folders=False)
+    try:
+        page = window.pages["instances"]
+        monkeypatch.setattr(
+            "gui.pages.instances_page.inwindow_dialog.question", lambda *a, **k: True
+        )
+        # Remove every folder but the active one; the last removal must be refused.
+        page.folder_rail.remove_requested.emit(page.folder_rail.path_at(1))
+        _settle(app, window)
+        last = page.folder_rail.path_at(0)
+        page.folder_rail.remove_requested.emit(last)
+        _settle(app, window)
+        assert page.folder_rail.count() == 1
+    finally:
+        _close(app, window)

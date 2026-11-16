@@ -33,12 +33,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -145,6 +147,8 @@ class FolderRail(QWidget):
     folder_changed = Signal(str)
     folder_activated = Signal(str)
     add_requested = Signal()
+    #: A row asked to be removed (context menu, or Delete while it is selected).
+    remove_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -187,6 +191,37 @@ class FolderRail(QWidget):
         self.list.currentRowChanged.connect(self._on_current_row_changed)
         self.list.itemClicked.connect(self._on_item_activated)
         self.list.itemActivated.connect(self._on_item_activated)
+        # The rail could only add folders; removing one meant leaving for the settings page. A context
+        # menu plus Delete is the pair a file list is expected to have.
+        self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._show_context_menu)
+        delete_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), self.list)
+        delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete_shortcut.activated.connect(self._request_remove_current)
+
+    # ---------- removal ----------
+
+    def _path_at(self, position) -> str:
+        index = self.list.indexAt(position)
+        if not index.isValid():
+            return ""
+        row = index.row()
+        return self._paths[row] if 0 <= row < len(self._paths) else ""
+
+    def _show_context_menu(self, position) -> None:
+        path = self._path_at(position)
+        if not path:
+            return
+        menu = QMenu(self)
+        action = menu.addAction(tr("settings.folder.remove"))
+        action.setEnabled(self.list.count() > 1)
+        if menu.exec(self.list.viewport().mapToGlobal(position)) is action:
+            self.remove_requested.emit(path)
+
+    def _request_remove_current(self) -> None:
+        row = self.list.currentRow()
+        if 0 <= row < len(self._paths) and self.list.count() > 1:
+            self.remove_requested.emit(self._paths[row])
 
     # ---------- data ----------
 
@@ -252,6 +287,14 @@ class FolderRail(QWidget):
             if config.same_game_folder(candidate, path):
                 return index
         return -1
+
+    def count(self) -> int:
+        """How many folders the rail is showing."""
+        return self.list.count()
+
+    def path_at(self, index: int) -> str:
+        """The folder path of one row ("" when the index is out of range)."""
+        return self._paths[index] if 0 <= index < len(self._paths) else ""
 
     def current_path(self) -> str:
         item = self.list.currentItem()

@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui import i18n, inwindow_dialog, paint_utils
+from gui.tasks import task_center_of
 from gui.widgets import (
     EmptyState,
     add_page_top_inset,
@@ -52,7 +53,7 @@ from gui.widgets import (
     style_page_layout,
     widget_alive,
 )
-from gui.workers import ProgressBridge, run_in_background
+from gui.workers import ProgressBridge, RateTracker, run_in_background
 from launcher import paths
 from launcher.java import install_java, list_java
 from launcher.java.install import delete_managed_runtime, list_managed_runtimes
@@ -629,13 +630,35 @@ class JavaPage(QWidget):
         disable_keeping_focus(self.install_button)
         set_app_status(self, tr("java.msg.installing", major))
         bridge = ProgressBridge()
-        bridge.progress.connect(
-            lambda p: set_app_status(
+        # A Java runtime is a download like any other, so it gets a row on the tasks page: byte count,
+        # cancel, and a failure state that survives leaving this page.
+        rate = RateTracker()
+        task = None
+        center = task_center_of(self)
+        if center is not None:
+            from launcher.net import downloader as downloader_module
+
+            downloader_module.clear_cancellation()
+            task = center.add_task(
+                "tasks.title.java",
+                "Java " + str(major),
+                kind="java",
+                cancel=lambda _task: downloader_module.cancel_current_downloads(),
+                retry=self._install,
+            )
+
+        def on_progress(p) -> None:
+            if task is not None and task.is_running():
+                rate.set_total(p.total_bytes)
+                speed, _eta = rate.update(p.done_bytes)
+                task.set_progress(p.done_bytes, p.total_bytes, speed)
+            set_app_status(
                 self,
                 "Java " + str(major) + ": " + str(p.done_files) + "/" + str(p.total_files)
                 + " " + p.current,
             )
-        )
+
+        bridge.progress.connect(on_progress)
 
         def do_install(progress) -> object:
             return install_java(
@@ -645,13 +668,21 @@ class JavaPage(QWidget):
                 progress=progress,
             )
 
+        def on_result(_runtime) -> None:
+            if task is not None and task.is_running():
+                task.finish()
+            self.refresh()
+            set_app_status(self, tr("java.msg.installed", major))
+
+        def on_error(message: str) -> None:
+            if task is not None and task.is_running():
+                task.fail(str(message))
+            set_app_status(self, tr("java.msg.fail", message), "error")
+
         run_in_background(
             do_install,
             bridge,
-            on_result=lambda _r: (
-                self.refresh(),
-                set_app_status(self, tr("java.msg.installed", major)),
-            ),
-            on_error=lambda m: set_app_status(self, tr("java.msg.fail", m), "error"),
+            on_result=on_result,
+            on_error=on_error,
             on_finished=lambda: self.install_button.setEnabled(True),
         )

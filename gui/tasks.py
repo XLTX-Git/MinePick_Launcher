@@ -76,6 +76,9 @@ KIND_TITLE_KEYS: dict[str, str] = {
     # page: the instance page starts it, the row shows its progress and the status line says where
     # the archive landed.
     "export": "tasks.title.export",
+    # A Java runtime install is a download like any other: it belongs on this page with a byte count,
+    # a cancel and a failure state, not only on the status line of the page that started it.
+    "java": "tasks.title.java",
 }
 
 #: The reverse map: a task created by title key alone still gets its kind (the versions page's adapter

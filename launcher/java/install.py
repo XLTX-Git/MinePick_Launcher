@@ -23,6 +23,7 @@ Download links ultimately point at github.com (Adoptium release assets), so the 
 
 from __future__ import annotations
 
+import re
 import shutil
 import zipfile
 from collections.abc import Callable
@@ -33,11 +34,19 @@ import httpx
 
 from launcher.i18n import describe_network_error, tr_core
 from launcher.java.locate import JavaError, JavaRuntime, probe_java_major
-from launcher.meta.manifest import _new_client
 from launcher.meta.rules import Platform, detect_platform
 from launcher.net.downloader import Downloader, DownloadProgress, DownloadTask
 
 ADOPTIUM_API = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot"
+#: Fallback listing when the API is unreachable. api.adoptium.net is often blocked from mainland China
+#: (measured: read timeout after ~12 s on a connection that works), while this mirror answers in under a
+#: second. It serves files only, so the listing is parsed from the directory page and there is no
+#: upstream sha256 - the downloaded archive is integrity-checked instead (see install_java).
+ADOPTIUM_MIRROR = "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/"
+#: The API call may not stall the install for long: a blocked host has to fail fast enough to fall back.
+API_TIMEOUT = httpx.Timeout(20.0, connect=5.0)
+#: Short probes (HEAD on a mirror file) use the same connect budget without a long read wait.
+PROBE_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 _OS_MAP = {"windows": "windows", "osx": "mac", "linux": "linux"}
 _ARCH_MAP = {"x64": "x64", "x86": "x86", "arm64": "aarch64"}
@@ -53,6 +62,57 @@ class JavaAsset:
     name: str
     size: int
     checksum: str = ""  # official sha256 (package.checksum, integrity verification)
+    source: str = "adoptium"  # "adoptium" (API, with checksum) or "mirror" (listing, no checksum)
+
+
+def _version_key(name: str) -> tuple[int, ...]:
+    """Sort key for a mirror file name: ``..._hotspot_<version>_<build>.zip``.
+
+    Taken after ``hotspot_`` so version and build compare as one tuple: splitting on the last underscore
+    compared only the build number, which ranked 21.0.11 build 10 above 21.0.13 build 9.
+    """
+    tail = name.split("hotspot_")[-1] if "hotspot_" in name else name
+    numbers = re.findall(r"\d+", tail)
+    return tuple(int(part) for part in numbers) or (0,)
+
+
+def _mirror_assets(
+    major: int, os_name: str, arch: str, image_type: str, client: httpx.Client
+) -> list[JavaAsset]:
+    """Adoptium's file listing from the Tsinghua mirror, newest build first.
+
+    There is no API here: the directory page is parsed for ``OpenJDK*.zip`` entries, and the newest
+    version numbers win. No sha256 is published with the file, so the archive is validated by its own
+    CRCs at extraction time and the caller is told which source it came from.
+    """
+    base = f"{ADOPTIUM_MIRROR}{major}/{image_type}/{arch}/{os_name}/"
+    resp = client.get(base)
+    resp.raise_for_status()
+    names = re.findall(r'href="(OpenJDK[^"/]+\.zip)"', resp.text)
+    if not names:
+        raise JavaError(tr_core("java.no_asset", major))
+    name = max(names, key=_version_key)
+    link = base + name
+    size = 0
+    try:
+        head = client.head(link)
+        if head.status_code < 400:
+            size = int(head.headers.get("Content-Length") or 0)
+    except (httpx.HTTPError, ValueError):
+        size = 0
+    return [
+        JavaAsset(
+            release_name=name,
+            os=os_name,
+            arch=arch,
+            image_type=image_type,
+            link=link,
+            name=name,
+            size=size,
+            checksum="",
+            source="mirror",
+        )
+    ]
 
 
 def fetch_assets(
@@ -62,10 +122,23 @@ def fetch_assets(
     image_type: str = "jre",
     client: httpx.Client | None = None,
 ) -> list[JavaAsset]:
-    """Query Adoptium's latest asset list (filtered by platform / image type)."""
+    """Query the official asset list (with its checksums); fall back to the mirror listing.
+
+    The official API is tried first because only it publishes a sha256. When it is unreachable - the
+    normal case on a mainland connection, where the host simply does not answer - the mirror listing is
+    used instead of failing the whole install.
+    """
     platform = platform or detect_platform()
     os_name = _OS_MAP.get(platform.os, platform.os)
     arch = _ARCH_MAP.get(platform.arch, platform.arch)
+    if client is None:
+        with httpx.Client(timeout=API_TIMEOUT, follow_redirects=True) as own_client:
+            try:
+                return fetch_assets(
+                    major, platform=platform, image_type=image_type, client=own_client
+                )
+            except JavaError:
+                return _mirror_assets(major, os_name, arch, image_type, own_client)
     url = (
         ADOPTIUM_API.format(major=major)
         + "?os="
@@ -75,9 +148,6 @@ def fetch_assets(
         + "&image_type="
         + image_type
     )
-    own = client is None
-    if own:
-        client = _new_client()
     try:
         resp = client.get(url)
         resp.raise_for_status()
@@ -86,9 +156,6 @@ def fetch_assets(
         raise JavaError(
             tr_core("java.assets_failed", describe_network_error(exc))
         ) from exc
-    finally:
-        if own:
-            client.close()
 
     assets: list[JavaAsset] = []
     for release in payload:
@@ -166,6 +233,24 @@ def delete_managed_runtime(major: int, runtime_dir: Path | None = None) -> Path:
     return match
 
 
+def _mirror_url_for(asset: JavaAsset, major: int, client: httpx.Client) -> str:
+    """The mirror URL for the same file name, when the mirror actually has it.
+
+    The official API answers with a github.com download link, and github.com is unreachable from the
+    same networks where api.adoptium.net is blocked - so the listing succeeds and the download then
+    fails. The mirror keeps the upstream file names, which also means the API's own sha256 still
+    describes the bytes.
+    """
+    base = f"{ADOPTIUM_MIRROR}{major}/{asset.image_type}/{_ARCH_MAP.get(asset.arch, asset.arch)}/"
+    base += f"{_OS_MAP.get(asset.os, asset.os)}/"
+    candidate = base + asset.name
+    try:
+        head = client.head(candidate)
+    except Exception:  # noqa: BLE001 - a probe may never abort the install
+        return ""
+    return candidate if head.status_code < 400 else ""
+
+
 def install_java(
     major: int,
     *,
@@ -193,6 +278,28 @@ def install_java(
         raise JavaError(tr_core("java.no_asset", major))
     asset = assets[0]
 
+    # The probe gets its own client: the caller may hand one in for the *download*, and closing it here
+    # would hand a closed client to the Downloader.
+    probe_client = client or httpx.Client(timeout=PROBE_TIMEOUT, follow_redirects=True)
+    try:
+        if "github.com" in asset.link or "githubusercontent" in asset.link:
+            mirrored = _mirror_url_for(asset, major, probe_client)
+            if mirrored:
+                asset = JavaAsset(
+                    release_name=asset.release_name,
+                    os=asset.os,
+                    arch=asset.arch,
+                    image_type=asset.image_type,
+                    link=mirrored,
+                    name=asset.name,
+                    size=asset.size,
+                    checksum=asset.checksum,
+                    source=asset.source + "+mirror-host" if asset.source else "mirror-host",
+                )
+    finally:
+        if client is None:
+            probe_client.close()
+
     downloads_dir = runtime_dir / "downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
     zip_path = downloads_dir / asset.name
@@ -209,6 +316,16 @@ def install_java(
     )
     if result.failed:
         raise JavaError(tr_core("java.download_failed", result.failed[0][1]))
+    if not asset.checksum:
+        # The mirror publishes no sha256. Every entry in the archive carries a CRC, so a truncated or
+        # corrupted transfer is caught here instead of producing a java.exe that cannot start.
+        try:
+            with zipfile.ZipFile(zip_path) as archive:
+                broken = archive.testzip()
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise JavaError(tr_core("java.archive_corrupt", str(exc))) from exc
+        if broken is not None:
+            raise JavaError(tr_core("java.archive_corrupt", broken))
 
     _extract_zip(zip_path, target_dir)
     java_path = target_dir / "bin" / exe_name

@@ -940,6 +940,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # Two-level navigation: a game-folder rail on the left, grouped cards on the right. The brief
         # result line and the field's "N results" wording match the resources page's search summary.
         "instances.folder.list": "游戏文件夹",
+    "instances.folder.remove.holds": "{0} 个实例",
         "instances.folder.a11y": "{}，{} 个实例",
         "instances.folder.empty": "这个文件夹里还没有实例",
         "instances.folder.download": "去下载版本",
@@ -1278,6 +1279,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tasks.title.resourcepack": "安装资源包 {}",
         "tasks.title.shaderpack": "安装光影 {}",
         "tasks.title.export": "导出 {}",
+    "tasks.title.java": "安装 Java {}",
         # 投影 / Litematica schematics (keys produced by gui/pages/instance_detail.py)
         "instances.detail.card.schematic": "投影原理图",
         "instances.detail.schematic.empty": "这个实例还没有投影文件",
@@ -2363,6 +2365,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # Two-level navigation: a game-folder rail on the left, grouped cards on the right. The brief
         # result line and the field's "N results" wording match the resources page's search summary.
         "instances.folder.list": "Game folders",
+    "instances.folder.remove.holds": "{0} instance(s)",
         "instances.folder.a11y": "{}, {} instances",
         "instances.folder.empty": "No instances in this folder yet",
         "instances.folder.download": "Download a version",
@@ -2701,6 +2704,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tasks.title.resourcepack": "Install resource pack {}",
         "tasks.title.shaderpack": "Install shader pack {}",
         "tasks.title.export": "Export {}",
+    "tasks.title.java": "Install Java {}",
         # 投影 / Litematica schematics (keys produced by gui/pages/instance_detail.py)
         "instances.detail.card.schematic": "Schematics",
         "instances.detail.schematic.empty": "This instance has no schematic files yet",

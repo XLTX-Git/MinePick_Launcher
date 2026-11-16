@@ -881,6 +881,7 @@ class InstancesPage(QWidget):
         self.folder_rail.folder_changed.connect(self._on_folder_row_changed)
         self.folder_rail.folder_activated.connect(self._on_folder_activated)
         self.folder_rail.add_requested.connect(self._on_add_folder)
+        self.folder_rail.remove_requested.connect(self._on_remove_folder)
         self.empty_folder.download_requested.connect(self._go_to_versions)
         self.detail.changed.connect(self._on_detail_changed)
         self.detail.deleted.connect(self._on_detail_deleted)
@@ -1084,6 +1085,38 @@ class InstancesPage(QWidget):
         if add_game_folder_entry(self) is None:
             return
         self.refresh()
+
+    def _on_remove_folder(self, path: str) -> None:
+        """Drop one folder from the rail: confirm, forget it, redraw. The files stay on disk."""
+        from launcher import config as config_mod
+
+        cfg, cfg_path = config_mod.load()
+        folders = cfg.effective_game_folders()
+        target = next((folder for folder in folders if str(folder.path) == path), None)
+        if target is None:
+            set_app_status(self, tr("settings.folder.missing"), "warning")
+            return
+        if len(folders) <= 1:
+            set_app_status(self, tr("settings.folder.keep_one"), "warning")
+            return
+        count = folder_instance_count(path)
+        if not inwindow_dialog.question(
+            self,
+            tr("settings.folder.remove.title"),
+            tr(
+                "settings.folder.remove.message",
+                target.display_name(),
+                tr("instances.folder.remove.holds", count),
+            ),
+        ):
+            return
+        if not cfg.remove_game_folder(path):
+            set_app_status(self, tr("settings.folder.keep_one"), "warning")
+            return
+        config_mod.save(cfg, cfg_path)
+        self.refresh()
+        self._notify_settings_changed()
+        set_app_status(self, tr("settings.folder.removed", target.display_name()))
 
     def _go_to_versions(self) -> None:
         """The empty folder's 去下载版本: open the versions page in the main rail."""

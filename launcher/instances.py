@@ -355,11 +355,35 @@ def _is_instance_folder(folder: Path) -> bool:
         return False
 
 
+def instances_root(path: Path) -> Path:
+    """The folder that actually holds instance folders for a path the user picked.
+
+    Three shapes are legitimate, and only the first one used to work:
+
+    * a game directory - ``<path>/versions/<instance>/`` (what the picker asked for);
+    * the ``versions`` folder itself - someone points the launcher at it directly;
+    * a plain container whose children are instance folders (a hand-organised library).
+
+    The second and third mean the game directory is the parent: the versions page and the launch path
+    still expect ``<game dir>/versions/...``, so the answer has to be the versions folder itself.
+    """
+    versions = path / "versions"
+    if versions.is_dir():
+        return versions
+    try:
+        children = [entry for entry in path.iterdir() if entry.is_dir()]
+    except OSError:
+        return versions
+    if any(_is_instance_folder(child) for child in children):
+        return path
+    return versions
+
+
 def list_instances(game_dir: Path | None = None) -> dict[str, Instance]:
     """Every installed version folder, keyed by instance id (== version id)."""
     root = game_dir or _game_dir()
     out: dict[str, Instance] = {}
-    versions = root / "versions"
+    versions = instances_root(root)
     if not versions.is_dir():
         return out
     for entry in sorted(versions.iterdir()):

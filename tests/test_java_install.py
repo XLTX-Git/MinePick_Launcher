@@ -78,6 +78,10 @@ def test_fetch_assets():
     assert assets[0].link.startswith("https://github.com")
 
 
+def _timeout(request):
+    raise httpx.ConnectTimeout("blocked")
+
+
 @respx.mock
 def test_install_java(ws_tmp):
     zip_bytes = _make_zip()
@@ -85,6 +89,10 @@ def test_install_java(ws_tmp):
         "https://api.adoptium.net/v3/assets/latest/21/hotspot",
         params={"os": "windows", "architecture": "x64", "image_type": "jre"},
     ).mock(return_value=httpx.Response(200, json=_assets_raw(len(zip_bytes))))
+    respx.head(
+        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/"
+        "OpenJDK21U-jre_x64_windows_hotspot_21.0.5_11.zip"
+    ).mock(return_value=httpx.Response(404))
     respx.get("https://github.com/adoptium/x.zip").mock(
         return_value=httpx.Response(200, content=zip_bytes)
     )
@@ -106,3 +114,64 @@ def test_install_java_existing_returns_cached(ws_tmp):
     runtime = install_java(21, runtime_dir=ws_tmp / "runtime", platform=WIN)
     assert runtime.major == 21
     assert runtime.provider == "managed"
+
+@respx.mock
+def test_fetch_assets_falls_back_to_the_mirror_listing():
+    """A blocked API must not fail the install: the mirror directory page lists the same files."""
+    respx.get(
+        "https://api.adoptium.net/v3/assets/latest/21/hotspot",
+        params={"os": "windows", "architecture": "x64", "image_type": "jre"},
+    ).mock(side_effect=_timeout)
+    listing = (
+        '<a href="OpenJDK21U-jre_x64_windows_hotspot_21.0.11_10.zip">old</a>'
+        '<a href="OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip">new</a>'
+    )
+    respx.get("https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/").mock(
+        return_value=httpx.Response(200, text=listing)
+    )
+    respx.head(
+        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/"
+        "OpenJDK21U-jre_x64_windows_hotspot_21.0.13_9.zip"
+    ).mock(return_value=httpx.Response(200, headers={"Content-Length": "12345"}))
+
+    assets = fetch_assets(21, platform=WIN)
+    assert len(assets) == 1
+    assert assets[0].source == "mirror"
+    assert assets[0].name.endswith("21.0.13_9.zip")  # newest build, not the first line
+    assert assets[0].checksum == ""
+    assert assets[0].size == 12345
+
+
+@respx.mock
+def test_install_java_downloads_from_the_mirror_host_when_github_is_the_link(ws_tmp):
+    """The API answers with a github.com link; on a blocked network the bytes have to come elsewhere."""
+    zip_bytes = _make_zip()
+    respx.get(
+        "https://api.adoptium.net/v3/assets/latest/21/hotspot",
+        params={"os": "windows", "architecture": "x64", "image_type": "jre"},
+    ).mock(return_value=httpx.Response(200, json=_assets_raw(len(zip_bytes))))
+    mirrored = (
+        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/"
+        "OpenJDK21U-jre_x64_windows_hotspot_21.0.5_11.zip"
+    )
+    respx.head(mirrored).mock(return_value=httpx.Response(200))
+    respx.get(mirrored).mock(return_value=httpx.Response(200, content=zip_bytes))
+
+    runtime = install_java(
+        21, runtime_dir=ws_tmp / "runtime", platform=WIN, probe_dir=ws_tmp / "probe"
+    )
+    assert runtime.major == 21
+    assert (ws_tmp / "runtime" / "java-21" / "bin" / "java.exe").exists()
+
+def test_a_java_install_has_a_task_title_in_every_language() -> None:
+    """A task row reads 「安装 Java 21」 - in every shipped language, not only Chinese."""
+    from gui import i18n
+    from gui.tasks import KIND_TITLE_KEYS
+
+    assert KIND_TITLE_KEYS["java"] == "tasks.title.java"
+    for code, _name in i18n.UI_LANGUAGES:
+        i18n.set_language(code)
+        text = i18n.tr("tasks.title.java", "21")
+        assert "21" in text, f"{code}: {text!r} lost the version placeholder"
+        assert "tasks.title.java" not in text, f"{code}: key not translated"
+    i18n.set_language("zh_cn")

@@ -399,3 +399,38 @@ def test_our_sidecar_keeps_a_folder_visible_without_a_profile(ws_tmp):
     found = list_instances(game)
     assert list(found) == ["lost"]
     assert found["lost"].note == "红石测试"
+
+def test_instances_are_found_when_the_folder_is_the_versions_dir(ws_tmp) -> None:
+    """A picker pointed at `versions/` (or at a plain container) must still see its instances."""
+    from launcher.instances import list_instances
+
+    versions = ws_tmp / "versions"
+    instance = versions / "1.21.4"
+    instance.mkdir(parents=True)
+    (instance / "1.21.4.json").write_text('{"id": "1.21.4"}', encoding="utf-8")
+
+    by_versions_dir = list_instances(versions)
+    assert list(by_versions_dir) == ["1.21.4"]
+
+    container = ws_tmp / "my-library"
+    other = container / "1.20.1"
+    other.mkdir(parents=True)
+    (other / "1.20.1.json").write_text('{"id": "1.20.1"}', encoding="utf-8")
+
+    by_container = list_instances(container)
+    assert list(by_container) == ["1.20.1"]
+
+
+def test_adding_a_versions_folder_registers_its_parent(ws_tmp) -> None:
+    """`add_game_folder` stores a game directory, not whatever folder the dialog returned."""
+    from launcher.config import LauncherConfig
+
+    versions = ws_tmp / ".minecraft" / "versions"
+    instance = versions / "1.21.4"
+    instance.mkdir(parents=True)
+    (instance / "1.21.4.json").write_text('{"id": "1.21.4"}', encoding="utf-8")
+
+    cfg = LauncherConfig()
+    folder, created = cfg.add_game_folder(versions)
+    assert created is True
+    assert folder.path == ws_tmp / ".minecraft"

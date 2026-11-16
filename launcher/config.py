@@ -579,6 +579,14 @@ class LauncherConfig(BaseModel):
             if _folder_key(folder.path) == _folder_key(text):
                 return folder, False
         target = Path(text)
+        # The picker may be handed a `versions` folder, or a plain folder whose children are instance
+        # folders - both mean the game directory is the parent. Storing the path as picked made those
+        # instances invisible: every reader looks for `<game dir>/versions/...`.
+        from launcher.instances import instances_root
+
+        resolved = instances_root(target)
+        if resolved != target / "versions" and target.parent != target:
+            target = target.parent
         folder = GameFolder(path=target, name=(name or "").strip() or folder_display_name(target))
         folders.append(folder)
         # Adding never switches the current folder: the user picks it with 「设为当前」.
