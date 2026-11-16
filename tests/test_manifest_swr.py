@@ -214,7 +214,7 @@ def test_the_versions_list_updates_without_moving_the_scroll(page, app) -> None:
 
     list_widget = page.list
     # Four fold headers plus the 25 release rows the fixture opened.
-    assert list_widget.count() == 29
+    assert list_widget.count() == 29 + page.shortcut_count()
     page.list.setCurrentRow(7)
     app.processEvents()
     scroll_range = list_widget.verticalScrollBar().maximum()
@@ -243,6 +243,6 @@ def test_the_versions_list_updates_without_moving_the_scroll(page, app) -> None:
     # The new version is a snapshot and the release fold is the only one open, so the built rows do
     # not change; the manifest total does, which is what proves the refresh reached the page.
     assert page.group_total("snapshot") == 1
-    assert list_widget.count() == 29
+    assert list_widget.count() == 29 + page.shortcut_count()
     assert page._selected_id() == selected
     assert list_widget.verticalScrollBar().value() == 40

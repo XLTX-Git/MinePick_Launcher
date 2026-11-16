@@ -68,14 +68,17 @@ def test_display_loader_name():
 
 @respx.mock
 def test_fabric_versions():
-    respx.get("https://meta.fabricmc.net/v2/versions/loader").mock(
-        return_value=httpx.Response(200, json=FABRIC_LOADERS)
+    # The per-game endpoint: Fabric marks only the newest loader `stable`, so the global list filtered on
+    # that flag left a picker with exactly one build.
+    respx.get("https://meta.fabricmc.net/v2/versions/loader/1.20.1").mock(
+        return_value=httpx.Response(200, json=[{"loader": entry} for entry in FABRIC_LOADERS])
     )
     respx.get("https://meta.fabricmc.net/v2/versions/installer").mock(
         return_value=httpx.Response(200, json=FABRIC_INSTALLERS)
     )
     versions = list_loader_versions("fabric", "1.20.1")
-    assert [v.version for v in versions] == ["0.19.3", "0.19.2"]  # stable only, newest first
+    assert [v.version for v in versions] == ["0.19.3", "0.19.2", "0.15.11"]  # every build, newest first
+    assert [v.stable for v in versions] == [True, True, False]  # the source's own flag is kept
     assert all(v.installer_url.endswith(".jar") for v in versions)
 
 

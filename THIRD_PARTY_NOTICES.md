@@ -95,7 +95,7 @@ The names and logos of the mod loaders (Fabric, Forge, NeoForge, Quilt) belong t
 - **BMCLAPI**
   - Minecraft resource mirror service (mainland-China acceleration)
   - Minecraft 资源镜像服务（国内加速）
-  - <https://github.com/bangbang93/BMCLAPI>
+  - <https://github.com/bangbang93/openbmclapi>
 - **Fabric**
   - the Fabric loader and its metadata
   - Fabric 加载器与其元数据

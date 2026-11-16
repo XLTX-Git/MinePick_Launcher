@@ -75,28 +75,30 @@ def _global_geometry(widget, window) -> tuple[int, int, int, int]:
     return point.x(), point.y(), widget.width(), widget.height()
 
 
-def test_source_and_loader_share_width_and_left_edge(app, monkeypatch) -> None:
+def test_source_and_game_version_share_width_and_left_edge(app, monkeypatch) -> None:
+    """The two fields of the first column: the source dropdown and the game version."""
     window, page = _page(app, monkeypatch)
     try:
         tab = page.mods_tab
-        assert page.source_combo.width() == tab.loader_combo.width(), (
-            f"source {page.source_combo.width()}px vs loader {tab.loader_combo.width()}px"
+        assert page.source_combo.width() == tab.game_version_edit.width(), (
+            f"source {page.source_combo.width()}px vs version {tab.game_version_edit.width()}px"
         )
-        assert _global_x(page.source_combo, window) == _global_x(tab.loader_combo, window)
+        assert _global_x(page.source_combo, window) == _global_x(tab.game_version_edit, window)
     finally:
         window.close()
         page.deleteLater()
         app.processEvents()
 
 
-def test_sort_and_game_version_share_width_and_left_edge(app, monkeypatch) -> None:
+def test_sort_and_loader_share_width_and_left_edge(app, monkeypatch) -> None:
+    """The two fields of the second column: the sort dropdown and the loader."""
     window, page = _page(app, monkeypatch)
     try:
         tab = page.mods_tab
-        assert tab.sort_combo.width() == tab.game_version_edit.width(), (
-            f"sort {tab.sort_combo.width()}px vs game version {tab.game_version_edit.width()}px"
+        assert tab.sort_combo.width() == tab.loader_combo.width(), (
+            f"sort {tab.sort_combo.width()}px vs loader {tab.loader_combo.width()}px"
         )
-        assert _global_x(tab.sort_combo, window) == _global_x(tab.game_version_edit, window)
+        assert _global_x(tab.sort_combo, window) == _global_x(tab.loader_combo, window)
         # The old row let the game-version field eat the rest of the row (1262px at 1500px wide).
         assert tab.game_version_edit.width() < window.width() // 3
     finally:

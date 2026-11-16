@@ -1402,7 +1402,7 @@ def test_versions_page_categories_folds_and_full_list(app, monkeypatch, ws_tmp):
         assert page.latest_cards["snapshot"].isEnabled()
         assert "发布于" in page.latest_cards["release"]._meta_text()
         # Four fold headers, no rows built while every fold is closed.
-        assert page.list.count() == 4
+        assert page.list.count() == 4 + page.shortcut_count()
         assert page.rows == []
         assert page.expanded_groups() == []
         # The category chips are gone with the flat list; the folds carry the categories now.
@@ -1412,7 +1412,7 @@ def test_versions_page_categories_folds_and_full_list(app, monkeypatch, ws_tmp):
         page.expand_group("release")
         app.processEvents()
         assert len(page.rows) == 50
-        assert page.list.count() == 4 + 50 + 1  # headers + rows + "load more"
+        assert page.list.count() == 4 + page.shortcut_count() + 50 + 1  # headers, shortcuts, rows, "load more"
         # every version is still a dense card row, and its name has room for 20 English characters
         assert page.rows[0].text_width() >= page.fontMetrics().horizontalAdvance("W" * 20)
         # the type tag shows the Chinese name per category
@@ -1451,7 +1451,7 @@ def test_versions_page_categories_folds_and_full_list(app, monkeypatch, ws_tmp):
         page.search_edit.clear()
         page._refilter()
         app.processEvents()
-        assert page.list.count() == 4 + 100 + 3 + 1
+        assert page.list.count() == 4 + page.shortcut_count() + 100 + 3 + 1
         assert page.result_count.isVisible() is False
         assert page.group_counts()["release"] == 550
     finally:

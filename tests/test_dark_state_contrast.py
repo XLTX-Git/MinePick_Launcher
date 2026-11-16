@@ -56,7 +56,7 @@ LIGHT_SHEET = RESOURCES / "style_light.qss"
 #: The pinned digest of gui/resources/style_light.qss. It is a witness, not a convenience: a
 #: stylesheet edit is the one way to change the light theme without touching a token value, so every
 #: deliberate light-sheet change must update this digest in the same commit.
-LIGHT_SHEET_SHA256 = "24b3dbfe1b5677aa96568871fa3f532af1bc7590f184b46c2676aac0fcbb8ee5"
+LIGHT_SHEET_SHA256 = "10c3b985af6edd47e7802b0ffe5d5e1dda2343a6c05845e7124c2d5809ab1870"
 
 #: A card's fill has to be at least this far from the surface behind it to read as a separate sheet.
 CARD_FLOOR = 1.8

@@ -261,7 +261,7 @@ def test_e2e_version_delete_via_instances_page(app, monkeypatch, ws_tmp):
         )
         # The page opens with every fold closed; this flow drives a row, so open its fold.
         page.expand_group("release")
-        assert page.list.count() == 4 + 1  # four fold headers + the one release row
+        assert page.list.count() == 4 + page.shortcut_count() + 1  # four fold headers + the one release row
         assert page.status_of("1.20.1") == "已安装"
         page.list.setCurrentRow(page._row_index("1.20.1"))
         # 打开实例: the versions page only jumps, the instances page owns the entry
