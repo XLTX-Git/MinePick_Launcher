@@ -2598,9 +2598,14 @@ class InstanceDetail(QWidget):
         viewport = self.content_scroll.viewport()
         if viewport is None or self.stack is None:
             return
-        # The page's own hint, never a measured "painted bottom": sizing below the layout's minimum
-        # compresses every row of the page into overlapping text (the export form did exactly that).
-        height = max(viewport.height(), self.stack.sizeHint().height())
+        page = self.stack.currentWidget()
+        wanted = self.stack.sizeHint().height()
+        if page is not None and page.layout() is not None and page.layout().hasHeightForWidth():
+            # The height at the width it is actually drawn at. ``sizeHint()`` answers for an ideal width
+            # instead, and a card full of word-wrapped labels over-reports there by ~150px on the export
+            # tab - which became exactly that much scrollable blank space below the card.
+            wanted = page.layout().heightForWidth(viewport.width())
+        height = max(viewport.height(), wanted)
         size = QSize(viewport.width(), height)
         if self.stack.size() != size:
             self.stack.resize(size)
