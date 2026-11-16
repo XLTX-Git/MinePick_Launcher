@@ -271,7 +271,10 @@ def install_java(
         probed = probe_java_major(existing, probe_dir=probe_dir)
         if probed is not None:
             return JavaRuntime(path=existing, major=probed.major, provider="managed", version=probed.version)
-        return JavaRuntime(path=existing, major=major, provider="managed")
+        # The directory exists but its java does not run (a half-extracted or corrupted install). It used
+        # to be handed back as a working runtime, which then failed at launch with no explanation. Drop
+        # it and install again.
+        shutil.rmtree(target_dir, ignore_errors=True)
 
     assets = fetch_assets(major, platform=platform, client=client)
     if not assets:
@@ -330,8 +333,12 @@ def install_java(
     _extract_zip(zip_path, target_dir)
     java_path = target_dir / "bin" / exe_name
     if not java_path.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
         raise JavaError(tr_core("java.extract_failed", str(java_path)))
     probed = probe_java_major(java_path, probe_dir=probe_dir)
     if probed is None:
-        return JavaRuntime(path=java_path, major=major, provider="managed")
+        # Installed but unable to start: remove it so the next attempt is a clean download instead of a
+        # runtime the launcher keeps offering.
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise JavaError(tr_core("java.probe_failed", str(java_path)))
     return JavaRuntime(path=java_path, major=probed.major, provider="managed", version=probed.version)

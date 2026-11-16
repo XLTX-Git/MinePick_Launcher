@@ -83,7 +83,14 @@ def _timeout(request):
 
 
 @respx.mock
-def test_install_java(ws_tmp):
+def test_install_java(ws_tmp, monkeypatch):
+    monkeypatch.setattr(
+        "launcher.java.install.probe_java_major",
+        lambda *a, **k: __import__("launcher.java.locate", fromlist=["JavaRuntime"]).JavaRuntime(
+            path=ws_tmp / "runtime" / "java-21" / "bin" / "java.exe", major=21, provider="managed"
+        ),
+    )
+
     zip_bytes = _make_zip()
     respx.get(
         "https://api.adoptium.net/v3/assets/latest/21/hotspot",
@@ -106,11 +113,17 @@ def test_install_java(ws_tmp):
 
 
 @respx.mock
-def test_install_java_existing_returns_cached(ws_tmp):
-    # target already exists: no network request
+def test_install_java_existing_returns_cached(ws_tmp, monkeypatch):
+    # target already exists and starts: no network request
     target = ws_tmp / "runtime" / "java-21" / "bin"
     target.mkdir(parents=True)
     (target / "java.exe").write_text("stub", encoding="utf-8")
+    from launcher.java.locate import JavaRuntime
+
+    monkeypatch.setattr(
+        "launcher.java.install.probe_java_major",
+        lambda *a, **k: JavaRuntime(path=target / "java.exe", major=21, provider="managed"),
+    )
     runtime = install_java(21, runtime_dir=ws_tmp / "runtime", platform=WIN)
     assert runtime.major == 21
     assert runtime.provider == "managed"
@@ -143,7 +156,14 @@ def test_fetch_assets_falls_back_to_the_mirror_listing():
 
 
 @respx.mock
-def test_install_java_downloads_from_the_mirror_host_when_github_is_the_link(ws_tmp):
+def test_install_java_downloads_from_the_mirror_host_when_github_is_the_link(ws_tmp, monkeypatch):
+    monkeypatch.setattr(
+        "launcher.java.install.probe_java_major",
+        lambda *a, **k: __import__("launcher.java.locate", fromlist=["JavaRuntime"]).JavaRuntime(
+            path=ws_tmp / "runtime" / "java-21" / "bin" / "java.exe", major=21, provider="managed"
+        ),
+    )
+
     """The API answers with a github.com link; on a blocked network the bytes have to come elsewhere."""
     zip_bytes = _make_zip()
     respx.get(
@@ -175,3 +195,63 @@ def test_a_java_install_has_a_task_title_in_every_language() -> None:
         assert "21" in text, f"{code}: {text!r} lost the version placeholder"
         assert "tasks.title.java" not in text, f"{code}: key not translated"
     i18n.set_language("zh_cn")
+
+@respx.mock
+def test_a_broken_install_is_replaced_instead_of_handed_back(ws_tmp, monkeypatch):
+    """A directory whose java.exe does not run is not a working runtime; it gets reinstalled."""
+    zip_bytes = _make_zip()
+    target = ws_tmp / "runtime" / "java-21" / "bin"
+    target.mkdir(parents=True)
+    (target / "java.exe").write_text("stale", encoding="utf-8")
+
+    respx.get(
+        "https://api.adoptium.net/v3/assets/latest/21/hotspot",
+        params={"os": "windows", "architecture": "x64", "image_type": "jre"},
+    ).mock(return_value=httpx.Response(200, json=_assets_raw(len(zip_bytes))))
+    respx.head(
+        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/"
+        "OpenJDK21U-jre_x64_windows_hotspot_21.0.5_11.zip"
+    ).mock(return_value=httpx.Response(404))
+    respx.get("https://github.com/adoptium/x.zip").mock(
+        return_value=httpx.Response(200, content=zip_bytes)
+    )
+    from launcher.java.locate import JavaRuntime
+
+    calls = {"n": 0}
+
+    def flaky_probe(path, probe_dir=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None  # the stale binary does not start
+        return JavaRuntime(path=path, major=21, provider="managed")
+
+    monkeypatch.setattr("launcher.java.install.probe_java_major", flaky_probe)
+    runtime = install_java(
+        21, runtime_dir=ws_tmp / "runtime", platform=WIN, probe_dir=ws_tmp / "probe"
+    )
+    assert runtime.major == 21
+    assert (ws_tmp / "runtime" / "java-21" / "bin" / "java.exe").read_text(encoding="utf-8") != "stale"
+
+
+@respx.mock
+def test_an_install_that_cannot_start_is_removed_and_reported(ws_tmp, monkeypatch):
+    zip_bytes = _make_zip()
+    respx.get(
+        "https://api.adoptium.net/v3/assets/latest/21/hotspot",
+        params={"os": "windows", "architecture": "x64", "image_type": "jre"},
+    ).mock(return_value=httpx.Response(200, json=_assets_raw(len(zip_bytes))))
+    respx.head(
+        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jre/x64/windows/"
+        "OpenJDK21U-jre_x64_windows_hotspot_21.0.5_11.zip"
+    ).mock(return_value=httpx.Response(404))
+    respx.get("https://github.com/adoptium/x.zip").mock(
+        return_value=httpx.Response(200, content=zip_bytes)
+    )
+    monkeypatch.setattr("launcher.java.install.probe_java_major", lambda *a, **k: None)
+    import pytest
+
+    from launcher.java.install import JavaError
+
+    with pytest.raises(JavaError):
+        install_java(21, runtime_dir=ws_tmp / "runtime", platform=WIN, probe_dir=ws_tmp / "probe")
+    assert not (ws_tmp / "runtime" / "java-21").exists()
