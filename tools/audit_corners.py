@@ -162,7 +162,9 @@ def _near(left, right, tolerance: int = 12) -> bool:
 #: above). Anything not listed here still fails the audit.
 _KNOWN_ARTIFACTS: dict[tuple[str, str, str, str], str] = {
     ("dark", "_InstanceCard", "BL,BR", "573x88"): "card corner blends its own hover border",
-    ("dark", "QFrame", "BL,BR,TL,TR", "758x53"): "banner fill and border blend at its corners",
+    # 758x53 -> 758x49: the banner's vertical padding went from 8 to 6px; the same corner blend, at the
+    # height it now has.
+    ("dark", "QFrame", "BL,BR,TL,TR", "758x49"): "banner fill and border blend at its corners",
     ("dark", "QLabel", "BL,BR", "216x28"): "label on a card: corner blends the two fills",
 }
 
