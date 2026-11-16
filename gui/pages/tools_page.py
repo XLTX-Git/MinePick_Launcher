@@ -1193,6 +1193,9 @@ class ToolsPage(QWidget):
         state = self._session.state()
         page = self._pages.get(state, self._failed_page)
         self.state_stack.setCurrentWidget(page)
+        # 停用联机功能 deletes a downloaded payload, so with nothing downloaded there is nothing for it to
+        # do - and offering it anyway only produced the "没有已下载的联机组件，无需删除" refusal.
+        self.disable_link.setVisible(state is not LinkState.NOT_DOWNLOADED)
         if state is LinkState.HOST_READY:
             self._apply_ready()
         elif state is LinkState.HOST_WAITING:

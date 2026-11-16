@@ -1444,3 +1444,17 @@ def test_the_measure_button_has_room_for_its_own_text(app) -> None:
         assert page.channels_button.isChecked() is False
     finally:
         _close(app, page)
+
+def test_disable_link_is_hidden_when_nothing_is_downloaded(app) -> None:
+    """A control that can only answer "there is nothing to delete" should not be offered."""
+    page = _show(app, FakeLinkSession(state=LinkState.NOT_DOWNLOADED))
+    try:
+        assert page.disable_link.isVisible() is False
+    finally:
+        _close(app, page)
+
+    page = _show(app, FakeLinkSession(state=LinkState.IDLE))
+    try:
+        assert page.disable_link.isVisible() is True
+    finally:
+        _close(app, page)
