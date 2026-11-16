@@ -55,16 +55,19 @@ def _doc() -> str:
 
 
 def test_agents_doc_exists_and_names_the_commands() -> None:
+    """The commands are written with a ``$py`` prefix, so the fragments matter, not the full line."""
     text = _doc()
-    for command in (
-        "python -m gui",
+    for fragment in (
+        "-m gui",
         "ruff check launcher gui tests",
-        "python tools/ui_regression.py --quick",
-        "pytest -q",
-        "python tools/check_readme_sync.py",
-        "pyinstaller build_exe.spec",
+        "ui_regression.py --quick",
+        "ui_regression.py --list-checks",
+        "-m pytest -q",
+        "check_readme_sync.py",
+        "PyInstaller build_exe.spec",
+        "sign_exe.ps1",
     ):
-        assert command in text, f"AGENTS.md does not mention {command!r}"
+        assert fragment in text, f"AGENTS.md does not mention {fragment!r}"
 
 
 def test_every_repository_path_it_mentions_exists() -> None:
@@ -99,3 +102,14 @@ def test_the_source_archive_ships_the_agent_notes() -> None:
     assert spec.loader is not None
     spec.loader.exec_module(module)
     assert "AGENTS.md" in set(module.INCLUDE_FILES)
+
+def test_it_points_at_the_process_manual_and_its_hard_rules() -> None:
+    """The SOP stays the single source for process; the agent notes must not fork it."""
+    text = _doc()
+    assert "MinePick_开发标准流程.md" in text, "the SOP is not referenced"
+    assert "§8" in text and "§11" in text, "the new-pitfall rule does not point at SOP sections"
+    # The checks are enumerated by the script; naming them here is the drift the SOP forbids.
+    for enumerated in ("corner audit (dark)", "GPL headers"):
+        assert enumerated not in text, f"AGENTS.md enumerates the gate's checks: {enumerated!r}"
+    # The i18n fallback rule is the one that silently breaks a language.
+    assert "en_us" in text and "fallback is `en_us`".lower() in text.lower()
