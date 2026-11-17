@@ -963,7 +963,17 @@ class LaunchPage(QWidget):
         # A clean exit is not a crash. The game writes its logs either way, so "some log exists" used to
         # be enough for the diagnosis dialog to open over a normal quit - which is why closing the game
         # window looked like the launcher calling it a crash.
-        clean = code in (0, None) and not crashes
+        #
+        # The exit code alone is not enough either: Minecraft can return non-zero when it is closed from
+        # the window button or from 退出游戏 on some systems, while the log ends with its own shutdown
+        # line. A run with no new crash report whose log says it stopped is a normal quit, whatever the
+        # code says.
+        stopped_cleanly = any(
+            "Stopping!" in line or "Stopping server" in line or "Stopping worker threads" in line
+            for line in tail
+        )
+        clean = not crashes and (code in (0, None) or stopped_cleanly)
+        logger.info("game finished: exit=%s crashes=%d clean=%s", code, len(crashes), clean)
         if not clean:
             self._diagnose(code, tail, started)
 

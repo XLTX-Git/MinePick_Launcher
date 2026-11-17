@@ -430,3 +430,32 @@ def test_a_crash_still_opens_the_dialog(app, ws_tmp):
         assert shown, "a non-zero exit no longer diagnoses"
     finally:
         page.deleteLater()
+
+def test_a_non_zero_exit_with_a_shutdown_line_is_a_normal_quit(app, ws_tmp):
+    """Minecraft can return non-zero when it is closed from its own window button.
+
+    The log ends with its own shutdown line in that case, so the exit code alone must not decide.
+    """
+    from gui.pages.launch_page import LaunchPage
+
+    class _Run:
+        exit_code = 1
+        cwd = ws_tmp
+
+        def __init__(self, tail):
+            self.tail = tail
+
+    page = LaunchPage()
+    try:
+        shown: list[tuple] = []
+        page._diagnose = lambda *args, **kwargs: shown.append(args)
+        page._game_closing = False
+
+        page._on_game_exit((_Run(["[Render thread/INFO]: crash"]), [], 0.0))
+        assert shown, "a failure without a shutdown line must still diagnose"
+
+        shown.clear()
+        page._on_game_exit((_Run(["[Render thread/INFO]: Stopping!"]), [], 0.0))
+        assert not shown, "a logged shutdown was still reported as a crash"
+    finally:
+        page.deleteLater()
