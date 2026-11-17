@@ -8294,10 +8294,14 @@ class InstanceDetail(QWidget):
             tail=tail,
             instance=resolved,
         )
+        from launcher.launch.runner import save_captured_output
+
+        captured = save_captured_output(resolved.launch_dir, tail)
+        game_log = resolved.launch_dir / "logs" / "latest.log"
         dialog = diagnose_after_exit(
             self.window(),
             context,
-            log_path=resolved.launch_dir / "logs" / "latest.log",
+            log_path=captured or (game_log if game_log.exists() else None),
         )
         if dialog is not None:
             # Remember it inside the instance so the diagnostics tab can show it later

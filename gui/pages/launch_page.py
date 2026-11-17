@@ -971,7 +971,7 @@ class LaunchPage(QWidget):
         if pending is None:
             return
         prepared, resolved = pending
-        from gui.dialogs.crash_dialog import context_for_launch, diagnose_after_exit
+        from gui.dialogs.crash_dialog import context_for_launch
 
         context = context_for_launch(
             version_id=prepared.version.id,
@@ -982,16 +982,24 @@ class LaunchPage(QWidget):
             tail=tail,
             instance=resolved,
         )
-        # Keep the dialog: its buttons are bound methods, and a second crash must replace the first
-        # overlay instead of stacking another card on top of it.
+        # The captured output is the only evidence for a failure that never reached the game's own log
+        # (a JVM or main-class error prints two lines and dies). Persist it and point 查看日志 at it;
+        # the game's latest.log is still preferred when the game actually wrote one.
+        from launcher.launch.runner import save_captured_output
+
+        captured = save_captured_output(resolved.launch_dir, tail)
+        game_log = resolved.launch_dir / "logs" / "latest.log"
+        self._show_crash_dialog(context, log_path=captured or (game_log if game_log.exists() else None))
+
+    def _show_crash_dialog(self, context, *, log_path=None):
+        """Show one crash card, replacing any card already on screen."""
+        from gui.dialogs.crash_dialog import diagnose_after_exit
+
         previous = getattr(self, "_crash_dialog", None)
         if previous is not None:
             previous.close()
-        self._crash_dialog = diagnose_after_exit(
-            self.window(),
-            context,
-            log_path=resolved.launch_dir / "logs" / "latest.log",
-        )
+        self._crash_dialog = diagnose_after_exit(self.window(), context, log_path=log_path)
+        return self._crash_dialog
 
     def _on_launch_error(self, message: str) -> None:
         text = tr("launch.msg.fail", message)
@@ -1004,13 +1012,12 @@ class LaunchPage(QWidget):
         # has nothing to say.
         shown = None
         if cfg.auto_crash_analysis:
-            from gui.dialogs.crash_dialog import context_for_launch, diagnose_after_exit
+            from gui.dialogs.crash_dialog import context_for_launch
 
             game_dir = cfg.game_dir or paths.default_game_dir()
             context = context_for_launch(
                 version_id="", game_dir=game_dir, error_text=text, memory_gb=cfg.memory_gb
             )
-            shown = diagnose_after_exit(self.window(), context)
-        self._crash_dialog = shown
+            shown = self._show_crash_dialog(context)
         if shown is None:
             show_fatal(self, text)

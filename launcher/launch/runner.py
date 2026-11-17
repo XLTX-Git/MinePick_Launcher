@@ -131,6 +131,30 @@ def run_process(
         return finish(130)
 
 
+#: File name of the persisted output tail, written next to the instance's own logs.
+CAPTURED_LOG_NAME = "game-stdout.log"
+
+
+def save_captured_output(launch_dir: Path, tail: list[str]) -> Path | None:
+    """Persist the captured stdout/stderr tail so the diagnosis dialog can open it.
+
+    The tail used to live only in memory, so a crash gave the user a card that said "no cause found",
+    disabled its 查看日志 button (the path did not exist) and left nothing behind to look at once the
+    launcher was restarted. Writing it next to the game's own logs costs one small file per launch and
+    turns the dead end into something a person - or the next bug report - can read.
+    """
+    if not tail:
+        return None
+    try:
+        logs = Path(launch_dir) / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        target = logs / CAPTURED_LOG_NAME
+        target.write_text("\n".join(tail) + "\n", encoding="utf-8")
+        return target
+    except OSError:
+        return None
+
+
 def find_new_crash_reports(game_dir: Path, since: float) -> list[Path]:
     """Return crash reports generated after `since`."""
     reports_dir = game_dir / "crash-reports"

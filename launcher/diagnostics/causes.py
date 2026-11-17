@@ -59,6 +59,8 @@ CAUSES: dict[str, str] = {
     "launch_download": "diagnosis.launch.download.cause",
     "launch_file_access": "diagnosis.launch.file_access.cause",
     "launch_heap_args": "diagnosis.launch.heap_args.cause",
+    "launch_jvm_args": "diagnosis.launch.jvm_args.cause",
+    "crash_main_class": "diagnosis.crash.main_class.cause",
     "launch_java_missing": "diagnosis.launch.java_missing.cause",
     "launch_offline_gate": "diagnosis.launch.offline_gate.cause",
     "launch_version_json": "diagnosis.launch.version_json.cause",

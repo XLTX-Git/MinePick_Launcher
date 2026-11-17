@@ -886,7 +886,7 @@
           }
         ]
       },
-      "cause": "diagnosis.crash.jdk_not_jre.cause",
+      "cause": "crash_main_class",
       "advice": [
         "diagnosis.advice.java"
       ],
@@ -1125,6 +1125,48 @@
           "topic": "content"
         }
       ]
+    },
+    {
+      "code": "MPL-Launch-0010",
+      "phase": "launcher",
+      "source": "game",
+      "match": {
+        "any": [
+          {
+            "regex": "(?i)Unrecognized VM option"
+          },
+          {
+            "regex": "(?i)Could not create the Java Virtual Machine"
+          }
+        ]
+      },
+      "cause": "launch_jvm_args",
+      "advice": [
+        "diagnosis.launch.jvm_args.advice"
+      ],
+      "confidence": "high",
+      "stop": true
+    },
+    {
+      "code": "MPL-Crash-0135",
+      "phase": "primary",
+      "source": "game",
+      "match": {
+        "any": [
+          {
+            "regex": "(?i)Could not find or load main class"
+          },
+          {
+            "regex": "(?i)Error: A JNI error has occurred"
+          }
+        ]
+      },
+      "cause": "crash_main_class",
+      "advice": [
+        "diagnosis.advice.loader"
+      ],
+      "confidence": "medium",
+      "stop": true
     }
   ]
 }

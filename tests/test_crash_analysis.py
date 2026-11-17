@@ -526,3 +526,48 @@ def test_original_samples_are_marked_too() -> None:
         assert first == SYNTHETIC_MARKER, path.name
         marked += 1
     assert marked >= 9
+
+def _diagnose_captured(ws_tmp, captured: list[str]):
+    from launcher.diagnostics.context import DiagnosisContext
+    from launcher.diagnostics.engine import diagnose
+
+    game = ws_tmp / "mc_captured"
+    game.mkdir(parents=True, exist_ok=True)
+    context = DiagnosisContext(
+        version_id="1.21.1",
+        game_dir=game,
+        launch_dir=game,
+        instance=None,
+        exit_code=1,
+        launch_started_at=0.0,
+        captured_output=captured,
+        error_text="",
+    )
+    return diagnose(context)
+
+
+def test_a_jvm_that_refuses_our_arguments_is_named(ws_tmp):
+    """A two-line JVM death is the whole evidence: it must not answer "no cause found"."""
+    diagnosis = _diagnose_captured(
+        ws_tmp,
+        [
+            "Error: Unrecognized VM option 'UseG1GC'",
+            "Error: Could not create the Java Virtual Machine.",
+        ],
+    )
+    assert diagnosis.code == "MPL-Launch-0010"
+    assert diagnosis.phase == "launcher"
+
+
+def test_a_missing_main_class_is_named(ws_tmp):
+    diagnosis = _diagnose_captured(
+        ws_tmp,
+        ["Error: Could not find or load main class net.minecraft.client.main.Main"],
+    )
+    assert diagnosis.code == "MPL-Crash-0135"
+    assert diagnosis.confidence == "medium"
+
+
+def test_unknown_captured_output_still_falls_back(ws_tmp):
+    diagnosis = _diagnose_captured(ws_tmp, ["something nobody has a rule for"])
+    assert diagnosis.code == "MPL-Crash-0000"
