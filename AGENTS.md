@@ -87,13 +87,14 @@ user's certificate store (subject `CN=WDNDXLTX`); without it the script throws a
 - **The runtime fallback is `en_us`**, in all four places that fall back (`tr()`, `tr_core()`,
   `set_language()`/`set_core_language()`, `detect_system_language()`). Never `zh_cn`. Falling back is a
   safety net for third-party data, not a licence to ship English placeholders and translate later.
-- Language names are written in their own language (`English (US)`, `日本語`, `한국어`), never translated
-  with the UI. The font fallback chain must cover CJK; a missing Korean font paints whole pages as tofu.
+- Each language's name is written in its own script (the language picker shows `English (US)` for
+  English), never translated along with the UI. The font fallback chain must cover CJK; a missing
+  Korean font paints whole pages as empty boxes.
 - Legal and compliance wording must not weaken in any language: a statement like "this project is an
   independent implementation and contains no upstream source code" has to stay equivalent in all nine,
   neither omitted nor softened.
-- Chinese UI terms used as identifiers in prose: 实例 = instance, 整合包 = modpack, 联机 = multiplayer
-  (Terracotta), 投影原理图 = schematics, 修改 = modify, 导出 = export/backup.
+- UI labels are in the interface language (Chinese by default); identifiers, comments, docs and
+  commits are English. When searching the code, search the English identifier, not the label.
 
 ## Reading someone else's source code
 
@@ -121,7 +122,7 @@ and missing one means the work does not start:
   `layout.heightForWidth(width)` when the layout supports it - `sizeHint()` answers for an ideal width
   and over-reports word-wrapped cards.
 - **Never put a `QPushButton` inside another button's layout.** The inner one inherits the outer height and
-  draws its text in a squeezed content rect (this clipped 「测速」 down to a few pixels).
+  draws its text in a squeezed content rect (this clipped the speed-test label down to a few pixels).
 - **`clicked` carries a bool.** `lambda group=key: ...` silently receives `False`; write
   `lambda *_, group=key: ...`.
 - **Sizing from a widget's `sizeHint()` before it is shown returns 0 or a stale value.** `LoaderVersionItem`
@@ -138,11 +139,11 @@ and missing one means the work does not start:
 - Icons for mods/resource packs come **only** from hash/fingerprint matches (Modrinth sha1, CurseForge
   MurmurHash2). Never guess an icon from a name.
 - Terracotta (AGPL-3.0 with an exception) and EasyTier (LGPL-3.0) ship as unmodified binaries under
-  `components/`. The footer credit 「联机由 Terracotta | 陶瓦联机 提供」 is mandatory, and
-  `components/easytier` must never be deleted by code that "disables" multiplayer - it powers the
-  network self-check.
-- 关闭大厅 means the tunnel stops and guests drop; a core this launcher started is also terminated, a
-  borrowed one is left alone.
+  `components/`. The Terracotta credit line in the footer is mandatory (the exact text lives in
+  `launcher/notices.py`), and `components/easytier` must never be deleted by code that "disables"
+  multiplayer - it powers the network self-check.
+- Closing the multiplayer lobby means the tunnel stops and guests drop; a core this launcher started
+  is also terminated, a borrowed one is left alone.
 - Downloads are tasks (`gui/tasks.py`): a new long-running download needs `TaskCenter.add_task` with a
   cancel path, not just a status line.
 - An installed Java runtime must actually start (`java -version`) or it is removed and reported; never

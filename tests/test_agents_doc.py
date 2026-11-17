@@ -125,3 +125,20 @@ def test_it_is_machine_independent() -> None:
     assert not offenders, f"AGENTS.md hardcodes local paths: {offenders}"
     for private in ("MinePick_Docs", "PCL-CE-reference", ".venv", "dsh-workspace"):
         assert private not in text, f"AGENTS.md leaks a local/private location: {private!r}"
+
+#: CJK ideographs, kana, hangul and full-width punctuation.
+_CJK = re.compile(r"[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]")
+
+
+def test_the_english_guides_contain_no_cjk() -> None:
+    """These two files are loaded into a reader's context verbatim.
+
+    A Chinese sentence in a file an English-speaking agent reads is at best noise and at worst a
+    moderation problem for whoever pasted it, so the English guides stay pure ASCII-plus-punctuation.
+    The Chinese guide (CONTRIBUTING_zh.md) is where Chinese belongs.
+    """
+    for name in ("AGENTS.md", "CONTRIBUTING.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        hits = [f"{number}: {line.strip()[:60]}" for number, line in enumerate(text.splitlines(), 1)
+                if _CJK.search(line)]
+        assert not hits, f"{name} contains CJK text: {hits}"

@@ -5,7 +5,7 @@ welcome — code, tests, documentation, translations and bug reports alike. This
 project actually works, so that a change can be reviewed, tested and released without a second round of
 questions.
 
-中文版：[CONTRIBUTING_zh.md](CONTRIBUTING_zh.md)
+Chinese version: [CONTRIBUTING_zh.md](CONTRIBUTING_zh.md)
 
 ## Before you start
 
@@ -107,7 +107,7 @@ pytest -q                                # the whole suite, ~20 minutes
 ## Commits and pull requests
 
 - Commit messages are **English only** — a mixed-language message is rejected in review. Machine
-  translation is fine: `fix: resolve the launcher crash on startup` is right, `fix: 修复启动崩溃` is not.
+  translation is fine: `fix: resolve the launcher crash on startup` is right, `fix: <the same sentence in Chinese>` is not.
 - Use a conventional prefix: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `perf`, `style`.
 - Subject in the imperative mood, at most 72 characters. The body says what changed and **why**, and
   names the commands you ran (for example "pytest tests/test_tools_page.py: 63 passed").
@@ -123,8 +123,8 @@ pytest -q                                # the whole suite, ~20 minutes
 
 ## Reporting bugs
 
-Include the launcher version (from the 关于 page), your Windows build, what you did, what happened, and
-the diagnosis export from the 诊断 page — it redacts access tokens and user paths. Launcher-side failures
+Include the launcher version (from the About page), your Windows build, what you did, what happened, and
+the diagnosis export from the Diagnostics page — it redacts access tokens and user paths. Launcher-side failures
 carry an `MPL-Launch-####` code, game crashes `MPL-Crash-####`; the code alone often identifies the cause.
 
 ## Security
@@ -136,5 +136,5 @@ Do not open a public issue for a vulnerability. Use GitHub's private *Report a v
 
 Terracotta (AGPL-3.0 with an exception) and EasyTier (LGPL-3.0) are shipped as unmodified binaries under
 `components/`. Their licence texts, the source offer and the required UI credit
-(「联机由 Terracotta | 陶瓦联机 提供」) are not optional, and `components/easytier` must not be deleted by
+(the Terracotta credit line in the footer - the exact text lives in `launcher/notices.py`) are not optional, and `components/easytier` must not be deleted by
 code paths that "disable" the multiplayer feature — it powers the network self-check.
