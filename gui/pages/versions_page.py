@@ -30,6 +30,7 @@ from PySide6.QtCore import (
     QDateTime,
     QEvent,
     QLocale,
+    QPoint,
     QRectF,
     QSize,
     Qt,
@@ -1408,6 +1409,34 @@ class VersionsPage(QWidget):
         if row >= 0:
             self.list.takeItem(row)
 
+    def _defer_scroll_to(self, target: int) -> None:
+        """Set the scrollbar to ``target`` once the list's range can hold it.
+
+        The range only reaches its final size after the batched layout finishes, which is after this
+        call returns; writing the value now is silently clamped to the old maximum, and that clamp is
+        what made the list look like it jumped back to the top.
+        """
+        bar = self.list.verticalScrollBar()
+        if bar.maximum() >= target:
+            bar.setValue(target)
+            return
+
+        def on_range(_minimum: int, _maximum: int) -> None:
+            if bar.maximum() < target:
+                return
+            bar.setValue(target)
+            try:
+                bar.rangeChanged.disconnect(on_range)
+            except (RuntimeError, TypeError):
+                pass
+
+        bar.rangeChanged.connect(on_range)
+
+    def _viewport_top_row(self) -> int:
+        """Row index currently under the viewport's top edge, or -1 when there is none."""
+        index = self.list.indexAt(QPoint(1, 1))
+        return index.row() if index.isValid() else -1
+
     def _append_group_batch(self, key: str, old: int, new: int) -> None:
         """Insert rows ``old:new`` of a fold right after its header (before its load-more row)."""
         header = self._header_items.get(key)
@@ -1425,10 +1454,16 @@ class VersionsPage(QWidget):
         # list after every step (measured 111ms for the second batch, 236ms for the fifth). Blocking
         # updates and signals for the duration, plus the list's batched layout mode, keeps a batch at
         # ~60ms whatever is already built.
+        more = new < len(self._buckets.get(key, []))
+        bar = self.list.verticalScrollBar()
+        keep = bar.value()
+        top_row = self._viewport_top_row()
         self.list.blockSignals(True)
         self.list.setUpdatesEnabled(False)
         try:
-            self._drop_load_more(key)
+            # Insert first, drop the control afterwards. The other order shortens the scroll range
+            # before the new rows have grown it, and a reader who is at the bottom gets clamped upwards
+            # by the height of the removed row - which reads as "the list jumped back to the top".
             insert_at = index
             for item, _row in created:
                 self.list.insertItem(insert_at, item)
@@ -1437,16 +1472,23 @@ class VersionsPage(QWidget):
                 self.list.setItemWidget(item, row)
                 row.setVisible(True)
                 self.rows.append(row)
-            if new < len(self._buckets.get(key, [])):
-                item, row = self._new_load_more_item(key, add=False)
-                self.list.insertItem(index + len(created), item)
-                self.list.setItemWidget(item, row)
-                row.setVisible(True)
+            if not more:
+                # The old control is still installed below the batch; it is the one to remove once the
+                # batch is in place, and its replacement is not needed.
+                self._drop_load_more(key)
+            # Qt lays the list out in batches; until that pass runs the scrollbar's range is the old one
+            # and anything written into it is clamped away. Force it now, while the range is being set.
+            self.list.executeDelayedItemsLayout()
         finally:
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
         self._sync_row_selection(self._selected_id())
-        QTimer.singleShot(0, self.list, self.list.sync_item_widths)
+        self.list.sync_item_widths()
+        # The batched layout may have published a shorter range mid-insertion, and the scrollbar clamped
+        # itself to it. Put the reader back where they were, then compensate for any rows that landed
+        # above them (fixed row height, so no measurement is needed).
+        shift = len(created) * _VersionRow.SLOT_HEIGHT if 0 <= top_row and index <= top_row else 0
+        self._defer_scroll_to(keep + shift)
 
     def _append_search_batch(self, old: int, new: int) -> None:
         """Append the next ``old:new`` matches to the flat search list."""
@@ -1460,23 +1502,25 @@ class VersionsPage(QWidget):
                     version, category, self._search_needle, game_dir, cache_root
                 )
             )
+        more = new < self._search_total
         self.list.blockSignals(True)
         self.list.setUpdatesEnabled(False)
         try:
-            self._drop_load_more(None)
             for item, _row in created:
                 self.list.addItem(item)
             for item, row in created:
                 self.list.setItemWidget(item, row)
                 row.setVisible(True)
                 self.rows.append(row)
-            if new < self._search_total:
-                self._new_load_more_item(None)
+            if not more:
+                # Append first, remove the control last: the range only has to survive the removal.
+                self._drop_load_more(None)
+            self.list.executeDelayedItemsLayout()
         finally:
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
         self._sync_row_selection(self._selected_id())
-        QTimer.singleShot(0, self.list, self.list.sync_item_widths)
+        self.list.sync_item_widths()
 
     def _ensure_version_visible(self, version_id: str) -> None:
         """Open the fold (and build enough rows) that holds ``version_id``, so its row exists.

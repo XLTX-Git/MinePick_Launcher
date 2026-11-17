@@ -441,3 +441,33 @@ def test_the_load_more_button_actually_loads_when_clicked(page, app) -> None:
     QTest.mouseClick(row, Qt.MouseButton.LeftButton)
     app.processEvents()
     assert len(page.rows) == before + 5, "the second batch of snapshots did not load"
+
+def test_loading_more_keeps_the_scroll_position(page, app) -> None:
+    """Pressing 加载更多 must not scroll the list back to the top.
+
+    The batch is inserted in place precisely so the view stays where it is; clicking a control that sits
+    below the fold and landing at the top of the list loses the reader's place.
+    """
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    page.resize(1000, 610)
+    page.show()
+    page.expand_group("snapshot")
+    app.processEvents()
+    bar = page.list.verticalScrollBar()
+    bar.setValue(bar.maximum())
+    app.processEvents()
+    before_value = bar.value()
+    assert before_value > 0, "the fixture did not scroll"
+
+    # The row that is under the viewport's top edge must still be there afterwards.
+    anchor = page.list.item(page.list.indexAt(QPoint(1, 1)).row())
+    anchor_y = page.list.visualItemRect(anchor).top()
+    rows_before = len(page.rows)
+    QTest.mouseClick(page._load_more_rows["snapshot"], Qt.MouseButton.LeftButton)
+    app.processEvents()
+
+    assert len(page.rows) > rows_before, "the batch did not load"
+    assert bar.value() > 0, f"the list scrolled back to the top ({bar.value()})"
+    assert page.list.visualItemRect(anchor).top() == anchor_y, "the reader's row moved"
