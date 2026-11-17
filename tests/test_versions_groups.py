@@ -471,3 +471,36 @@ def test_loading_more_keeps_the_scroll_position(page, app) -> None:
     assert len(page.rows) > rows_before, "the batch did not load"
     assert bar.value() > 0, f"the list scrolled back to the top ({bar.value()})"
     assert page.list.visualItemRect(anchor).top() == anchor_y, "the reader's row moved"
+
+def test_the_load_more_button_keeps_working_and_its_count_drops(page, app) -> None:
+    """Clicking the control keeps loading, and the count it shows keeps moving.
+
+    The control used to be kept between batches to avoid touching the scroll range, which left the count
+    frozen at its first value ("还有 650 个" forever) - a working button that looks dead. Every batch now
+    brings its own control, so the label and the installed widget are always current.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    page.resize(1000, 610)
+    page.show()
+    page.expand_group("snapshot")
+    app.processEvents()
+
+    seen: list[str] = []
+    for _ in range(3):
+        item = page._load_more_items.get("snapshot")
+        row = page._load_more_rows.get("snapshot")
+        if row is None:
+            break  # the fold is exhausted, which is the one case the control may disappear
+        assert item is not None and page.list.itemWidget(item) is not None, (
+            "the row lost its button"
+        )
+        seen.append(item.text())
+        before = len(page.rows)
+        QTest.mouseClick(row, Qt.MouseButton.LeftButton)
+        app.processEvents()
+        assert len(page.rows) > before, "a click loaded nothing"
+
+    assert seen, "the fold never offered a second batch"
+    assert len(set(seen)) == len(seen), f"the count never changed: {seen}"

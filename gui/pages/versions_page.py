@@ -1461,9 +1461,7 @@ class VersionsPage(QWidget):
         self.list.blockSignals(True)
         self.list.setUpdatesEnabled(False)
         try:
-            # Insert first, drop the control afterwards. The other order shortens the scroll range
-            # before the new rows have grown it, and a reader who is at the bottom gets clamped upwards
-            # by the height of the removed row - which reads as "the list jumped back to the top".
+            self._drop_load_more(key)
             insert_at = index
             for item, _row in created:
                 self.list.insertItem(insert_at, item)
@@ -1472,13 +1470,16 @@ class VersionsPage(QWidget):
                 self.list.setItemWidget(item, row)
                 row.setVisible(True)
                 self.rows.append(row)
-            if not more:
-                # The old control is still installed below the batch; it is the one to remove once the
-                # batch is in place, and its replacement is not needed.
-                self._drop_load_more(key)
-            # Qt lays the list out in batches; until that pass runs the scrollbar's range is the old one
-            # and anything written into it is clamped away. Force it now, while the range is being set.
-            self.list.executeDelayedItemsLayout()
+            if more:
+                # A fresh control every batch: its label carries the remaining count, and replacing it
+                # is also what keeps the item's widget installed. Keeping the old one left a stale
+                # count and, after a rebuild, an item with no button on it at all.
+                item, row = self._new_load_more_item(key, add=False)
+                self.list.insertItem(index + len(created), item)
+                self.list.setItemWidget(item, row)
+                row.setVisible(True)
+            # Qt lays the list out in batches; until that pass runs the scrollbar's range is the old
+            # one and anything written into it is clamped away.
         finally:
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
@@ -1515,7 +1516,6 @@ class VersionsPage(QWidget):
             if not more:
                 # Append first, remove the control last: the range only has to survive the removal.
                 self._drop_load_more(None)
-            self.list.executeDelayedItemsLayout()
         finally:
             self.list.setUpdatesEnabled(True)
             self.list.blockSignals(False)
