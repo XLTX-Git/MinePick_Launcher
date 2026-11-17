@@ -45,7 +45,7 @@ The packaged artifacts are staged first in the repository's `Releases\` folder (
 The version number lives in `launcher/__init__.py` and `pyproject.toml`; once the changes are committed, push from CMD:
 
 ```cmd
-cd /d D:\dsh-workspace\Source_code_UI
+cd /d <path to your clone of this repository>
 git push
 git push origin v0.5.0
 ```

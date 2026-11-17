@@ -43,7 +43,7 @@ git push -u origin main
 版本号写在 `launcher/__init__.py` 与 `pyproject.toml`；提交后在 CMD 中推送：
 
 ```cmd
-cd /d D:\dsh-workspace\Source_code_UI
+cd /d <你的仓库克隆路径>
 git push
 git push origin v0.5.0
 ```

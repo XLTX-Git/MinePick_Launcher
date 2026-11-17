@@ -4,13 +4,6 @@ Working notes for AI coding agents (and humans who prefer a checklist) in this r
 `CONTRIBUTING.md` is the human-facing guide; this file is the operating manual: what to run, what not to
 touch, and the traps this codebase has already paid for.
 
-The project's process manual is **`D:\dsh-workspace\MinePick_Docs\MinePick_开发标准流程.md`** (Chinese,
-outside this repository). It is authoritative for anything about *process* - routine, packaging,
-versioning, release, the full list of known pitfalls. Read it before a release or when this file does not
-answer a question. When you discover a new trap, it goes into **§8 已知坑** with one line in **§11 变更
-记录** in the same round - the SOP's §10 requires that, and a trap that is not written down will be
-stepped on again.
-
 ## Scope discipline
 
 Do what was asked. Do not add "related improvements" nobody requested - no extra refactors, no unasked
@@ -37,34 +30,35 @@ launcher reads/writes its own data directory next to the EXE (`config/`), never 
 
 ## Commands
 
+Run from the repository root, with the virtual environment of your choice activated:
+
 ```powershell
-$py = "D:\dsh-workspace\minecraft-launcher\.venv\Scripts\python.exe"
-cd D:\dsh-workspace\Source_code_UI
-& $py -m gui                              # run the app (a visible window)
-& $py -m ruff check launcher gui tests    # lint, always
-& $py tools/ui_regression.py --list-checks      # the gate's current checks - the only source of truth
-& $py tools/ui_regression.py --quick            # the gate (skips screenshot rendering)
-& $py tools/ui_regression.py                    # the gate + screenshots
-& $py -m pytest -q                              # the whole suite alone, ~22 minutes
-& $py scripts/check_headers.py --fix            # GPL header on a new source file
-& $py tools/check_readme_sync.py                # nine READMEs must report 0 drift
-& $py tools/build_source_zip.py                 # writes dist/Source_code.zip; the release copies it to Releases/
-& $py -m PyInstaller build_exe.spec --noconfirm
+python -m gui                            # run the app (a visible window)
+python -m ruff check launcher gui tests  # lint, always
+python tools/ui_regression.py --list-checks   # the gate's current checks - the only source of truth
+python tools/ui_regression.py --quick         # the gate (skips screenshot rendering)
+python tools/ui_regression.py                 # the gate + screenshots
+python -m pytest -q                           # the whole suite alone, ~22 minutes
+python scripts/check_headers.py --fix         # GPL header on a new source file
+python tools/check_readme_sync.py             # nine READMEs must report 0 drift
+python tools/build_source_zip.py              # writes dist/Source_code.zip; the release copies it to Releases/
+python -m PyInstaller build_exe.spec --noconfirm
 powershell -ExecutionPolicy Bypass -File scripts/sign_exe.ps1
 ```
 
 The check list is **never** written down here or in any other document: it lives in
 `tools/ui_regression.py` and is printed by `--list-checks`. The only hard requirement is that the command
-outputs all OK. `scripts/sign_exe.ps1` finds a code-signing certificate in `Cert:\CurrentUser\My` whose
-subject is `CN=WDNDXLTX`; without it the script throws and `dist/MinePick_Launcher.exe` stays unsigned.
+outputs all OK. `scripts/sign_exe.ps1` signs with the project's code-signing certificate from the current
+user's certificate store (subject `CN=WDNDXLTX`); without it the script throws and
+`dist/MinePick_Launcher.exe` stays unsigned.
 
 ## Test environment (this is where runs go wrong)
 
-- **Always** `$env:QT_QPA_PLATFORM = "offscreen"` and **unset** `MCLAUNCHER_DATA_DIR` before `pytest`.
+- **Always** set `QT_QPA_PLATFORM=offscreen` and clear `MCLAUNCHER_DATA_DIR` before `pytest`.
 - The suite is offline by default: autouse fixtures in `tests/conftest.py` cut the HTTP cache, the
   Modrinth identity lookup, the update check and every modal dialog. A test that needs a response mocks
   it with `respx`; nothing may reach the network.
-- `tmp_path` is **not writable** in this sandbox - use the `ws_tmp` fixture.
+- `tmp_path` is **not writable** in a sandboxed runner - use the `ws_tmp` fixture.
 - A test that puts a real window on the desktop fails the run (autouse guard). Use the `app` fixture and
   `WA_DontShowOnScreen`.
 - Known flake (GUI worker thread native crash, reproducible on a clean commit): rerun the whole suite
@@ -108,9 +102,8 @@ and missing one means the work does not start:
 
 1. **Read only.** Understand the approach and information architecture; copy no code, text or assets. The
    implementation and the wording are always written here.
-2. **Outside the repository.** A reference checkout lives in its own folder at the workspace root (today
-   `D:\dsh-workspace\PCL-CE-reference\`), never inside the project, the source archive or
-   `build_source_zip.py`'s list.
+2. **Outside the repository.** A reference checkout lives in its own folder outside the project - never
+   inside the working tree, the source archive or `build_source_zip.py`'s list.
 3. **On the record.** Note which repository and module was consulted, and credit it in the About page with
    the agreed wording - the "no upstream source code" statement must not weaken (§ Conventions).
 4. **Prove it before a release.** Count `.cs`, `.xaml`, `.sln`, `.csproj`, `.vbproj` files inside the
@@ -135,12 +128,10 @@ and missing one means the work does not start:
   returns its constant height for that reason.
 - **`Path.replace` fails with `PermissionError` while another thread reads the target.** The mirror report
   retries; keep that.
+- **Encoding is UTF-8 everywhere, with `newline=""` on every write.** A stylesheet or a JSON file rewritten
+  without it picks up CRLF and the digest tests fail on a diff nobody made.
 - Window floor is **1000×610**; click targets ≥24×24 px; both themes (dark/light) × eight accents are
   audited for contrast, and `tools/ui_regression.py` is the gate.
-
-The rest of the catalogue (encoding, tooling that fakes failures, packaging, docs drift, thread
-lifetime, UI heuristics - hundreds of numbered entries) is SOP §8. Consult it before touching threads,
-packaging or the stylesheet.
 
 ## Product rules that are easy to break
 
@@ -160,10 +151,10 @@ packaging or the stylesheet.
 ## Release path (do not start it on your own)
 
 Version bumps, the `vX.Y.Z` tag, `Releases/` artifacts, the README banners and the push happen only when
-the maintainer says so. The release checklist is SOP §12; the parts that are easiest to forget:
+the maintainer says so. The parts of the checklist that are easiest to forget:
 
 - version identical in the code, `pyproject.toml` and all nine READMEs;
-- the slow tests run once with `$env:MINE_PICK_SLOW_TESTS=1` (they are skipped otherwise);
+- the slow tests run once with `MINE_PICK_SLOW_TESTS=1` (they are skipped otherwise);
 - the EXE rebuilt, signature `Valid`, smoke test exit 0 - the smoke run is a **separate, elevated** step,
   not part of the build batch;
 - `Releases/MinePick_Launcher.exe` and `Releases/Source_code.zip` (copied from `dist/`) opened and checked:
@@ -172,5 +163,4 @@ the maintainer says so. The release checklist is SOP §12; the parts that are ea
 - screenshots re-rendered for the pages a UI change touched (`zh` and `en`);
 - `python tools/check_readme_sync.py` reports 0 drift, every new string exists in all nine languages;
 - release notes bilingual, empty sections dropped, user-visible changes only;
-- working tree clean, tag pointing at the newest commit, and the new pitfall of this round written into
-  SOP §8/§11.
+- working tree clean and the tag pointing at the newest commit.
