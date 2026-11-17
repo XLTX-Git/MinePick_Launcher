@@ -88,9 +88,11 @@ def _write_json(path: Path, payload: dict) -> Path:
         ("25w14craftmine", "snapshot", "gold_block"),
         ("b1.7.3", "old_beta", "cobblestone"),
         ("a1.2.6", "old_alpha", "cobblestone"),
-        # early releases are typed "release" by Mojang but are the ancient category
-        ("1.0", "release", "cobblestone"),
-        ("1.6.4", "release", "cobblestone"),
+        ("0.30", "release", "cobblestone"),
+        # 1.0 - 1.6 are ordinary releases: the 正式版 badge already says what they are, so the block
+        # only has to mark the pre-1.0 line.
+        ("1.0", "release", "grass_block_side"),
+        ("1.6.4", "release", "grass_block_side"),
         ("1.7.10", "release", "grass_block_side"),
         ("1.21.11", "release", "grass_block_side"),
     ),

@@ -865,6 +865,22 @@ QPushButton#iconButton[keyboardFocus="true"]:focus { border: 1px solid __FOCUS_R
    scrimmed page) and the outline only has to sit on that fill (BORDER_SWATCH would be 1.06:1 above
    it). The scrim's strength is per theme in gui/overlay.py SCRIM_ALPHA; the light sheet keeps its
    white card and its quiet BORDER_BUTTON_ICON edge. */
+/* Buttons on the overlay card. On that lighter fill the regular secondary edge reads as a shadow and
+   its disabled edge as a black rim, i.e. backwards; these two put the stronger line on the button you
+   can actually press. */
+QWidget#overlayCard QPushButton#secondaryButton {
+    border-color: __BORDER_BUTTON_OVERLAY__;
+    color: __FG_OVERLAY_BODY__;
+}
+QWidget#overlayCard QPushButton#secondaryButton:hover {
+    border-color: __ACCENT__;
+    color: __FG_TEXT__;
+}
+QWidget#overlayCard QPushButton#secondaryButton:disabled {
+    border-color: __BORDER_BUTTON_OVERLAY_2__;
+    color: __FG_DISABLED__;
+}
+
 QWidget#overlayCard {
     background: __BG_OVERLAY_CARD__;
     border: 1px solid __BORDER_OVERLAY_CARD__;

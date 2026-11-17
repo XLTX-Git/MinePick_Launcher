@@ -141,22 +141,21 @@ _JSON_CACHE: dict[tuple[str, int, int], dict] = {}
 
 
 def is_ancient_release(version_id: str) -> bool:
-    """1.0 - 1.6 (and the pre-release 0.x line) count as the "ancient" category.
+    """Only the pre-1.0 line (0.x) counts as "ancient" among manifest "release" ids.
 
-    The official manifest still types those ids as ``release``, so the category function cannot
-    separate them; they are the versions whose assets are the oldest layout the launcher may meet.
+    1.0 - 1.6 are ordinary releases: the launcher can install and run them like any other version, so
+    they get the release block. The earlier boundary at 1.6 followed the launch-format change (1.7
+    introduced ``arguments``), but the block is read as "this is an old version", and every 1.x is old
+    enough to be confusing - the maintainer's rule is that only 0.x should look different.
     """
-    match = _ANCIENT_RELEASE_RE.match(version_id)
-    if match is not None:
-        return int(match.group(1)) <= 6
     return _ANCIENT_ZERO_RE.match(version_id) is not None
 
 
 def icon_category(version_id: str, version_type: str) -> str:
     """Icon category: ``release`` / ``snapshot`` / ``april_fools`` / ``ancient``.
 
-    ``version_category`` already knows the April Fools ids and the alpha/beta types; this adds only
-    the early-release case (1.0 - 1.6), which the manifest still types as ``release``.
+    ``version_category`` already knows the April Fools ids, the alpha/beta types and the 0.x line;
+    this only maps those to the icon vocabulary.
     """
     category = version_category(version_id, version_type or guess_version_type(version_id))
     if category in ("old_beta", "old_alpha"):

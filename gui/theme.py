@@ -355,6 +355,13 @@ NEUTRAL_TOKENS: dict[str, dict[str, str]] = {
     # on the fill (3.24:1 against the scrim). It is the cool-blue edge of that fill (H 213, blue 51
     # above red). The light sheet keeps its quiet BORDER_BUTTON_ICON outline (1.70:1 against the
     # scrim); the light value here repeats that colour for the same reason as the fill above.
+    # Buttons that sit *on* the overlay card need their own edge: that card's dark fill (#384d68) is
+    # lighter than a page card, so BORDER_BUTTON_SECONDARY (#33404f) reads as a shadow there and the
+    # disabled border (#232c39) reads as a black rim - the pair looks inverted, and an enabled button
+    # ends up looking less clickable than a dead one. These keep 可用 brighter than the card and 不可用
+    # within a hair of it: 1.34:1 above and 1.06:1 above the fill respectively.
+    "BORDER_BUTTON_OVERLAY": {"dark": "#5b7796", "light": "#9db0c5"},
+    "BORDER_BUTTON_OVERLAY_2": {"dark": "#455a74", "light": "#d5dbe3"},
     "BORDER_OVERLAY_CARD": {"dark": "#4c637f", "light": "#c9d2dc"},
     "BORDER_OVERLAY_CODE": {"dark": "#e5787f", "light": "#e5787f"},
     "BORDER_SWATCH": {"dark": "#3a4757", "light": "#b6c1cd"},
