@@ -960,7 +960,12 @@ class LaunchPage(QWidget):
         if crashes:
             message += tr("launch.msg.crash", len(crashes))
         set_app_status(self, message)
-        self._diagnose(code, tail, started)
+        # A clean exit is not a crash. The game writes its logs either way, so "some log exists" used to
+        # be enough for the diagnosis dialog to open over a normal quit - which is why closing the game
+        # window looked like the launcher calling it a crash.
+        clean = code in (0, None) and not crashes
+        if not clean:
+            self._diagnose(code, tail, started)
 
     def _diagnose(self, code, tail, started) -> None:
         """Run the knowledge base for a finished launch and show the diagnosis overlay."""

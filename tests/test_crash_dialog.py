@@ -386,3 +386,47 @@ def test_the_window_forgets_a_dismissed_dialog(app, ws_tmp):
         assert getattr(window, "_diagnosis_dialogs", []) == []
     finally:
         window.close()
+
+def test_a_clean_exit_opens_no_dialog(app, ws_tmp):
+    """Closing the game window is not a crash: exit 0 with logs must stay quiet."""
+
+    from gui.pages.launch_page import LaunchPage
+
+    page = LaunchPage()
+    try:
+        shown = []
+        page._diagnose = lambda *args, **kwargs: shown.append(args)
+
+        class _Run:
+            exit_code = 0
+
+            class cwd:
+                pass
+
+        run = _Run()
+        page._game_closing = False
+        page._on_game_exit((run, [], 0.0))
+        assert shown == [], "a clean exit ran the diagnosis"
+    finally:
+        page.deleteLater()
+
+
+def test_a_crash_still_opens_the_dialog(app, ws_tmp):
+    from gui.pages.launch_page import LaunchPage
+
+    page = LaunchPage()
+    try:
+        shown = []
+        page._diagnose = lambda *args, **kwargs: shown.append(args)
+
+        class _Run:
+            exit_code = 1
+
+            class cwd:
+                pass
+
+        page._game_closing = False
+        page._on_game_exit((_Run(), [], 0.0))
+        assert shown, "a non-zero exit no longer diagnoses"
+    finally:
+        page.deleteLater()

@@ -146,6 +146,8 @@ class BlurOverlay(QWidget):
         self._content.setSpacing(14)
         self._animations: list[QPropertyAnimation] = []
         self._exit_animation: QPropertyAnimation | None = None
+        #: True while the window could not be grabbed yet (hidden or minimised at show time).
+        self._snapshot_pending = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.hide()
 
@@ -167,7 +169,7 @@ class BlurOverlay(QWidget):
         if parent is not None:
             parent.installEventFilter(self)
             self.setGeometry(parent.rect())
-        self.rebuild_snapshot()
+        self._snapshot_pending = not self.rebuild_snapshot()
         self._place_card()
         self.show()
         self.raise_()
@@ -190,21 +192,29 @@ class BlurOverlay(QWidget):
         if was_visible:
             self.dismissed.emit()
 
-    def rebuild_snapshot(self) -> None:
-        """Grab and downscale the window; silently degrade to a plain scrim on failure."""
+    def rebuild_snapshot(self) -> bool:
+        """Grab and downscale the window; return whether a backdrop was captured.
+
+        A grab of a hidden or minimised window comes back blank, which left the overlay as a flat scrim
+        with the page's own background gone. The caller keeps the overlay pending in that case and grabs
+        again once the window is really on screen.
+        """
         parent = self.parentWidget()
         self._snapshot = None
         if parent is None:
-            return
+            return False
+        if not parent.isVisible() or parent.isMinimized():
+            return False
         pixmap = parent.grab()
         if pixmap.isNull() or pixmap.width() < BLUR_DOWNSCALE or pixmap.height() < BLUR_DOWNSCALE:
-            return
+            return False
         self._snapshot = pixmap.scaled(
             max(1, pixmap.width() // BLUR_DOWNSCALE),
             max(1, pixmap.height() // BLUR_DOWNSCALE),
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        return True
 
     # ---------- geometry ----------
 
@@ -238,6 +248,11 @@ class BlurOverlay(QWidget):
             QEvent.Type.Show,
         ):
             self.setGeometry(parent.rect())
+            if self._snapshot_pending and event.type() is QEvent.Type.Show:
+                # The window was hidden or minimised when the overlay opened; now that it is back, take
+                # the backdrop so the card sits on the page instead of on a flat scrim.
+                self._snapshot_pending = not self.rebuild_snapshot()
+                self.update()
             self._place_card()
         return False
 
