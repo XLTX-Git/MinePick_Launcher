@@ -93,10 +93,30 @@ class CrashDiagnosisDialog:
         return self._body_label
 
     def show(self) -> None:
+        # The buttons connect to this object's methods, so it has to outlive the call that created it.
+        # It used to be dropped on return (the launch page ignored the return value), the bound slots died
+        # with it, and 关闭 then did nothing at all - the overlay stayed on screen forever.
+        self._retain()
+        self._overlay.dismissed.connect(self._release)
         self._overlay.show_overlay()
 
     def close(self) -> None:
         self._overlay.hide_overlay()
+
+    # ---------- lifetime ----------
+
+    def _retain(self) -> None:
+        keep = getattr(self._window, "_diagnosis_dialogs", None)
+        if keep is None:
+            keep = []
+            self._window._diagnosis_dialogs = keep
+        if self not in keep:
+            keep.append(self)
+
+    def _release(self) -> None:
+        keep = getattr(self._window, "_diagnosis_dialogs", None)
+        if keep and self in keep:
+            keep.remove(self)
 
     # ---------- construction ----------
 

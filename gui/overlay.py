@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt
+from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QVBoxLayout, QWidget
 
@@ -121,6 +121,9 @@ class BlurOverlay(QWidget):
     so a stray click cannot dismiss a diagnosis the user has not read yet.
     """
 
+    #: Emitted once the overlay is really hidden (fade finished), never earlier.
+    dismissed = Signal()
+
     def __init__(
         self,
         parent: QWidget,
@@ -182,7 +185,10 @@ class BlurOverlay(QWidget):
         self._exit_animation = None
         self._animations = []
         self._card.setGraphicsEffect(None)  # R-QT-1: never leave an effect attached
+        was_visible = self.isVisible()
         self.hide()
+        if was_visible:
+            self.dismissed.emit()
 
     def rebuild_snapshot(self) -> None:
         """Grab and downscale the window; silently degrade to a plain scrim on failure."""
@@ -297,6 +303,13 @@ class BlurOverlay(QWidget):
         """Quick fade out, then hide. A second call while fading simply finishes the job."""
         if self._exit_animation is not None:
             return
+        # The entrance animations own the card's opacity effect and remove it when they finish. Closing
+        # the overlay while they still run let the entrance's finished slot delete the effect the exit
+        # animation was driving: that animation never finished, so the overlay never hid and the dialog
+        # could not be dismissed at all. Stop them first.
+        for animation in self._animations:
+            animation.stop()
+        self._animations = []
         effect = self._card.graphicsEffect()
         if not isinstance(effect, QGraphicsOpacityEffect):
             self._finish_hide()

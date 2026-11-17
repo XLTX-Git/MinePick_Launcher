@@ -982,7 +982,12 @@ class LaunchPage(QWidget):
             tail=tail,
             instance=resolved,
         )
-        diagnose_after_exit(
+        # Keep the dialog: its buttons are bound methods, and a second crash must replace the first
+        # overlay instead of stacking another card on top of it.
+        previous = getattr(self, "_crash_dialog", None)
+        if previous is not None:
+            previous.close()
+        self._crash_dialog = diagnose_after_exit(
             self.window(),
             context,
             log_path=resolved.launch_dir / "logs" / "latest.log",
@@ -1006,5 +1011,6 @@ class LaunchPage(QWidget):
                 version_id="", game_dir=game_dir, error_text=text, memory_gb=cfg.memory_gb
             )
             shown = diagnose_after_exit(self.window(), context)
+        self._crash_dialog = shown
         if shown is None:
             show_fatal(self, text)

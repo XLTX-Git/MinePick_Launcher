@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import gc
 import shutil
 import time
 from pathlib import Path
@@ -294,4 +295,94 @@ def test_dialog_renders_from_a_prepared_diagnosis(app, ws_tmp):
     finally:
         if dialog is not None:
             dialog.close()
+        window.close()
+
+def _dismiss_button(overlay) -> QPushButton:
+    """The 关闭 button inside a shown overlay (the only primary button on the card)."""
+    for button in overlay.findChildren(QPushButton):
+        if button.objectName() == "primaryButton":
+            return button
+    raise AssertionError("no dismiss button")
+
+
+def test_dismissing_still_works_when_the_caller_kept_no_reference(app, ws_tmp):
+    """The launch page used to drop the returned dialog; 关闭 then did nothing and the card stayed.
+
+    The button connects to a method of the dialog object, so a dropped object used to mean a dead slot.
+    The overlay now reports its own dismissal and the dialog keeps itself alive on the window until then.
+    """
+    game = _game_with_log(ws_tmp, "oom.latest.log")
+    window = QWidget()
+    window.resize(800, 600)
+    window.show()
+    app.processEvents()
+    overlay = None
+    try:
+        context = context_for_launch(
+            version_id="1.20.1", game_dir=game, exit_code=1, started=0.0
+        )
+        dialog = diagnose_after_exit(window, context)
+        assert dialog is not None
+        overlay = dialog.overlay
+        del dialog  # exactly what `diagnose_after_exit(window, context)` alone did at the call site
+        gc.collect()
+        app.processEvents()
+        assert overlay.isVisible()
+        _dismiss_button(overlay).click()
+
+        QTest.qWait(EXIT_MS + 120)
+        app.processEvents()
+        assert not overlay.isVisible()
+    finally:
+        if overlay is not None:
+            overlay.hide()
+        window.close()
+
+
+def test_dismissing_during_the_entrance_animation_still_hides(app, ws_tmp):
+    """A click right after the card appears must not leave the overlay stuck mid-fade."""
+    game = _game_with_log(ws_tmp, "oom.latest.log")
+    window = QWidget()
+    window.resize(800, 600)
+    window.show()
+    app.processEvents()
+    dialog = None
+    try:
+        context = context_for_launch(
+            version_id="1.20.1", game_dir=game, exit_code=1, started=0.0
+        )
+        dialog = diagnose_after_exit(window, context)
+        assert dialog is not None
+        app.processEvents()  # the entrance fade has just started
+        dialog.overlay._animate_out()  # what 关闭 does, before the entrance finished
+        QTest.qWait(EXIT_MS + 120)
+        app.processEvents()
+        assert not dialog.overlay.isVisible()
+        assert dialog.overlay._exit_animation is None
+    finally:
+        if dialog is not None:
+            dialog.close()
+        window.close()
+
+
+def test_the_window_forgets_a_dismissed_dialog(app, ws_tmp):
+    """The reference that keeps the slots alive has to go away again, or every crash leaks one."""
+    game = _game_with_log(ws_tmp, "oom.latest.log")
+    window = QWidget()
+    window.resize(800, 600)
+    window.show()
+    app.processEvents()
+    dialog = None
+    try:
+        context = context_for_launch(
+            version_id="1.20.1", game_dir=game, exit_code=1, started=0.0
+        )
+        dialog = diagnose_after_exit(window, context)
+        assert dialog is not None
+        assert dialog in getattr(window, "_diagnosis_dialogs", [])
+        QTest.keyClick(dialog.overlay, Qt.Key.Key_Escape)
+        QTest.qWait(EXIT_MS + 120)
+        app.processEvents()
+        assert getattr(window, "_diagnosis_dialogs", []) == []
+    finally:
         window.close()
