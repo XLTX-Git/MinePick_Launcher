@@ -57,7 +57,9 @@ class RepairPlan:
         return bool(self.tasks)
 
 
-def _load_asset_index(version: VersionJson, game_dir: Path, fetcher: Callable[[str], AssetIndex]) -> AssetIndex | None:
+def _load_asset_index(
+    version: VersionJson, game_dir: Path, fetcher: Callable[[object], AssetIndex]
+) -> AssetIndex | None:
     """The version's asset index: from the local folder when it is there, else fetched.
 
     An incomplete instance often lacks the index file too, so the local read cannot be the only path;
@@ -72,7 +74,10 @@ def _load_asset_index(version: VersionJson, game_dir: Path, fetcher: Callable[[s
             return AssetIndex.model_validate_json(local.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             pass  # damaged index: fall through to the fetcher rather than failing the repair
-    return fetcher(index_id)
+    # The fetcher takes the version's asset-index *reference* (it needs the url), not the bare id: passing
+    # the id made every repair fail with "'str' object has no attribute 'url'", which quietly skipped the
+    # assets - a game then ran with no language files and an English UI.
+    return fetcher(version.asset_index)
 
 
 def plan_repair(

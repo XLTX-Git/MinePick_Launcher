@@ -151,3 +151,39 @@ def test_a_failing_repair_never_blocks_the_launch(monkeypatch, ws_tmp):
 
     monkeypatch.setattr("launcher.repair.repair", boom)
     assert launch_page._complete_missing_files(ws_tmp / "game", "demo") == ""
+
+def test_the_asset_index_is_fetched_with_its_reference_not_its_id(ws_tmp):
+    """The fetcher needs the url, so it gets the version's asset-index object.
+
+    Passing the bare id made every repair raise "'str' object has no attribute 'url'", and the caller
+    treats that as "assets were not checked" - a game then started with no language files at all.
+    """
+    import json
+
+    from launcher.repair import plan_repair
+
+    game = ws_tmp / "game"
+    folder = game / "versions" / "demo"
+    folder.mkdir(parents=True)
+    (folder / "demo.json").write_text(
+        json.dumps(
+            {
+                "id": "demo",
+                "mainClass": "net.minecraft.client.main.Main",
+                "libraries": [],
+                "arguments": {"jvm": [], "game": []},
+                "assetIndex": {"id": "30", "url": "https://example.invalid/30.json"},
+                "assets": "30",
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen = []
+
+    def fetcher(reference):
+        seen.append(reference)
+
+    plan = plan_repair("demo", game_dir=game, asset_index_fetcher=fetcher)
+    assert seen, "the index fetcher was never called"
+    assert getattr(seen[0], "url", "") == "https://example.invalid/30.json", seen[0]
+    assert any("asset index" in problem for problem in plan.problems)
