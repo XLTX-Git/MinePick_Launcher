@@ -571,3 +571,16 @@ def test_a_missing_main_class_is_named(ws_tmp):
 def test_unknown_captured_output_still_falls_back(ws_tmp):
     diagnosis = _diagnose_captured(ws_tmp, ["something nobody has a rule for"])
     assert diagnosis.code == "MPL-Crash-0000"
+
+def test_the_jvm_messages_are_matched_in_chinese_too(ws_tmp):
+    """The JDK localises its own errors: a Chinese Windows prints 找不到或无法加载主类."""
+    missing_class = _diagnose_captured(
+        ws_tmp,
+        [
+            "错误: 找不到或无法加载主类 net.minecraft.client.main.Main",
+            "原因: java.lang.ClassNotFoundException: net.minecraft.client.main.Main",
+        ],
+    )
+    assert missing_class.code == "MPL-Crash-0135"
+    vm_refused = _diagnose_captured(ws_tmp, ["错误: 无法创建Java虚拟机。"])
+    assert vm_refused.code == "MPL-Launch-0010"

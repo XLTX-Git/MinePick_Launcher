@@ -103,3 +103,58 @@ def test_the_launch_call_only_passes_keywords_build_argv_accepts() -> None:
         assert not unknown, (
             f"orchestrate passes {sorted(unknown)} to build_argv, which takes {sorted(accepted)}"
         )
+
+def test_an_isolated_launch_takes_the_client_jar_from_the_shared_game_dir(ws_tmp):
+    """Isolation moves the working directory; versions/ stays in the shared game dir.
+
+    The launch used to pass the instance folder as build_argv's game_dir, so the client jar was looked up
+    at <instance>/versions/<id>/<id>.jar - never present - and Java answered "could not find or load main
+    class". Every isolated launch failed that way.
+    """
+    import json
+
+    from launcher.launch.command import LaunchProfile, build_argv
+    from launcher.meta.rules import Platform
+    from launcher.meta.version import load_version_json
+
+    game = ws_tmp / "mc"
+    version_id = "1.21.1"
+    version_dir = game / "versions" / version_id
+    version_dir.mkdir(parents=True)
+    (version_dir / f"{version_id}.jar").write_bytes(b"jar")
+    profile_path = version_dir / f"{version_id}.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "id": version_id,
+                "mainClass": "net.minecraft.client.main.Main",
+                "libraries": [],
+                "arguments": {"jvm": ["-cp", "${classpath}"], "game": []},
+                "assetIndex": {"id": "1", "url": "https://example.invalid/1.json"},
+                "assets": "1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    version = load_version_json(
+        version_id, versions_dir=game / "versions", cache_dir=ws_tmp / "cache"
+    )
+    instance = game / "versions" / "1.21.1-copy"  # the isolated working directory
+    instance.mkdir(parents=True)
+    command = build_argv(
+        version,
+        game_dir=game,
+        libraries_dir=game / "libraries",
+        natives_dir=version_dir / "natives",
+        java_path=ws_tmp / "java.exe",
+        java_major=21,
+        profile=LaunchProfile(username="P", uuid="0" * 32, access_token="0", user_type="legacy"),
+        platform=Platform(os="windows", arch="x64", version="10.0"),
+        resolved_libraries=(),
+        memory_gb=2.0,
+        launch_dir=instance,
+    )
+    argv = command.argv
+    classpath = argv[argv.index("-cp") + 1]
+    assert str(version_dir / f"{version_id}.jar") in classpath
+    assert command.cwd == instance

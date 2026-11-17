@@ -165,7 +165,11 @@ def prepare_launch(
 
     command = build_argv(
         version,
-        game_dir=launch_game_dir,
+        # The *shared* game directory: versions/libraries/assets live there even for an isolated
+        # instance. Passing the instance folder made build_argv look for
+        # <instance>/versions/<id>/<id>.jar - a path that never exists - so the client jar dropped out of
+        # the classpath and Java answered "could not find or load main class" for every isolated launch.
+        game_dir=game_dir,
         libraries_dir=shared_libraries,
         natives_dir=natives_dir,
         java_path=java.path,

@@ -886,7 +886,7 @@
           }
         ]
       },
-      "cause": "crash_main_class",
+      "cause": "diagnosis.crash.main_class.cause",
       "advice": [
         "diagnosis.advice.java"
       ],
@@ -1137,10 +1137,22 @@
           },
           {
             "regex": "(?i)Could not create the Java Virtual Machine"
+          },
+          {
+            "regex": "无法识别(的)?\\s*VM\\s*选项"
+          },
+          {
+            "regex": "无法创建\\s*Java\\s*虚拟机"
+          },
+          {
+            "regex": "無法識別(的)?\\s*VM\\s*選項"
+          },
+          {
+            "regex": "無法建立\\s*Java\\s*虛擬機器"
           }
         ]
       },
-      "cause": "launch_jvm_args",
+      "cause": "diagnosis.launch.jvm_args.cause",
       "advice": [
         "diagnosis.launch.jvm_args.advice"
       ],
@@ -1158,10 +1170,19 @@
           },
           {
             "regex": "(?i)Error: A JNI error has occurred"
+          },
+          {
+            "regex": "找不到或无法加载主类"
+          },
+          {
+            "regex": "無法找到或載入主類別"
+          },
+          {
+            "regex": "(?i)ClassNotFoundException:\\s*\\S*Main"
           }
         ]
       },
-      "cause": "crash_main_class",
+      "cause": "diagnosis.crash.main_class.cause",
       "advice": [
         "diagnosis.advice.loader"
       ],
