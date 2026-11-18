@@ -74,7 +74,7 @@ from launcher.meta.version import version_json_path
 tr = i18n.tr
 logger = logging.getLogger(__name__)
 
-def _complete_missing_files(game_dir: Path, version_id: str) -> str:
+def _complete_missing_files(game_dir: Path, version_id: str, progress=None) -> str:
     """Fetch whatever this instance is missing before the command is built; returns a status line.
 
     A folder made by another launcher can arrive without a library or the client jar; the game then
@@ -88,7 +88,7 @@ def _complete_missing_files(game_dir: Path, version_id: str) -> str:
     try:
         from launcher.repair import repair
 
-        plan = repair(version_id, game_dir=game_dir)
+        plan = repair(version_id, game_dir=game_dir, progress=progress)
     except Exception:
         logger.debug("补全实例文件失败", exc_info=True)
         return ""
@@ -756,6 +756,18 @@ class LaunchPage(QWidget):
             else:
                 set_app_status(self, tr("launch.msg.auto_memory", f"{memory_gb:.1f}"))
 
+        # The pre-launch file completion can be a real download (a version installed by another
+        # launcher may be missing hundreds of megabytes of assets), so it gets a progress line instead
+        # of leaving "正在准备启动" on screen for minutes.
+        from gui.workers import ProgressBridge
+
+        bridge = ProgressBridge()
+        bridge.progress.connect(
+            lambda p: set_app_status(
+                self, tr("launch.msg.completing", p.done_files, p.total_files)
+            )
+        )
+
         def do_prepare() -> object:
             try:
                 account = resolve_launch_account(
@@ -779,7 +791,9 @@ class LaunchPage(QWidget):
                 # launcher can be missing a library or the client jar, and Minecraft then dies inside
                 # the class loader with a message that names none of it; PCL's answer is to fetch the
                 # gaps at launch, and this is the same idea with only the missing files fetched.
-                note = _complete_missing_files(game_dir, target_version_id)
+                note = _complete_missing_files(
+                    game_dir, target_version_id, progress=bridge.progress.emit
+                )
                 prepared = prepare_launch(
                     target_version_id,
                     game_dir=game_dir,

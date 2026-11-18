@@ -187,3 +187,21 @@ def test_the_asset_index_is_fetched_with_its_reference_not_its_id(ws_tmp):
     assert seen, "the index fetcher was never called"
     assert getattr(seen[0], "url", "") == "https://example.invalid/30.json", seen[0]
     assert any("asset index" in problem for problem in plan.problems)
+
+def test_the_repair_reports_progress_while_it_downloads(ws_tmp, monkeypatch):
+    """A missing-asset repair can be tens of megabytes; the caller passes its progress through."""
+    calls: list[object] = []
+
+    def fake_repair(version_id, *, game_dir, progress=None, **_kwargs):
+        calls.append(progress)
+        if progress is not None:
+            progress("tick")
+        from launcher.repair import RepairPlan
+
+        return RepairPlan(version_id=version_id)
+
+    monkeypatch.setattr("launcher.repair.repair", fake_repair)
+    from gui.pages import launch_page
+
+    launch_page._complete_missing_files(ws_tmp / "game", "demo", progress=calls.append)
+    assert calls and calls[0] is not None, "the repair ran without a progress callback"
