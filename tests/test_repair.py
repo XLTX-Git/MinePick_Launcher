@@ -205,3 +205,63 @@ def test_the_repair_reports_progress_while_it_downloads(ws_tmp, monkeypatch):
 
     launch_page._complete_missing_files(ws_tmp / "game", "demo", progress=calls.append)
     assert calls and calls[0] is not None, "the repair ran without a progress callback"
+
+def test_a_missing_asset_index_is_written_by_the_repair(ws_tmp, monkeypatch):
+    """Objects alone are not enough: without assets/indexes/<id>.json the game opens no asset at all.
+
+    That is why a version "completed" by an earlier build still started in English with no title-screen
+    panorama - the index file itself was never part of the repair.
+    """
+    from launcher.repair import RepairPlan, repair
+
+    class _Index:
+        def model_dump(self, **kwargs):
+            return {"objects": {"minecraft/lang/zh_cn.json": {"hash": "a" * 40, "size": 1}}}
+
+    plan = RepairPlan(version_id="demo")
+    plan.asset_index = _Index()
+    plan.asset_index_id = "9"
+    monkeypatch.setattr("launcher.repair.plan_repair", lambda *args, **kwargs: plan)
+
+    repair("demo", game_dir=ws_tmp / "game")
+
+    index_file = ws_tmp / "game" / "assets" / "indexes" / "9.json"
+    assert index_file.is_file(), "the repair did not write the asset index"
+    assert "zh_cn" in index_file.read_text(encoding="utf-8")
+
+
+def test_planning_records_a_missing_index_file(ws_tmp):
+    """The planner decides whether the index has to be written, separately from the object list."""
+    import json
+
+    from launcher.repair import plan_repair
+
+    game = ws_tmp / "game"
+    folder = game / "versions" / "demo"
+    folder.mkdir(parents=True)
+    (folder / "demo.json").write_text(
+        json.dumps(
+            {
+                "id": "demo",
+                "mainClass": "net.minecraft.client.main.Main",
+                "libraries": [],
+                "arguments": {"jvm": [], "game": []},
+                "assetIndex": {"id": "9", "url": "https://example.invalid/9.json"},
+                "assets": "9",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Index:
+        # An empty mapping, not a tuple: missing_assets() iterates .items().
+        def __init__(self) -> None:
+            self.objects: dict[str, object] = {}
+
+        def model_dump(self, **kwargs):
+            return {"objects": {}}
+
+    plan = plan_repair("demo", game_dir=game, asset_index_fetcher=lambda _ref: _Index())
+    assert plan.asset_index is not None, "a missing index file was not recorded"
+    assert plan.asset_index_id == "9"
+    assert plan.needed, "the plan claims nothing is needed"

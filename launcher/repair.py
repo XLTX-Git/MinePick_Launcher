@@ -47,6 +47,11 @@ class RepairPlan:
     tasks: list[DownloadTask] = field(default_factory=list)
     #: Human-readable reasons a complete check was impossible (missing version JSON, no asset index).
     problems: list[str] = field(default_factory=list)
+    #: The asset index that has to be written to assets/indexes/<id>.json (None when it is already there).
+    #: Without that file the game cannot open *any* asset, however many objects are present - it then
+    #: starts with an English UI and no title-screen panorama.
+    asset_index: AssetIndex | None = None
+    asset_index_id: str = ""
 
     @property
     def total_bytes(self) -> int:
@@ -54,7 +59,7 @@ class RepairPlan:
 
     @property
     def needed(self) -> bool:
-        return bool(self.tasks)
+        return bool(self.tasks) or self.asset_index is not None
 
 
 def _load_asset_index(
@@ -121,6 +126,15 @@ def plan_repair(
         # No index means the asset half cannot be checked; libraries and the client jar still can.
         plan.problems.append("asset index missing: assets were not checked")
 
+    if index is not None:
+        # The index file itself is part of the repair: without assets/indexes/<id>.json Minecraft cannot
+        # open *any* asset, however many objects are already on disk - the symptom is an English UI and a
+        # title screen without its panorama. Objects alone are not enough.
+        local_index = paths.GamePaths(game_dir).assets_dir / "indexes" / f"{version.asset_index.id}.json"
+        if not local_index.is_file():
+            plan.asset_index = index
+            plan.asset_index_id = version.asset_index.id
+
     planned = plan_tasks(version, game_dir, platform, index)
     plan.tasks = [task for task in planned if not _already_holds(task)]
     return plan
@@ -164,6 +178,12 @@ def repair(
     from launcher.net.downloader import Downloader
 
     plan = plan_repair(version_id, game_dir=game_dir, platform=platform)
+    if plan.asset_index is not None and plan.asset_index_id:
+        from launcher.install import write_asset_index
+
+        write_asset_index(plan.asset_index, plan.asset_index_id, game_dir)
+        plan.asset_index = None  # written; nothing left to do for it
+        plan.asset_index_id = ""
     if not plan.tasks:
         return plan
     client_owned = client is None
