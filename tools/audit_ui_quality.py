@@ -187,6 +187,11 @@ NON_TEXT_PAIRS: tuple[Pair, ...] = (
     # scrim (the fill clears the dimmed page by 2.22:1), so 1.4.11 does not require a ratio here. It is
     # paired so the token is checked and a future change has a number to compare against.
     ("BORDER_OVERLAY_CARD", "BG_OVERLAY_CARD", 3.0, False),
+    # The secondary buttons that sit on that card: their edge is decoration around a control whose label
+    # already carries the affordance, so it is recorded rather than required - the point is that the two
+    # tokens take part in the audit at all (an unreferenced token is what failed the gate).
+    ("BORDER_BUTTON_OVERLAY", "BG_OVERLAY_CARD", 3.0, False),
+    ("BORDER_BUTTON_OVERLAY_2", "BG_OVERLAY_CARD", 3.0, False),
     ("BG_SEPARATOR", "BG_WINDOW", 3.0, False),
     ("BG_SEPARATOR", "BG_SECTION", 3.0, False),
     # The one hairline between the rail and the paper: decoration, not a control boundary, so 1.4.11

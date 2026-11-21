@@ -166,7 +166,10 @@ def test_shipped_rule_file_is_valid() -> None:
     rules = load_rules()
     assert 25 <= len(rules) <= 45, f"expected 25-45 rules, found {len(rules)}"
     crash_rules = [rule for rule in rules if rule.phase != "launcher"]
-    assert 25 <= len(crash_rules) <= 30, f"expected 25-30 game-side rules, found {len(crash_rules)}"
+    # A band, not an exact count: the knowledge base grows (the JVM-argument and missing-main-class rules
+    # were added for a real report), and a hard ceiling turns every addition into a red gate. The floor
+    # still catches a rule file that lost most of its entries.
+    assert 25 <= len(crash_rules) <= 40, f"expected 25-40 game-side rules, found {len(crash_rules)}"
     codes = [rule.code for rule in rules]
     assert len(codes) == len(set(codes)), "duplicate codes in the shipped rule file"
     assert all(rule.cause.startswith("diagnosis.") for rule in rules)
