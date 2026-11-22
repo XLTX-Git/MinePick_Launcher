@@ -27,6 +27,7 @@ dropped by the owner guard instead of dereferencing a freed C++ object.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import threading
@@ -197,6 +198,10 @@ from launcher.mods.zh_names import zh_name
 from launcher.net import downloader, http_cache
 from launcher.net.downloader import DownloadCancelled
 from launcher.schematic import SchematicFile, scan_schematics, schematic_folder
+from launcher.schematic.litematic import SUFFIX as SCHEMATIC_SUFFIX
+from launcher.schematic.scan import schematic_dirs
+from launcher.screenshots import SUPPORTED_SUFFIXES as SCREENSHOT_SUFFIXES
+from launcher.servers import read_servers
 
 tr = i18n.tr
 log = logging.getLogger(__name__)
@@ -254,7 +259,60 @@ _GROUPS = (
     ("instances.detail.nav.group.actions", "modify"),
 )
 _SEPARATOR_BEFORE = "diagnosis"
-_BADGED_SECTIONS = ("mods", "saves")
+#: Sections that show a count beside their label. Every content section is counted, not only the two
+#: whose tables used to be loaded first: a number that appears only after visiting a tab reads as a bug,
+#: and the counts come from one directory listing each, so they cost nothing on an instance switch.
+_BADGED_SECTIONS = (
+    "mods",
+    "resourcepacks",
+    "shaderpacks",
+    "schematics",
+    "saves",
+    "screenshots",
+    "servers",
+)
+
+#: Name filters for the two sections whose folder holds more than the page lists as rows. Only the
+#: name is inspected: a badge must never stat a file, let alone walk a tree.
+_MOD_SUFFIXES = (".jar", ".jar.disabled")
+
+
+def _count_names(folder: Path, *, dirs: bool = False, keep: tuple[str, ...] | None = None) -> int:
+    """Count the entries of one folder, by name only, and never raise.
+
+    ``dirs`` counts sub-folders (存档 are directories), otherwise files - filtered by ``keep`` when it is
+    given. One listing, no recursion, no stat: this runs on every instance switch.
+    """
+    try:
+        with os.scandir(folder) as entries:
+            total = 0
+            for entry in entries:
+                try:
+                    if dirs:
+                        if entry.is_dir():
+                            total += 1
+                    elif entry.is_file() and (keep is None or entry.name.lower().endswith(keep)):
+                        total += 1
+                except OSError:
+                    continue
+            return total
+    except OSError:
+        return 0
+
+
+def _count_schematics(launch_dir: Path) -> int:
+    """Every ``.litematic`` in the folders Litematica has shipped (see launcher.schematic.scan)."""
+    return sum(
+        _count_names(folder, keep=(SCHEMATIC_SUFFIX,)) for folder in schematic_dirs(launch_dir)
+    )
+
+
+def _count_servers(launch_dir: Path) -> int:
+    """The entries of ``servers.dat``; a file that cannot be read reads as zero, never as an error."""
+    try:
+        return len(read_servers(launch_dir / "servers.dat").entries)
+    except Exception:  # noqa: BLE001 - a badge must not raise for a damaged file
+        return 0
 _LOG_TAIL_CHARS = 64 * 1024
 
 #: The overview's icon control: a 40px tile inside a 50px icon button (the stylesheet's 4px padding
@@ -2382,6 +2440,8 @@ class InstanceDetail(QWidget):
         self._pack_embed = False
         #: 导出's last scan (all categories), the form's instance and the destination it remembers.
         self._export_plan = None
+        #: Bumped for every scan; a result whose number is stale belongs to an instance the user left.
+        self._export_generation = 0
         self._export_instance: str | None = None
         self._export_dest: Path | None = None
         self._export_dest_invalid = ""
@@ -4479,31 +4539,26 @@ class InstanceDetail(QWidget):
         self.nav_buttons[key].setAccessibleName(name)
 
     def _refresh_badge_counts(self) -> None:
-        """Cheap directory counts before the async table scans publish their exact values."""
+        """Count every content section: one directory listing each, no recursion, no stat.
+
+        These numbers used to exist only for 模组 and 存档, and the rest were filled by whichever scan
+        happened to run - so sections that clearly had content showed no number until their tab had been
+        opened at least once, which reads as a bug.
+        """
         if self.resolved is None:
             for key in _BADGED_SECTIONS:
                 self._set_badge_count(key, 0)
             return
-        mods = 0
-        try:
-            if self.resolved.mods_dir.is_dir():
-                mods = sum(
-                    1
-                    for entry in self.resolved.mods_dir.iterdir()
-                    if entry.is_file()
-                    and entry.name.lower().endswith((".jar", ".jar.disabled"))
-                )
-        except OSError:
-            mods = 0
-        saves = 0
-        saves_dir = self.resolved.launch_dir / "saves"
-        try:
-            if saves_dir.is_dir():
-                saves = sum(1 for entry in saves_dir.iterdir() if entry.is_dir())
-        except OSError:
-            saves = 0
-        self._set_badge_count("mods", mods)
-        self._set_badge_count("saves", saves)
+        launch = self.resolved.launch_dir
+        self._set_badge_count("mods", _count_names(self.resolved.mods_dir, keep=_MOD_SUFFIXES))
+        self._set_badge_count("resourcepacks", _count_names(launch / "resourcepacks"))
+        self._set_badge_count("shaderpacks", _count_names(launch / "shaderpacks"))
+        self._set_badge_count("schematics", _count_schematics(launch))
+        self._set_badge_count("saves", _count_names(launch / "saves", dirs=True))
+        self._set_badge_count(
+            "screenshots", _count_names(launch / "screenshots", keep=tuple(SCREENSHOT_SUFFIXES))
+        )
+        self._set_badge_count("servers", _count_servers(launch))
         self._sync_sidebar()
 
     def reload(self) -> None:
@@ -4534,7 +4589,13 @@ class InstanceDetail(QWidget):
         self._fill_settings()
         self._fill_banners()
         self._fill_modify()
-        self._fill_export()
+        # The export inventory walks every packable folder and a real instance can hold tens of
+        # thousands of files there (Xaero's waypoints alone: 44k). Planning it on the page open froze
+        # the window for over a minute; the tab now scans itself when it is opened, and its placeholder
+        # says what it is doing.
+        self._export_ready = False
+        self._export_plan = None
+        self._export_generation += 1
         self._refresh_badge_counts()
         self._sync_instance_pages()
         self._loaded_tabs = set()
@@ -4543,7 +4604,7 @@ class InstanceDetail(QWidget):
         self._reload_mods()
         # 投影 is a card of this page, not a lazily loaded tab, so it refreshes with the instance.
         self.reload_schematics()
-        if self.stack.currentIndex() in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS):
+        if self.stack.currentIndex() in (*_RESOURCE_TABS, TAB_SAVES, TAB_DIAGNOSIS, TAB_EXPORT):
             self._ensure_tab_data(self.stack.currentIndex(), force=True)
 
     def _clear_rows(self) -> None:
@@ -6168,7 +6229,7 @@ class InstanceDetail(QWidget):
             return
         if index == TAB_EXPORT:
             if force or not self._export_ready:
-                self._fill_export()
+                self._fill_export(sync=False)
             return
         if index == TAB_DIAGNOSIS:
             if force or not self._diagnosis_ready:
@@ -6989,8 +7050,14 @@ class InstanceDetail(QWidget):
 
     # ---------- 导出: filling ----------
 
-    def _fill_export(self) -> None:
+    def _fill_export(self, *, sync: bool = True) -> None:
         """Show the pack the current selection would write: category counts and the total.
+
+        ``sync=False`` runs the inventory walk on a worker. The walk covers every packable folder, and
+        a real instance can hold tens of thousands of files outside the named categories (Xaero's
+        waypoints alone were 44k, ~3.7 GB), so doing it on the GUI thread froze the window for over a
+        minute. The synchronous form stays for callers that need the plan before their next statement
+        (the format change, the tests).
 
         The scan is local (counts and sizes only), so this runs on the GUI thread without a network
         round trip or a pause - the same reason the page can afford to refresh it on every format
@@ -7034,6 +7101,9 @@ class InstanceDetail(QWidget):
         self.export_load_button.setEnabled(not busy and self._export_preset() is not None)
         if self._pack_task is not None and self._pack_task.is_running():
             return
+        if not sync:
+            self._start_export_scan(previous, fmt)
+            return
         try:
             plan = plan_export(
                 self.instance_id,
@@ -7048,11 +7118,51 @@ class InstanceDetail(QWidget):
             )
             self.export_pack_button.setEnabled(False)
             return
+        self._apply_export_plan(previous, fmt, plan)
+
+    def _start_export_scan(self, previous, fmt: str) -> None:
+        """Plan the inventory on a worker; the placeholder stays up until the plan lands."""
+        instance_id = self.instance_id
+        game_dir = self.game_dir
+        generation = self._export_generation = self._export_generation + 1
+        self.export_loading.setText(tr("instances.detail.export.pack.scanning"))
+        self.export_loading.setVisible(True)
+        self.export_pack_button.setEnabled(False)
+
+        def do_scan():
+            from launcher.modpack import plan_export
+
+            return plan_export(instance_id, game_dir, fmt=fmt, categories=EXPORT_CATEGORIES)
+
+        def done(plan) -> None:
+            if generation != self._export_generation or instance_id != self.instance_id:
+                return  # the user left this instance while the walk was running
+            self.export_loading.setVisible(False)
+            self._apply_export_plan(previous, fmt, plan)
+
+        def failed(message: str) -> None:
+            if generation != self._export_generation or instance_id != self.instance_id:
+                return
+            self.export_loading.setVisible(False)
+            self._export_plan_failed(message)
+
+        run_in_background(do_scan, on_result=done, on_error=failed)
+
+    def _apply_export_plan(self, previous, fmt: str, plan) -> None:
+        """Publish a finished inventory: the summary, the checkboxes and the file rows."""
         self._export_plan = plan
         self._reconcile_export_selection(previous, plan)
         self._sync_export_categories(plan)
         self._sync_export_advanced(fmt)
         self._sync_export_destination()
+
+    def _export_plan_failed(self, error: object) -> None:
+        """A scan that could not read the instance: say so and keep the export button off."""
+        self._export_plan = None
+        self.export_pack_summary.setText(
+            tr("instances.detail.export.pack.summary.failed", str(error))
+        )
+        self.export_pack_button.setEnabled(False)
 
     # ---------- 导出: running ----------
 

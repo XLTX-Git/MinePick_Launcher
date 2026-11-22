@@ -59,7 +59,7 @@ LIGHT_SHEET = RESOURCES / "style_light.qss"
 
 #: Same pin as tests/test_dark_state_contrast.py holds. Both suites must move together when a light
 #: sheet change is deliberate.
-LIGHT_SHEET_SHA256 = "10c3b985af6edd47e7802b0ffe5d5e1dda2343a6c05845e7124c2d5809ab1870"
+LIGHT_SHEET_SHA256 = "fd41a7df039a52e1b0d24912e8639b9a09ed2d847ce8ba5f6e3c4b8f0941797d"
 
 #: The three levels, deepest first. BG_NAV is not a fourth level: the rail shares level 1 with the
 #: window chrome, which is what makes the rail recede behind the page instead of competing with it.
@@ -203,7 +203,11 @@ def test_the_light_column_did_not_move():
 
 def test_the_light_stylesheet_keeps_its_pinned_digest():
     """The light sheet is pinned byte for byte; a deliberate edit updates the digest in its commit."""
-    digest = hashlib.sha256(LIGHT_SHEET.read_bytes()).hexdigest()
+    # Normalised line endings: git checks this file out as CRLF on Windows, and a digest over the raw
+    # bytes then differs from the same sheet on Linux - the CI job on windows-latest failed for exactly
+    # that reason while the sheet had not changed.
+    raw = LIGHT_SHEET.read_bytes().replace(b"\r\n", b"\n")
+    digest = hashlib.sha256(raw).hexdigest()
     assert digest == LIGHT_SHEET_SHA256, (
         f"gui/resources/style_light.qss changed (sha256 {digest}); update the pinned digest in the "
         f"same commit if this light-theme change is deliberate"

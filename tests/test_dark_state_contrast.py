@@ -56,7 +56,7 @@ LIGHT_SHEET = RESOURCES / "style_light.qss"
 #: The pinned digest of gui/resources/style_light.qss. It is a witness, not a convenience: a
 #: stylesheet edit is the one way to change the light theme without touching a token value, so every
 #: deliberate light-sheet change must update this digest in the same commit.
-LIGHT_SHEET_SHA256 = "10c3b985af6edd47e7802b0ffe5d5e1dda2343a6c05845e7124c2d5809ab1870"
+LIGHT_SHEET_SHA256 = "fd41a7df039a52e1b0d24912e8639b9a09ed2d847ce8ba5f6e3c4b8f0941797d"
 
 #: A card's fill has to be at least this far from the surface behind it to read as a separate sheet.
 CARD_FLOOR = 1.8
@@ -404,7 +404,11 @@ def test_the_light_stylesheet_keeps_its_pinned_digest():
     RGBA above). If a future change really does edit the light theme, update this digest in the same
     commit - the point is that touching the light sheet becomes a decision instead of a drift.
     """
-    digest = hashlib.sha256(LIGHT_SHEET.read_bytes()).hexdigest()
+    # Normalised line endings: git checks this file out as CRLF on Windows, and a digest over the raw
+    # bytes then differs from the same sheet on Linux - the CI job on windows-latest failed for exactly
+    # that reason while the sheet had not changed.
+    raw = LIGHT_SHEET.read_bytes().replace(b"\r\n", b"\n")
+    digest = hashlib.sha256(raw).hexdigest()
     assert digest == LIGHT_SHEET_SHA256, (
         f"gui/resources/style_light.qss changed (sha256 {digest}); update the pinned digest in the "
         f"same commit if this light-theme change is deliberate"

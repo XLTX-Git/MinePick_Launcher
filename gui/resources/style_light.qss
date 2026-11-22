@@ -1654,15 +1654,16 @@ QLabel#instanceNavLabel[active="true"] {
     font-weight: 400;
 }
 QLabel#instanceNavIcon { background: transparent; }
+/* The count is a number beside the label, not a pill: a chip the same colour as the rail reads as an
+   unexplained tag and makes the rows look like form fields. */
 QLabel#instanceNavBadge {
-    background: __BG_SIDEBAR__;
-    border-radius: 9px;
+    background: transparent;
+    border: none;
     color: __FG_HINT__;
     font-size: 11px;
-    padding: 0 4px;
+    padding: 0 2px;
 }
 QLabel#instanceNavBadge[active="true"] {
-    background: __ACCENT_SOFT__;
     color: __ACCENT_TEXT__;
 }
 QLabel#instanceNavGroup {
