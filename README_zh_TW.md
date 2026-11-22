@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/XLTX-Git/MinePick_Launcher?label=release&color=blue)](https://github.com/XLTX-Git/MinePick_Launcher/releases) [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/LICENSE) [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/pyproject.toml)
 
 以 Python + PySide6 打造的免安裝 Minecraft 啟動器：Microsoft/離線帳號、版本安裝、
 Modrinth 與 CurseForge 資源、Fabric/Forge/NeoForge/Quilt 載入器、隔離實例 ——

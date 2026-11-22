@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/XLTX-Git/MinePick_Launcher?label=release&color=blue)](https://github.com/XLTX-Git/MinePick_Launcher/releases) [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/LICENSE) [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/pyproject.toml)
 
 Un lanceur Minecraft portable écrit en Python + PySide6 : comptes Microsoft/hors ligne, installation de versions,
 ressources Modrinth et CurseForge, chargeurs Fabric/Forge/NeoForge/Quilt, instances isolées — le tout empaqueté
