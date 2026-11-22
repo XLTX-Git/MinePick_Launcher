@@ -221,6 +221,9 @@ def test_copy_user_code_windows(monkeypatch):
         lambda cmd, **kw: (calls.append((cmd, kw)) or SimpleNamespace(returncode=0)),
     )
     monkeypatch.setattr(ms.os, "name", "nt")
+    # Windows-only attribute: without it the simulated branch cannot prove it asked for a windowless
+    # subprocess, and the test failed on Linux (where subprocess has no CREATE_NO_WINDOW at all).
+    monkeypatch.setattr(ms.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     assert ms.copy_user_code({"user_code": "ABCD1234"}) is True
     assert len(calls) == 1
     assert "ABCD1234" in calls[0][0][-1]

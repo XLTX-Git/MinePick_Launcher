@@ -91,8 +91,10 @@ def test_a_stale_manifest_is_returned_before_the_network_answers(ws_tmp) -> None
 
     assert manifest.latest["release"] == "1.21.8"  # the copy already on disk
     assert elapsed < 0.5, "the first paint must not wait for the refresh"
-    assert calls == []
+    # The stale answer is what proves the wait was skipped; asserting here that no request has been
+    # made yet is a race - on a fast runner the background thread wins it, and that is not a failure.
     assert wait_for_background_refresh(5.0)
+    assert calls, "the background refresh never asked for a new manifest"
     assert json.loads(cache.read_text(encoding="utf-8"))["manifest"]["latest"]["release"] == "1.22.0"
     # The refresh must ask for a fresh copy even though the response cache could still be inside its
     # own max-age window.

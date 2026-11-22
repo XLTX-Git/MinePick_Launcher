@@ -610,7 +610,10 @@ def lookup_by_hash(
             else ""
         )
         identity = _identity_from_hit(kind, {}, project, latest)
-    except (httpx.HTTPError, ValueError, KeyError, TypeError, UnicodeError) as exc:
+    # Broad on purpose: identification is best-effort by contract ("an Identity or None, never an
+    # exception"), and the CurseForge half raises ModsError when no API key is configured - an
+    # unconfigured key must make this lookup answer None, not blow up the caller's list.
+    except Exception as exc:
         LOGGER.debug("哈希识别失败: %s (%s)", path, exc, exc_info=True)
         return cached if found else None
     finally:
