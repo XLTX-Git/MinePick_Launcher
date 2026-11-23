@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/XLTX-Git/MinePick_Launcher?label=release&color=blue)](https://github.com/XLTX-Git/MinePick_Launcher/releases) [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/LICENSE) [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/pyproject.toml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/XLTX-Git/MinePick_Launcher?label=release&color=blue)](https://github.com/XLTX-Git/MinePick_Launcher/releases) [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/LICENSE) [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/pyproject.toml) [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4?logo=windows&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/build_exe.spec)
 
 Ein portabler Minecraft-Launcher auf Basis von Python + PySide6: Microsoft-/Offline-Konten, Versionsinstallation,
 Modrinth- & CurseForge-Ressourcen, Fabric/Forge/NeoForge/Quilt-Loader, isolierte Instanzen — verpackt als

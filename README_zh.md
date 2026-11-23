@@ -2,7 +2,7 @@
 
 # MinePick Launcher
 
-[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/XLTX-Git/MinePick_Launcher?label=release&color=blue)](https://github.com/XLTX-Git/MinePick_Launcher/releases) [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/LICENSE) [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/pyproject.toml)
+[![CI status](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XLTX-Git/MinePick_Launcher/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/XLTX-Git/MinePick_Launcher?label=release&color=blue)](https://github.com/XLTX-Git/MinePick_Launcher/releases) [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/LICENSE) [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/pyproject.toml) [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4?logo=windows&logoColor=white)](https://github.com/XLTX-Git/MinePick_Launcher/blob/main/build_exe.spec)
 
 基于 Python + PySide6 的便携版 Minecraft 启动器：微软账号登录 / 离线模式、版本安装、Modrinth 与 CurseForge 资源、
 Fabric/Forge/NeoForge/Quilt 加载器、实例隔离管理 —— 打包为免安装单文件 EXE。
