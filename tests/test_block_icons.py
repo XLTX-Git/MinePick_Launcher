@@ -509,3 +509,19 @@ def test_a_cached_texture_never_reaches_the_network(ws_tmp):
         assert requested == []
     finally:
         client.close()
+
+def test_the_painted_fallback_differs_per_block(ws_tmp):
+    """With no texture at all the stand-in must still say which block it stands for.
+
+    A fresh install with no game files and no network hit the same accent-coloured cube for every
+    version row, so a release, a snapshot and a 0.x version looked identical.
+    """
+    from PySide6.QtGui import QColor
+
+    empty = bt.texture_cache_root(ws_tmp / "data")
+    colours = {}
+    for block in ("grass_block_side", "command_block_front", "gold_block", "cobblestone"):
+        pixmap = block_icons.block_pixmap(block, 40, cache_root=empty)
+        image = pixmap.toImage()
+        colours[block] = QColor(image.pixel(image.width() // 2, image.height() // 4)).name()
+    assert len(set(colours.values())) == len(colours), colours

@@ -65,6 +65,17 @@ from launcher.meta import block_textures, loader_logos
 #: forge -> anvil, fabric/quilt -> spool, neoforge -> flame).
 LOADER_GLYPHS: frozenset[str] = frozenset({"forge", "fabric", "neoforge", "quilt"})
 
+#: The painted stand-in each block falls back to, in that block's own colours. A machine with no
+#: texture at all (fresh install, offline, no game files) used to paint the same accent cube for every
+#: row, which made a release, a snapshot and a 0.x version indistinguishable; these keep the category
+#: readable. The values are the blocks' average colour, not a copy of any texture.
+FALLBACK_BLOCK_COLORS: dict[str, str] = {
+    "grass_block_side": "#5f9b3f",
+    "command_block_front": "#c07a4a",
+    "gold_block": "#e0b83c",
+    "cobblestone": "#8d8d8d",
+}
+
 #: The eight icons a user can pin, in the order the picker shows them: the four block categories the
 #: automatic rule derives, then the four loader glyphs. The names are stored in ``Instance.icon``.
 RULE_ICON_NAMES: tuple[str, ...] = (
@@ -179,7 +190,7 @@ def block_pixmap(
         block_name, game_dir=game_dir, version_id=version_id, cache_root=cache_root
     )
     if side is None:
-        return paint_utils.block_pixmap(size)
+        return paint_utils.block_pixmap(size, color=FALLBACK_BLOCK_COLORS.get(block_name))
     if _is_finished_icon(side[1]):
         return _finished_icon(side[0], side[1], size, _screen_ratio())
 

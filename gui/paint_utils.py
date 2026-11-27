@@ -91,13 +91,18 @@ def _pixmap(size: int) -> tuple[QPixmap, float]:
     return pixmap, ratio
 
 
-def block_pixmap(size: int = 30) -> QPixmap:
+def block_pixmap(size: int = 30, *, color: str | None = None) -> QPixmap:
     """The version icon: a small isometric block built from the accent colour.
 
     The mock-up asks for "a 24-32 px block stand-in" when the repository has no real version icon;
     drawing it keeps the launch page free of shipped artwork and lets it follow the accent.
+
+    ``color`` overrides the accent. It exists for the version categories: a machine with no block
+    texture at all used to paint one accent-coloured cube for every row, so a release, a snapshot and
+    a 0.x version looked identical and the page stopped saying what each row is. The caller that knows
+    the category passes that block's own colour instead.
     """
-    accent = _tokens().get("ACCENT", "#2f9e6f")
+    accent = color or _tokens().get("ACCENT", "#2f9e6f")
     key = (size, accent)
     cached = _BLOCK_CACHE.get(key)
     if cached is not None:
