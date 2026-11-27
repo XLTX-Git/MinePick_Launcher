@@ -759,6 +759,18 @@ def main() -> int:
     os.environ["MCLAUNCHER_DATA_DIR"] = str(data_dir)
     os.environ["MINECRAFT_GAME_DIR"] = str(game_dir)
 
+    # The app fills this cache on startup (launcher.meta.block_textures.prefetch_missing_textures), but
+    # the renderer builds its own data directory, so without this the version rows fall back to the
+    # painted stand-in and the pictures stop showing what a normal machine shows. Non-fatal by design:
+    # a render with no network keeps the stand-ins, which are now coloured per category.
+    from launcher.meta import block_textures
+
+    try:
+        written = block_textures.prefetch_missing_textures(data_dir, game_dir=game_dir)
+        print(f"block textures: {written} fetched")
+    except Exception as exc:  # noqa: BLE001 - a render must not die for a missing icon
+        print(f"block textures: prefetch skipped ({type(exc).__name__}: {exc})")
+
     from gui import i18n
 
     known_languages = {code for code, _name in i18n.UI_LANGUAGES}
@@ -900,6 +912,17 @@ def main() -> int:
             app.processEvents()
             time.sleep(0.05)
         wait_for_workers(app, QThreadPool.globalInstance(), 8.0)
+        if name == "versions":
+            # The fold view is the default, but a picture of six collapsed groups shows no version row
+            # and therefore no block icon - which is exactly what the published screenshot must show.
+            page = window.pages["versions"]
+            groups = page.expanded_groups()
+            if not groups:
+                page.expand_group("release")
+                for _ in range(6):
+                    app.processEvents()
+                    time.sleep(0.05)
+                wait_for_workers(app, QThreadPool.globalInstance(), 5.0)
         if name == "instances":
             # An instance page without a selection only shows the hint: select a demo instance
             # (prefer the second row, which is the modded one) so the detail panel is visible.
