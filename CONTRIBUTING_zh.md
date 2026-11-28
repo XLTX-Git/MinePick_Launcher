@@ -85,7 +85,9 @@ pull request。
 - 可点目标至少 24×24 像素；每个可交互控件都有可读名称；键盘焦点始终可见。颜色取自主题令牌，
   两套主题 × 八个强调色的对比度都在审计范围内。
 - 窗口下限是 1000×610。页面不得新增本来不需要的滚动条，标签页也不能滚过自己的内容。
-- 页面有变化时重新生成截图（`python tools/shot_pages.py`）。目前只有 `zh` 和 `en` 两套截图，
+- 页面有变化时重新生成截图：`python tools/shot_pages.py --root . --preview . --out docs/screenshots
+  --language zh_cn`，再用 `--language en_us` 跑一遍（脚本必须带 `--root` 和 `--out`，只写
+  `python tools/shot_pages.py` 会直接报参数错误）。目前只有 `zh` 和 `en` 两套截图，
   所以翻译版 README 会注明截图显示的是哪个界面。
 
 ## 提交与 pull request

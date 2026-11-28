@@ -171,8 +171,8 @@ from pathlib import Path
 # constants
 # --------------------------------------------------------------------------------------
 REPO = Path(__file__).resolve().parent.parent
-# The workspace scratch root: a sibling of the checkout. D:\dsh-workspace\tmp is Low-writable
-# (measured); the default TEMP and the platformdirs data directory are not.
+# The workspace scratch root: a sibling of the checkout. That location stays writable where the
+# default TEMP and the platformdirs data directory do not (measured on the build machine).
 WORKSPACE_TMP = REPO.parent / "tmp"
 DEFAULT_TEMP_DIR = WORKSPACE_TMP / "smoke_tmp"
 DEFAULT_DATA_DIR = WORKSPACE_TMP / "smoke_data"

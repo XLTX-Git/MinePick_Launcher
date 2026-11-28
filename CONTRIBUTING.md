@@ -101,8 +101,10 @@ pytest -q                                # the whole suite, ~20 minutes
   audited for contrast.
 - The window floor is 1000×610. A page may not gain a scrollbar it did not need, and a tab may not be
   scrollable past its own content.
-- Regenerate screenshots (`python tools/shot_pages.py`) when a page changes. Only `zh` and `en` captures
-  exist, so a translated README notes which interface its screenshots show.
+- Regenerate screenshots when a page changes: `python tools/shot_pages.py --root . --preview .
+  --out docs/screenshots --language zh_cn`, then the same with `--language en_us` (the script needs
+  `--root` and `--out`; a bare `python tools/shot_pages.py` exits with an argparse error). Only `zh`
+  and `en` captures exist, so a translated README notes which interface its screenshots show.
 
 ## Commits and pull requests
 

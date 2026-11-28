@@ -94,7 +94,9 @@ user's certificate store (subject `CN=WDNDXLTX`); without it the script throws a
   independent implementation and contains no upstream source code" has to stay equivalent in all nine,
   neither omitted nor softened.
 - UI labels are in the interface language (Chinese by default); identifiers, comments, docs and
-  commits are English. When searching the code, search the English identifier, not the label.
+  commits are English. When searching the code, search the English identifier, not the label. A
+  code comment may quote the Chinese label it talks about, because that is the string a reader sees
+  on screen; the sentence around the quote stays English. This guide itself stays free of them.
 
 ## Reading someone else's source code
 

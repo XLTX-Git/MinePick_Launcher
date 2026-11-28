@@ -269,11 +269,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("MinePick Launcher")
         self.resize(1000, 600)
         self.setMinimumWidth(1000)
-        # The floor is the layout's own requirement, and it is enforced in resizeEvent - never pinned to a
-        # constant. It used to be `setMinimumSize(1000, 610)`, which is below what the layout needs in six
-        # of the nine languages (fr_fr reaches 1164px, ru_ru 1152, es_es 1155, de_de 1110, ja_jp 1085,
-        # en_us 1048) and therefore *allowed* a 1000px window - Qt then painted the pages into a strip
-        # narrower than their minimum, which is what the user saw as clipped text on the instances page.
+        # The floor is the layout's own requirement, and it is enforced in resizeEvent - never
+        # pinned to a constant. It used to be `setMinimumSize(1000, 610)`, which is below what the
+        # layout needs in six of the nine languages and therefore *allowed* a 1000px window - Qt then
+        # painted the pages into a strip narrower than their minimum, which is what the user saw as
+        # clipped text on the instances page. The per-language numbers live in
+        # `tools/measure_min_width.py`, not here: a figure copied into a comment goes stale the first
+        # time a page's padding changes.
         # The widest language has to fit without the user resizing anything: 1180px is that budget, and
         # tools/measure_min_width.py is what holds every language to it. See _enforce_layout_floor for why
         # this cannot simply be "let Qt derive the minimum" under lazy page construction.
