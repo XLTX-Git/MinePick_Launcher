@@ -45,20 +45,11 @@ single portable EXE.
 
 ## Interface
 
-- **First-run wizard, in the window** — the welcome flow is an overlay inside the main window
-  (step rail on the left, content on the right, action bar at the bottom) instead of a separate
-  dialog, and it closes and hands control back to the main window when you finish
-- **Custom window frame** — the title bar is drawn by the launcher itself, so the chrome matches
-  the theme; the left side carries the window title and the right side the minimize/close buttons,
-  and the pickaxe icon is used for the taskbar, the file icon and dialogs
 - **Customisable look** — accent colour (any hex value, eight presets, or the system colour picker),
   UI font (every installed family, the most common ones pinned on top, type to filter), corner radius (compact / default /
   round), theme (dark / light / follow the system)
 - **Clearer layout** — top-level pages open straight into their content, with no header band,
   one spacing scale across all pages, magnifier icons in search fields
-- **Calmer interaction** — scrollbars appear only while the pointer is inside a list, a focus outline is shown
-  for keyboard navigation only, a short fade when switching pages, table column widths are remembered,
-  headers are click-to-sort
 - **Readable states** — buttons are ranked (primary / secondary / outlined danger), status messages are
   coloured by severity, empty lists explain what to do next
 - **Accessible by default** — contrast is checked by enumerating the colour tokens (both themes × eight
@@ -75,13 +66,6 @@ single portable EXE.
   at every keyboard-reachable stop and no gaps, a readable name on every interactive control, tooltips
   that can be hovered and never expire on their own, and status messages announced to assistive
   technology.
-- **Not done**: a manual screen-reader walkthrough (NVDA / Narrator). What a real desktop still has to
-  confirm is narrowed to two items: **how the tables and the "source" dropdowns are announced in
-  sequence**, and how the tooltip behaves under a real window manager — its "movable, does not dismiss
-  itself" behaviour is covered by automated tests, but not re-checked by hand. Status messages are
-  confirmed announced on real hardware.
-- Known issue: closing the program while a download or update is still running can crash it. See the
-  release notes.
 
 ## Launcher features
 
@@ -157,15 +141,6 @@ pip install -r requirements-dev.txt
 python -m gui                # run the GUI
 pytest -q                    # tests
 ruff check launcher gui tests
-```
-
-Build & sign: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (see `docs/code_signing.md`).
-The spec produces a single GUI EXE (build prerequisites are listed in `docs/github_release.md`).
-
-One-command interface check (tests + lint + contrast/overflow/high-DPI + corner audit + screenshots):
-
-```powershell
-python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
 Theme internals (placeholders, customisation hooks, how to add a new option): `docs/theming.md`.

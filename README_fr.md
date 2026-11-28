@@ -47,21 +47,12 @@ Les captures d'écran montrent l'interface en anglais.
 
 ## Interface
 
-- **Assistant de premier démarrage, dans la fenêtre** — le flux d'accueil est une surcouche à l'intérieur de la
-  fenêtre principale (colonne des étapes à gauche, contenu à droite, barre d'actions en bas) au lieu d'une boîte de
-  dialogue séparée, et il se ferme à la fin en rendant la main à la fenêtre principale
-- **Cadre de fenêtre personnalisé** — la barre de titre est dessinée par le lanceur lui-même, l'habillage suit
-  donc le thème ; elle n'affiche aucune icône : seulement le texte du titre à gauche et deux boutons à droite
-  (réduire, fermer) ; l'icône de pioche est utilisée pour la barre des tâches, l'icône de fichier et les dialogues
 - **Apparence personnalisable** — couleur d'accent (n'importe quelle valeur hexadécimale, huit préréglages ou le
   sélecteur de couleur du système), police de l'interface (toutes les familles installées, les plus courantes
   épinglées, filtrage à la saisie), arrondi des coins (compact / par défaut / arrondi), thème (sombre / clair /
   suivre le système)
 - **Mise en page plus claire** — les pages principales commencent directement par leur contenu, sans en-tête, une seule
   échelle d'espacement sur toutes les pages, des icônes de loupe dans les champs de recherche
-- **Interactions plus sobres** — les barres de défilement n'apparaissent que lorsque le pointeur est dans une
-  liste, le contour de focus n'est affiché que pour la navigation au clavier, un court fondu au changement de page,
-  la largeur des colonnes des tableaux est mémorisée, un clic sur un en-tête trie la colonne
 - **États lisibles d'un coup d'œil** — les boutons sont hiérarchisés (principal / secondaire / danger en contour), les
   messages d'état sont colorés selon leur gravité, les listes vides expliquent quoi faire ensuite
 - **Accessible par défaut** —— le contraste est vérifié jeton de couleur par jeton (deux thèmes × huit couleurs
@@ -79,12 +70,6 @@ Les captures d'écran montrent l'interface en anglais.
   visible sur **chaque arrêt atteignable au clavier**, sans aucun manque, un nom lisible sur chaque contrôle interactif,
   des infobulles que l'on peut **survoler sans qu'elles disparaissent**, et des messages d'état annoncés aux technologies
   d'assistance.
-- **Non fait** : une vérification manuelle avec un lecteur d'écran (NVDA / Narrateur). Il ne reste que deux points à
-  confirmer sur une machine réelle : **l'ordre d'annonce des tableaux et de la liste déroulante « source »**
-  (**l'annonce des messages d'état est déjà confirmée sur machine réelle**) et le comportement de l'infobulle dans un
-  vrai gestionnaire de fenêtres.
-- Problèmes connus : fermer le programme pendant un téléchargement ou une mise à jour peut provoquer un plantage. Voir
-  les notes de version.
 
 ## Fonctionnalités du lanceur
 
@@ -164,18 +149,6 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-Compilation et signature : `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (voir `docs/code_signing.md`).
-Le fichier spec produit un seul EXE en version GUI (les prérequis de compilation sont listés dans
-`docs/github_release.md`).
-
-Vérification de l'interface en une seule commande (tests + lint + contraste/débordement/haute résolution + audit des
-coins + captures d'écran) :
-
-```powershell
-python tools/ui_regression.py            # add --quick to skip the screenshots
-```
-
-Fonctionnement interne des thèmes (variables de substitution, points d'extension, ajout d'une nouvelle option) :
 `docs/theming.md`.
 
 ## Licence

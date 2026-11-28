@@ -44,6 +44,15 @@
   for the whole transfer. Progress is now reported while it runs, and an unknown total says so instead
   of showing a second zero.
 
+## ⚠️ Known issues
+
+- Closing the launcher while a download or an update is still running can crash it. Let the transfer
+  finish first, or stop it from the download page.
+- Accessibility: a manual screen-reader walkthrough (NVDA / Narrator) has not been done. Two things are
+  still unconfirmed on a real desktop - how the tables and the "source" dropdowns are announced in
+  sequence, and how a tooltip behaves under a real window manager. The automated checks (contrast,
+  click targets, keyboard reach, accessible names) all pass.
+
 ---
 
 ## ✨ 新增
@@ -87,3 +96,10 @@
 - 切到实例页时不再闪出两个空的半透明窗口。
 - 账号头像显示皮肤脸，字母只作为兜底。
 - 定时器不再调用已经被销毁的控件——切换语言重建页面时原本会发生。
+## ⚠️ 已知问题
+
+- 下载或更新还在进行时关闭启动器，可能导致崩溃。请等它传完，或在下载页先取消。
+- 无障碍：没有做人工读屏走查（NVDA / Narrator）。有两件事在真机上仍未确认——表格与「来源」下拉框的
+  朗读顺序，以及提示条在真实窗口管理器下的行为。自动化检查（对比度、点击目标、键盘可达、可读名称）
+  全部通过。
+

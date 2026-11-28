@@ -47,20 +47,11 @@ Die Screenshots zeigen die englische Oberfläche.
 
 ## Oberfläche
 
-- **Assistent beim ersten Start, im Fenster** — der Willkommensablauf ist ein Overlay im Hauptfenster
-  (Schrittleiste links, Inhalt rechts, Aktionsleiste unten) statt eines separaten Dialogs und
-  schließt sich beim Abschluss, woraufhin das Hauptfenster erscheint
-- **Eigener Fensterrahmen** — die Titelleiste wird vom Launcher selbst gezeichnet, sodass die
-  Fensterdekoration zum Design passt; sie zeigt kein Symbol, nur den Fenstertitel links und zwei Schaltflächen
-  rechts (Minimieren, Schließen); das Spitzhacken-Symbol wird für Taskleiste, Dateisymbol und Dialoge verwendet
 - **Anpassbares Aussehen** — Akzentfarbe (beliebiger Hex-Wert, acht Voreinstellungen oder die
   System-Farbauswahl), Schriftart der Oberfläche (alle installierten Familien, die häufigsten oben angeheftet, Tippen
   zum Filtern), Eckenradius (Kompakt / Standard / Rund), Design (Dunkel / Hell / der Systemeinstellung folgen)
 - **Klareres Layout** — die Hauptseiten beginnen direkt mit ihrem Inhalt, ohne Seitenkopf, eine
   gemeinsame Abstandsskala auf allen Seiten, Lupensymbole in Suchfeldern
-- **Ruhigeres Verhalten** — Scrollbalken erscheinen nur, solange der Zeiger in einer Liste ist; eine
-  Fokusumrandung wird nur bei Tastaturnavigation angezeigt; kurzes Einblenden beim Seitenwechsel;
-  Spaltenbreiten von Tabellen werden gemerkt; Kopfzeilen lassen sich per Klick sortieren
 - **Klar lesbare Zustände** — Schaltflächen sind abgestuft (primär / sekundär / gefährlich mit Umrandung),
   Statusmeldungen sind nach Schweregrad eingefärbt, leere Listen erklären die nächsten Schritte
 - **Standardmäßig barrierefrei** —— der Kontrast wird Farbrolle für Farbrolle geprüft (beide Themes × acht Akzentfarben:
@@ -76,12 +67,6 @@ Die Screenshots zeigen die englische Oberfläche.
   bestanden), vollständige Tastaturbedienung mit sichtbarem Fokus an **jeder per Tastatur erreichbaren Fokusposition**,
   ohne Lücke, ein lesbarer Name an jedem bedienbaren Element, Tooltips, die man **überfahren kann, ohne dass sie
   verschwinden**, und Statusmeldungen, die an Hilfstechnologien gemeldet werden.
-- **Nicht gemacht**: ein manueller Durchgang mit einem Screenreader (NVDA / Narrator). Auf echter
-  Hardware noch offen sind nur zwei Punkte: die Ansagereihenfolge von Tabellen und Aufklapplisten
-  (die Ansage der Statusmeldungen ist auf echter Hardware bestätigt) und das Verhalten des Tooltips
-  unter einem echten Fenstermanager.
-- Bekannte Probleme: Das Beenden während eines laufenden Downloads oder Updates kann einen Absturz verursachen. Siehe
-  Versionshinweise.
 
 ## Launcher-Funktionen
 
@@ -151,15 +136,6 @@ pip install -r requirements-dev.txt
 python -m gui                # run the GUI
 pytest -q                    # tests
 ruff check launcher gui tests
-```
-
-Build & Signieren: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (siehe `docs/code_signing.md`).
-Die Spec-Datei erzeugt eine einzelne GUI-EXE (die Build-Voraussetzungen stehen in `docs/github_release.md`).
-
-Oberflächenprüfung mit einem Befehl (Tests + Lint + Kontrast/Überlauf/Hoch-DPI + Eckenradius-Audit + Screenshots):
-
-```powershell
-python tools/ui_regression.py            # add --quick to skip the screenshots
 ```
 
 Design-Interna (Platzhalter, Anpassungs-Hooks, neue Option hinzufügen): `docs/theming.md`.

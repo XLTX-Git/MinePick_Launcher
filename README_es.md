@@ -47,20 +47,11 @@ Las capturas muestran la interfaz en inglés.
 
 ## Interfaz
 
-- **Asistente de primer inicio, dentro de la ventana** — el flujo de bienvenida es una capa superpuesta dentro de la
-  ventana principal (barra de pasos a la izquierda, contenido a la derecha, barra de acciones abajo) en lugar de un
-  diálogo aparte, y al terminar se cierra y da paso a la ventana principal
-- **Marco de ventana personalizado** — la barra de título la dibuja el propio launcher, así que el marco combina con
-  el tema; no muestra ningún icono: solo el texto del título a la izquierda y dos botones a la derecha (minimizar,
-  cerrar); el icono de pico se usa para la barra de tareas, el archivo y los diálogos
 - **Aspecto personalizable** — color de acento (cualquier valor hexadecimal, ocho preajustes o el selector de color
   del sistema), fuente de la interfaz (todas las familias instaladas, las comunes fijadas arriba, filtrado al escribir),
   redondeo de esquinas (compacto / predeterminado / redondeado), tema (oscuro / claro / seguir el sistema)
 - **Diseño más claro** — las páginas principales empiezan directamente con su contenido, sin encabezado, una única escala de
   espaciado en todas las páginas, iconos de lupa en los campos de búsqueda
-- **Interacción más discreta** — las barras de desplazamiento solo aparecen mientras el puntero está dentro de una lista,
-  el contorno de foco se muestra solo para la navegación con teclado, un breve fundido al cambiar de página, se recuerda
-  el ancho de las columnas de las tablas, un clic en una cabecera ordena la columna
 - **Estados legibles de un vistazo** — los botones tienen jerarquía (principal / secundario / peligro con contorno), los
   mensajes de estado se colorean según su gravedad, las listas vacías explican qué hacer a continuación
 - **Accesible por defecto** —— el contraste se comprueba token de color por token (dos temas × ocho colores de acento:
@@ -78,12 +69,6 @@ Las capturas muestran la interfaz en inglés.
   en **cada punto alcanzable con el teclado**, sin ninguno sin foco, un nombre legible en cada control interactivo,
   información emergente que **se puede sobrevolar sin que desaparezca**, y mensajes de estado anunciados a las tecnologías
   de asistencia.
-- **No hecho**: una revisión manual con lector de pantalla (NVDA / Narrador). Solo quedan dos puntos por confirmar en
-  una máquina real: **el orden de anuncio de las tablas y del desplegable «origen»** (**el anuncio de los mensajes de
-  estado ya está confirmado en máquina real**) y el comportamiento de la información emergente en un gestor de
-  ventanas real.
-- Problemas conocidos: cerrar el programa mientras hay una descarga o actualización en curso puede provocar un fallo.
-  Véanse las notas de la versión.
 
 ## Funciones del launcher
 
@@ -156,17 +141,6 @@ pytest -q                    # tests
 ruff check launcher gui tests
 ```
 
-Compilar y firmar: `pyinstaller build_exe.spec` → `scripts/sign_exe.ps1` (ver `docs/code_signing.md`).
-El archivo spec genera un único EXE con GUI (los requisitos previos de compilación se indican en `docs/github_release.md`).
-
-Comprobación de la interfaz con un solo comando (pruebas + lint + contraste/desbordamiento/alta DPI + auditoría de
-esquinas + capturas):
-
-```powershell
-python tools/ui_regression.py            # add --quick to skip the screenshots
-```
-
-Funcionamiento interno de los temas (marcadores de posición, puntos de extensión para la personalización, cómo
 añadir una nueva opción): `docs/theming.md`.
 
 ## Licencia
