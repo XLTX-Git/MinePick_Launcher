@@ -50,19 +50,22 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # never drop __pycache__ into the tree being rendered
 
 
+#: Slugs, titles and download counts copied from ``https://api.modrinth.com/v2/project/<slug>`` on
+#: 2026-11-28. They are real values, not placeholders: the published picture shows a download count, and
+#: a made-up one is a claim about someone else\'s project. Re-read the API when the numbers age.
 FAKE_MODS = [
-    ("sodium", "Sodium", "Modern rendering engine and client-side optimization mod", 231_450_000),
-    ("iris", "Iris Shaders", "A modern shaders mod compatible with OptiFine shaderpacks", 48_120_000),
-    ("lithium", "Lithium", "No-compromises game logic and performance optimization mod", 92_300_000),
-    ("fabric-api", "Fabric API", "Lightweight and modular API providing common hooks and intercompatibility", 187_900_000),
-    ("jei", "Just Enough Items", "View items and recipes for anything in the game", 210_770_000),
-    ("modmenu", "Mod Menu", "Adds a mod menu to view the list of mods you have installed", 120_540_000),
-    ("cloth-config", "Cloth Config API", "Configuration screen API used by many fabric mods", 165_880_000),
-    ("roughly-enough-items", "Roughly Enough Items", "Recipe viewer with a modern look and feel", 61_230_000),
-    ("create", "Create", "Aesthetic technology mod with rotational power and contraptions", 74_610_000),
-    ("xaeros-minimap", "Xaero's Minimap", "Minimap with waypoints, entity radar and cave mode", 88_940_000),
-    ("appleskin", "AppleSkin", "Food-related HUD information: hunger, saturation and exhaustion", 57_330_000),
-    ("journeymap", "JourneyMap", "Real-time mapping in game or in a web browser", 69_150_000),
+    ("sodium", "Sodium", "Modern rendering engine and client-side optimization mod", 257_822_161),
+    ("iris", "Iris Shaders", "A modern shaders mod compatible with OptiFine shaderpacks", 198_369_859),
+    ("lithium", "Lithium", "No-compromises game logic and performance optimization mod", 147_188_187),
+    ("fabric-api", "Fabric API", "Lightweight and modular API providing common hooks and intercompatibility", 293_265_327),
+    ("jei", "Just Enough Items (JEI)", "View items and recipes for anything in the game", 87_373_849),
+    ("modmenu", "Mod Menu", "Adds a mod menu to view the list of mods you have installed", 164_587_827),
+    ("cloth-config", "Cloth Config API", "Configuration screen API used by many fabric mods", 189_811_037),
+    ("rei", "Roughly Enough Items (REI)", "Recipe viewer with a modern look and feel", 27_717_114),
+    ("create", "Create", "Aesthetic technology mod with rotational power and contraptions", 28_558_204),
+    ("xaeros-minimap", "Xaero's Minimap", "Minimap with waypoints, entity radar and cave mode", 122_571_996),
+    ("appleskin", "AppleSkin", "Food-related HUD information: hunger, saturation and exhaustion", 101_053_455),
+    ("journeymap", "JourneyMap", "Real-time mapping in game or in a web browser", 15_739_959),
 ]
 
 #: Real project icons for the demo rows, keyed by slug. The resource page is the only rendered page
@@ -89,7 +92,7 @@ FAKE_MOD_ICONS = {
         "5a20ed1450a0e1e79a1fe04e61bb4e5878bf1d20.png"
     ),
     "cloth-config": "https://cdn.modrinth.com/data/9s6osm5g/icon.png",
-    "roughly-enough-items": "https://cdn.modrinth.com/data/nfn13YXA/icon.png",
+    "rei": "https://cdn.modrinth.com/data/nfn13YXA/icon.png",
     "create": (
         "https://cdn.modrinth.com/data/LNytGWDc/"
         "61d716699bcf1ec42ed4926a9e1c7311be6087e2_96.webp"
@@ -111,35 +114,39 @@ ICON_WARM_CONCURRENCY = 8
 ICON_WARM_ATTEMPTS = 3
 
 
+#: Every id, type and date here is Mojang\'s (checked against
+#: ``piston-meta.mojang.com/mc/game/version_manifest_v2.json``): a picture people read must not show a
+#: version that never shipped, and a wrong date is just as visible as a wrong id. Update the set as a
+#: whole when the manifest moves - do not invent an entry to fill a gap.
 FAKE_VERSIONS = [
     ("1.21.11", "release", "2025-12-09"),
-    ("1.21.10", "release", "2025-11-25"),
-    ("1.21.9", "release", "2025-11-11"),
-    ("1.21.8", "release", "2025-09-30"),
-    ("1.21.7", "release", "2025-08-19"),
-    ("1.21.6", "release", "2025-07-15"),
-    ("1.21.5", "release", "2025-06-03"),
-    ("1.21.4", "release", "2025-03-25"),
-    ("1.21.3", "release", "2025-02-11"),
+    ("1.21.10", "release", "2025-10-07"),
+    ("1.21.9", "release", "2025-09-30"),
+    ("1.21.8", "release", "2025-07-17"),
+    ("1.21.7", "release", "2025-06-30"),
+    ("1.21.6", "release", "2025-06-17"),
+    ("1.21.5", "release", "2025-03-25"),
+    ("1.21.4", "release", "2024-12-03"),
+    ("1.21.3", "release", "2024-10-23"),
     ("1.21.1", "release", "2024-08-08"),
     ("1.21", "release", "2024-06-13"),
     ("1.20.6", "release", "2024-04-29"),
     ("1.20.4", "release", "2023-12-07"),
-    ("1.20.2", "release", "2023-09-21"),
+    ("1.20.2", "release", "2023-09-20"),
     ("1.20.1", "release", "2023-06-12"),
     ("1.19.4", "release", "2023-03-14"),
     ("1.18.2", "release", "2022-02-28"),
-    ("1.16.5", "release", "2021-01-15"),
+    ("1.16.5", "release", "2021-01-14"),
     ("1.12.2", "release", "2017-09-18"),
-    ("1.8.9", "release", "2015-12-09"),
-    ("26w02a", "snapshot", "2026-01-13"),
+    ("1.8.9", "release", "2015-12-03"),
+    ("26.1-snapshot-3", "snapshot", "2026-01-13"),
     ("25w45a", "snapshot", "2025-11-04"),
     ("24w14potato", "snapshot", "2024-04-01"),
     ("23w13a_or_b", "snapshot", "2023-04-01"),
     ("22w13oneblockatatime", "snapshot", "2022-04-01"),
     ("20w14infinite", "snapshot", "2020-04-01"),
     ("1.RV-Pre1", "snapshot", "2016-03-31"),
-    ("b1.7.3", "old_beta", "2011-07-08"),
+    ("b1.7.3", "old_beta", "2011-07-07"),
     ("a1.2.6", "old_alpha", "2010-12-02"),
 ]
 
@@ -220,7 +227,9 @@ def ensure_preview(root: Path, game_dir: Path | None = None) -> tuple[Path, Path
             ),
             encoding="utf-8",
         )
-    for jar in ("sodium-fabric-0.6.5.jar", "lithium-fabric-0.15.3.jar", "iris-fabric-1.8.1.jar"):
+    # Versions that exist for 1.21.11 (Modrinth, checked 2026-11-28); an invented jar name would only
+    # show up in a later close-up, which is exactly when nobody re-checks it.
+    for jar in ("sodium-fabric-0.8.14.jar", "lithium-fabric-0.21.4.jar", "iris-fabric-1.10.8.jar"):
         (game / "versions" / "整合包演示" / "mods" / jar).write_bytes(b"PK\x03\x04trial")
     world = game / "versions" / "生存存档" / "saves" / "新世界"
     world.mkdir(parents=True, exist_ok=True)
@@ -799,7 +808,7 @@ def main() -> int:
     from launcher.mods.models import ModSearchHit
 
     manifest = VersionManifest(
-        latest={"release": "1.21.11", "snapshot": "26w02a"},
+        latest={"release": "1.21.11", "snapshot": "26.1-snapshot-3"},
         versions=[
             ManifestVersion(
                 id=vid,
@@ -830,6 +839,12 @@ def main() -> int:
     # offline stubs so rendering never waits on the network
     versions_page.fetch_manifest = lambda cache_path=None: manifest  # type: ignore[assignment]
     mods_page.search_projects = lambda *a, **k: list(hits)  # type: ignore[assignment]
+    # The source picker defaults to 全部, so a real render also asked CurseForge and the row count became
+    # "12 Modrinth + N real CurseForge" - a number the picture cannot explain and the network decides.
+    # The rendered list is the Modrinth set, so the second source answers empty here.
+    from launcher.mods import curseforge as _curseforge
+
+    _curseforge.search_projects = lambda *a, **k: []  # type: ignore[assignment]
     java_page.list_java = lambda *a, **k: []  # type: ignore[assignment]
 
     from gui.main import create_app
