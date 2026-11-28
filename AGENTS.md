@@ -97,6 +97,8 @@ user's certificate store (subject `CN=WDNDXLTX`); without it the script throws a
   commits are English. When searching the code, search the English identifier, not the label. A
   code comment may quote the Chinese label it talks about, because that is the string a reader sees
   on screen; the sentence around the quote stays English. This guide itself stays free of them.
+- `docs/glossary.md` maps each label those comments quote to its English term, with the
+  `gui/i18n.py` key beside it; tests/test_glossary.py keeps it matching the language tables.
 
 ## Reading someone else's source code
 

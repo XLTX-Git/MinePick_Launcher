@@ -81,6 +81,7 @@ pytest -q                                # the whole suite, ~20 minutes
   line does.
 - A new dependency needs a licence check (GPL-compatible only) and a
   `python tools/build_third_party_notices.py` run, so `THIRD_PARTY_NOTICES.md` stays in step.
+- The interface is Chinese-first, so a comment may quote the label it talks about; [`docs/glossary.md`](docs/glossary.md) is the map from those labels to English.
 
 ## Strings and translations
 
