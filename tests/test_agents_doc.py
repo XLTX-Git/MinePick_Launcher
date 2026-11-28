@@ -142,3 +142,20 @@ def test_the_english_guides_contain_no_cjk() -> None:
         hits = [f"{number}: {line.strip()[:60]}" for number, line in enumerate(text.splitlines(), 1)
                 if _CJK.search(line)]
         assert not hits, f"{name} contains CJK text: {hits}"
+
+
+def test_claude_md_points_at_the_agents_file() -> None:
+    """`CLAUDE.md` is a one-line import, not a second copy of the manual.
+
+    Claude Code expands `@AGENTS.md` at load time (and, from v2.1.277, reads `AGENTS.md` on its own
+    when no `CLAUDE.md` exists). A bare path on a line is not an import - the model may or may not
+    open the file - and a pasted copy would drift from the real manual on the next edit.
+    """
+    root = Path(__file__).resolve().parent.parent
+    pointer = root / "CLAUDE.md"
+    assert pointer.is_file(), "CLAUDE.md is missing"
+    lines = pointer.read_text(encoding="utf-8").splitlines()
+    assert lines and lines[0].strip() == "@AGENTS.md", lines[:3]
+    assert len([line for line in lines if line.strip()]) == 1, "CLAUDE.md carries more than the import"
+    assert (root / "AGENTS.md").is_file(), "the import target is missing"
+

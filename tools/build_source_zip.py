@@ -35,6 +35,7 @@ INCLUDE_FILES = (
     "CONTRIBUTING.md",
     "CONTRIBUTING_zh.md",
     "AGENTS.md",
+    "CLAUDE.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     ".gitignore",
