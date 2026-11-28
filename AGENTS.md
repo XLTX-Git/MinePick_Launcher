@@ -116,42 +116,12 @@ and missing one means the work does not start:
 5. **Never a dependency.** Reference code is not imported, not copied into `tools/` or `launcher/`; an
    algorithm worth borrowing is rewritten in this project's own language and structure.
 
-## Qt traps already paid for (do not relearn them)
+## Traps and invariants
 
-- **Stylesheets apply to a window, not the application.** A `QComboBox` popup is a top-level window of
-  its own, so `gui/popup_shape.py` styles it explicitly and paints its rows with a delegate - the platform
-  delegate ignores `::item` padding, which is why `padding` and `height` in the sheet do nothing there.
-- **`QStackedWidget.sizeHint()` is the maximum over its pages.** The instance detail page therefore drives
-  its own scroll geometry (`_FitStack` + `_sync_content_geometry`), and a page's height comes from
-  `layout.heightForWidth(width)` when the layout supports it - `sizeHint()` answers for an ideal width
-  and over-reports word-wrapped cards.
-- **Never put a `QPushButton` inside another button's layout.** The inner one inherits the outer height and
-  draws its text in a squeezed content rect (this clipped the speed-test label down to a few pixels).
-- **`clicked` carries a bool.** `lambda group=key: ...` silently receives `False`; write
-  `lambda *_, group=key: ...`.
-- **Sizing from a widget's `sizeHint()` before it is shown returns 0 or a stale value.** `LoaderVersionItem`
-  returns its constant height for that reason.
-- **`Path.replace` fails with `PermissionError` while another thread reads the target.** The mirror report
-  retries; keep that.
-- **Encoding is UTF-8 everywhere, with `newline=""` on every write.** A stylesheet or a JSON file rewritten
-  without it picks up CRLF and the digest tests fail on a diff nobody made.
-- Window floor is **1000×610**; click targets ≥24×24 px; both themes (dark/light) × eight accents are
-  audited for contrast, and `tools/ui_regression.py` is the gate.
-
-## Product rules that are easy to break
-
-- Icons for mods/resource packs come **only** from hash/fingerprint matches (Modrinth sha1, CurseForge
-  MurmurHash2). Never guess an icon from a name.
-- Terracotta (AGPL-3.0 with an exception) and EasyTier (LGPL-3.0) ship as unmodified binaries under
-  `components/`. The Terracotta credit line in the footer is mandatory (the exact text lives in
-  `launcher/notices.py`), and `components/easytier` must never be deleted by code that "disables"
-  multiplayer - it powers the network self-check.
-- Closing the multiplayer lobby means the tunnel stops and guests drop; a core this launcher started
-  is also terminated, a borrowed one is left alone.
-- Downloads are tasks (`gui/tasks.py`): a new long-running download needs `TaskCenter.add_task` with a
-  cancel path, not just a status line.
-- An installed Java runtime must actually start (`java -version`) or it is removed and reported; never
-  hand back a runtime you have not probed.
+The Qt traps this codebase has already paid for, and the product invariants that are easy to break,
+live in `CONTRIBUTING.md` (§ Qt traps already paid for, § Product invariants). Read them before
+touching the GUI or the launcher core: they are written for a human reader, which is the same answer
+an agent needs.
 
 ## Release path (do not start it on your own)
 

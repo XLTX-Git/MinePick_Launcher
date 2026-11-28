@@ -90,6 +90,38 @@ pull request。
   `python tools/shot_pages.py` 会直接报参数错误）。目前只有 `zh` 和 `en` 两套截图，
   所以翻译版 README 会注明截图显示的是哪个界面。
 
+## 已经踩过的 Qt 坑
+
+下面每一条都花过调试时间；先知道，能省下一次。
+
+- **样式表作用于窗口，不作用于整个应用。** `QComboBox` 的下拉列表自己就是一个顶层窗口，所以
+  `gui/popup_shape.py` 单独给它上样式，并用委托绘制列表项：平台自带委托会忽略 `::item` 的 padding，
+  样式表里写 `padding` 和 `height` 在那里不起作用。
+- **`QStackedWidget.sizeHint()` 取的是所有页面里的最大值。** 实例详情页因此自己算滚动几何
+  （`_FitStack` 加 `_sync_content_geometry`）；有布局的页面用 `layout.heightForWidth(width)` 取高度，
+  而 `sizeHint()` 按理想宽度回答，会把自动换行的卡片算高。
+- **不要把 `QPushButton` 塞进另一个按钮的布局里。** 内层按钮会继承外层高度，文字被挤进很小的内容区——
+  测速按钮的标签曾经被裁得只剩几个像素。
+- **`clicked` 会带一个 bool。** 写 `lambda group=key: ...` 时第一个参数会静默收到 `False`，要写成
+  `lambda *_, group=key: ...`。
+- **控件还没显示时读 `sizeHint()` 会得到 0 或过期值。** `LoaderVersionItem` 因此直接返回固定高度。
+- **另一个线程正在读目标文件时，`Path.replace` 会抛 `PermissionError`。** 镜像测速那条路径带重试，
+  别把重试删掉。
+- **一律按 UTF-8 写，且写文件带 `newline=""`。** 少了它，样式表或 JSON 会被写成 CRLF，钉住摘要的
+  测试就会在一个没人改过的差异上变红。
+
+## 产品红线
+
+这些是行为约定，不是偏好；破坏了就是回归，哪怕测试全绿。
+
+- 模组与资源包的图标**只能**来自哈希或指纹匹配（Modrinth sha1、CurseForge MurmurHash2），绝不按名字猜。
+- Terracotta（AGPL-3.0 带例外）与 EasyTier（LGPL-3.0）以未修改的二进制形式放在 `components/`。
+  页脚的 Terracotta 署名是必须的（原文在 `launcher/notices.py`）；`components/easytier` 绝不能被
+  「关闭联机」的代码删掉——网络自检依赖它。
+- 关闭联机大厅意味着隧道停止、客人断开；本启动器启动的核心一并结束，借用的核心不动。
+- 长耗时下载要做成任务（`gui/tasks.py`）：`TaskCenter.add_task` 带取消路径，而不是只写一行状态。
+- 已安装的 Java 运行时必须真的能启动（`java -version`），否则移除并报告；绝不要返回没探活过的运行时。
+
 ## 提交与 pull request
 
 - **提交信息只用英文**——中英混写会在评审里被退回。用翻译工具翻一下就可以：

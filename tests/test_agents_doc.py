@@ -159,3 +159,25 @@ def test_claude_md_points_at_the_agents_file() -> None:
     assert len([line for line in lines if line.strip()]) == 1, "CLAUDE.md carries more than the import"
     assert (root / "AGENTS.md").is_file(), "the import target is missing"
 
+
+def test_the_traps_live_in_the_contributing_guide() -> None:
+    """The Qt traps and the product invariants moved to CONTRIBUTING.md: one source, both audiences.
+
+    They are what a contributor - human or agent - needs before touching the GUI, and CONTRIBUTING.md
+    is the file a human opens first. AGENTS.md keeps only the pointer, so the text cannot exist twice
+    and drift.
+    """
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    agents = _doc()
+    for heading in ("## Qt traps already paid for", "## Product invariants"):
+        assert heading in contributing, f"CONTRIBUTING.md lost the {heading!r} section"
+    assert "CONTRIBUTING.md" in agents and "Qt traps" in agents and "Product invariants" in agents, (
+        "AGENTS.md no longer points at the moved sections"
+    )
+    # The two sections are lists; a section that lost its bullets is an empty promise.
+    traps = contributing.split("## Qt traps already paid for", 1)[1].split("## Product invariants", 1)[0]
+    invariants = contributing.split("## Product invariants", 1)[1].split("\n## ", 1)[0]
+    assert traps.count("\n- ") >= 7, f"Qt traps shrank to {traps.count(chr(10) + '- ')} bullets"
+    assert invariants.count("\n- ") >= 5, "the product invariants shrank"
+    assert "## 已经踩过的 Qt 坑" in (ROOT / "CONTRIBUTING_zh.md").read_text(encoding="utf-8")
+

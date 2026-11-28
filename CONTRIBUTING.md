@@ -107,6 +107,45 @@ pytest -q                                # the whole suite, ~20 minutes
   `--root` and `--out`; a bare `python tools/shot_pages.py` exits with an argparse error). Only `zh`
   and `en` captures exist, so a translated README notes which interface its screenshots show.
 
+## Qt traps already paid for
+
+Each of these cost someone a debugging session; knowing them saves the next one.
+
+- **Stylesheets apply to a window, not the application.** A `QComboBox` popup is a top-level window of
+  its own, which is why `gui/popup_shape.py` styles it explicitly and paints its rows with a delegate:
+  the platform delegate ignores `::item` padding, so `padding` and `height` in the sheet do nothing there.
+- **`QStackedWidget.sizeHint()` is the maximum over its pages.** The instance detail page therefore drives
+  its own scroll geometry (`_FitStack` plus `_sync_content_geometry`), and a page's height comes from
+  `layout.heightForWidth(width)` when the layout supports it. `sizeHint()` answers for an ideal width and
+  over-reports word-wrapped cards.
+- **Never put a `QPushButton` inside another button's layout.** The inner one inherits the outer height and
+  draws its text in a squeezed content rect; that is what once clipped the speed-test label to a few pixels.
+- **`clicked` carries a bool.** `lambda group=key: ...` silently receives `False` as its first argument;
+  write `lambda *_, group=key: ...`.
+- **`sizeHint()` on a widget that is not shown yet returns 0 or a stale value.** `LoaderVersionItem`
+  returns its constant height for that reason.
+- **`Path.replace` raises `PermissionError` while another thread reads the target.** The mirror report
+  retries; keep that retry.
+- **Write UTF-8 with `newline=""`.** A stylesheet or a JSON file rewritten without it picks up CRLF, and a
+  pinned-digest test then fails on a diff nobody made.
+
+## Product invariants
+
+These are behaviour, not preferences: a change that breaks one is a regression even when the tests pass.
+
+- Icons for mods and resource packs come **only** from hash or fingerprint matches (Modrinth sha1,
+  CurseForge MurmurHash2). Never infer an icon from a name.
+- Terracotta (AGPL-3.0 with an exception) and EasyTier (LGPL-3.0) ship unmodified under `components/`.
+  The Terracotta credit line in the footer is required (the exact text lives in `launcher/notices.py`), and
+  `components/easytier` must never be deleted by code that "disables" multiplayer - it powers the network
+  self-check.
+- Closing the multiplayer lobby stops the tunnel and drops the guests; a core this launcher started is
+  terminated as well, a borrowed one is left alone.
+- A long-running download is a task (`gui/tasks.py`): `TaskCenter.add_task` with a cancel path, not a bare
+  status line.
+- An installed Java runtime must actually start (`java -version`) or it is removed and reported; never hand
+  back a runtime you have not probed.
+
 ## Commits and pull requests
 
 - Commit messages are **English only** — a mixed-language message is rejected in review. Machine
