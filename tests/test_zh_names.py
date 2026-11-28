@@ -261,3 +261,28 @@ def test_name_match_ignores_empty_input() -> None:
     assert name_match("", ("sodium", "Sodium")) is None
     assert name_match("   ", ("sodium", "Sodium")) is None
     assert match_slugs("") == []
+
+
+def test_chinese_names_are_shown_in_simplified_chinese_only() -> None:
+    """The table translates English titles into Chinese; only the Simplified interface wants that.
+
+    A Traditional Chinese, Japanese or German row keeps the project's own title: a Simplified name in
+    a Traditional interface is a different script, and in a non-Chinese interface it is simply the
+    wrong language.
+    """
+    from gui import i18n
+    from launcher.mods import zh_names
+
+    try:
+        assert zh_names.zh_name("litematica"), "the table lost its Chinese name for litematica"
+        for code in ("zh_tw", "en_us", "ja_jp", "de_de"):
+            i18n.set_language(code)
+            assert zh_names.zh_name("litematica") == "", f"{code} still shows a Chinese name"
+            # The search half is not a display concern: typing Chinese must still find the project.
+            assert zh_names.search_local("投影"), f"{code} lost the local Chinese search"
+        i18n.set_language("zh_cn")
+        assert zh_names.zh_name("litematica"), "Simplified Chinese stopped showing its own name"
+    finally:
+        i18n.set_language("zh_cn")
+        zh_names.set_names_enabled(True)
+

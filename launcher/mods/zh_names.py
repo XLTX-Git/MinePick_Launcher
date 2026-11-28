@@ -62,6 +62,13 @@ _MAX_TERM = 4
 
 _SPLIT = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
 
+#: Whether the table's Chinese names may be shown. Simplified Chinese only: every name in the table
+#: is Chinese for an English project title, so in any other interface showing it would replace that
+#: language with Chinese - and a Traditional Chinese interface should keep the project's own title
+#: rather than a Simplified name. The search half stays enabled in every language: someone typing
+#: Chinese wants results, not a translated list.
+_names_enabled = True
+
 #: Scores only order entries inside one layer; the layer itself always wins.
 _EXACT_BASE = 100
 _QUERY_INSIDE_BASE = 60
@@ -110,8 +117,21 @@ def zh_names() -> dict[str, str]:
     return {slug: aliases[0] for slug, aliases in zh_aliases().items()}
 
 
+def set_names_enabled(enabled: bool) -> None:
+    """Allow or forbid showing the table's Chinese names (the interface calls this on every switch)."""
+    global _names_enabled
+    _names_enabled = bool(enabled)
+
+
+def names_enabled() -> bool:
+    """Whether Chinese display names are currently shown."""
+    return _names_enabled
+
+
 def zh_name(slug: str) -> str:
-    """The Chinese name for a slug; an empty string when the table has none."""
+    """The Chinese name for a slug; empty when the table has none or names are off."""
+    if not _names_enabled:
+        return ""
     return zh_names().get(slug, "")
 
 

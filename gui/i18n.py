@@ -2883,6 +2883,13 @@ def set_language(lang: str) -> None:
 
     set_core_language(current_language())
 
+    # The bundled Chinese mod names are a translation of English project titles, so they belong to
+    # Simplified Chinese only: any other interface (Traditional Chinese included) keeps the project's
+    # own title instead of a Simplified name.
+    from launcher.mods.zh_names import set_names_enabled
+
+    set_names_enabled(current_language() == "zh_cn")
+
 
     install_qt_translations(lang)
 
